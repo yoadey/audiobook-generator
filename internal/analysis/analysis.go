@@ -308,12 +308,21 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 	})
 }
 
+// paused reports whether the user paused (or reset) the analysis; a
+// "queued" status (resumed while this job was still running) becomes
+// "running" again.
 func (a *Analyzer) paused(ctx context.Context, bookID int64) (bool, error) {
 	b, err := a.Store.GetBook(ctx, bookID)
 	if err != nil {
 		return false, err
 	}
-	return b.AnalysisStatus == store.AnalysisPaused || b.AnalysisStatus == store.AnalysisNone, nil
+	switch b.AnalysisStatus {
+	case store.AnalysisPaused, store.AnalysisNone:
+		return true, nil
+	case store.AnalysisQueued:
+		return false, a.Store.UpdateBook(ctx, bookID, map[string]any{"AnalysisStatus": store.AnalysisRunning})
+	}
+	return false, nil
 }
 
 // analyzeBatch sends one batch and merges the answer. A batch the model
@@ -353,6 +362,10 @@ func (a *Analyzer) analyzeBatch(ctx context.Context, bookID int64, batch *store.
 		return jobs.Permanent(err)
 	}
 	req.MaxTokens = batchOutputTokens
+	sent := make(map[int64]bool, len(known))
+	for _, c := range known {
+		sent[c.ID] = true
+	}
 
 	var res batchResult
 	out, err := a.LLM.CompleteJSON(ctx, req, &res)
@@ -385,7 +398,7 @@ func (a *Analyzer) analyzeBatch(ctx context.Context, bookID int64, batch *store.
 	batch.InputTokens, batch.OutputTokens = out.Usage.InputTokens, out.Usage.OutputTokens
 	batch.Result = string(raw)
 	return a.Store.Tx(ctx, func(tx *store.Store) error {
-		if err := apply(ctx, tx, bookID, bib, parts, &res); err != nil {
+		if err := apply(ctx, tx, bookID, bib, sent, parts, &res); err != nil {
 			return err
 		}
 		return tx.CompleteAnalysisBatch(ctx, batch)

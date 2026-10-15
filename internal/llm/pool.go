@@ -87,28 +87,45 @@ func (e *ExhaustedError) Error() string {
 func (e *ExhaustedError) DeferUntil() time.Time { return e.RetryAt }
 
 // RejectedError means every provider refused this request (HTTP 400-class
-// answers), e.g. because it exceeds the model's context.
-type RejectedError struct{ Err error }
+// answers), e.g. because it exceeds the model's context. Errs holds each
+// provider's refusal.
+type RejectedError struct{ Errs []error }
 
 func (e *RejectedError) Error() string {
-	return "every LLM provider refused the request: " + e.Err.Error()
+	msgs := make([]string, len(e.Errs))
+	for i, err := range e.Errs {
+		msgs[i] = err.Error()
+	}
+	return "every LLM provider refused the request: " + strings.Join(msgs, "; ")
 }
-func (e *RejectedError) Unwrap() error { return e.Err }
 
-// TooLong reports whether the refusal looks like a size problem (a
-// smaller request may be accepted).
+func (e *RejectedError) Unwrap() []error { return e.Errs }
+
+// Phrases providers use when the input exceeds the model's context. Kept
+// specific: "max_tokens is too large" or schema errors are not about the
+// input size, and splitting would not help.
+var tooLongHints = []string{
+	"context length", "context_length", "context window", "maximum context", "too many tokens",
+	"prompt is too long", "input is too long", "input too long", "request too large",
+	"reduce the length", "exceeds the maximum number of tokens", "input token count",
+}
+
+// TooLong reports whether any provider refused because of the request size
+// (a smaller request may be accepted by it).
 func (e *RejectedError) TooLong() bool {
-	var he *HTTPError
-	if !errors.As(e.Err, &he) {
-		return false
-	}
-	if he.Status == http.StatusRequestEntityTooLarge {
-		return true
-	}
-	body := strings.ToLower(he.Body)
-	for _, hint := range []string{"context", "too long", "too large", "maximum", "token", "length"} {
-		if strings.Contains(body, hint) {
+	for _, err := range e.Errs {
+		var he *HTTPError
+		if !errors.As(err, &he) {
+			continue
+		}
+		if he.Status == http.StatusRequestEntityTooLarge {
 			return true
+		}
+		body := strings.ToLower(he.Body)
+		for _, hint := range tooLongHints {
+			if strings.Contains(body, hint) {
+				return true
+			}
 		}
 	}
 	return false
@@ -324,7 +341,10 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 	est := estimateTokens(req)
 	rejected := map[int64]bool{} // providers that refused this very request
 	failed := map[int64]bool{}   // providers that failed during this call
-	var lastErr error
+	var (
+		lastErr    error
+		rejections []error
+	)
 	// Sends are bounded; waiting for a per-minute window is not a send.
 	for sends := 0; sends < 2*len(provs)+2; {
 		if err := ctx.Err(); err != nil {
@@ -375,7 +395,7 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 				return nil, &ExhaustedError{RetryAt: now.Add(15 * time.Minute), Reasons: reasons}
 			case lastErr != nil:
 				// Every remaining provider refused this request.
-				return nil, &RejectedError{Err: lastErr}
+				return nil, &RejectedError{Errs: rejections}
 			default:
 				// The request exceeds every provider's limits: waiting
 				// cannot help.
@@ -404,6 +424,7 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 		failed[pick.ID] = true
 		if classify(err) == errRequest {
 			rejected[pick.ID] = true
+			rejections = append(rejections, err)
 		}
 	}
 	return nil, fmt.Errorf("LLM request failed on every provider: %w", lastErr)

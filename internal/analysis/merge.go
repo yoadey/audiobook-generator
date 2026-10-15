@@ -211,6 +211,7 @@ func (a *Analyzer) mergeDuplicates(ctx context.Context, bookID int64, progress f
 		if err := a.Store.MarkDistinct(ctx, bookID, p.a, p.b); err != nil {
 			return err
 		}
+		distinct[[2]int64{p.a, p.b}] = true
 	}
 	if len(pairs) == 0 {
 		return nil

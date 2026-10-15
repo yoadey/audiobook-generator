@@ -207,12 +207,23 @@ func TestAnalysisGuards(t *testing.T) {
 		require.Equal(t, http.StatusConflict, c.json(http.MethodDelete, "/api/books/"+id, nil, nil))
 		require.NoError(t, s.FinishJob(ctx, j.ID))
 
-		// A status left "running" without a job is reported as paused.
+		// A status left "running" without a job is reported as paused
+		// (not right after a start, which queues the job just after).
 		require.NoError(t, s.UpdateBook(ctx, book.Id, map[string]any{"AnalysisStatus": store.AnalysisRunning}))
 		var an api.Analysis
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/books/"+id+"/analysis", nil, &an))
+		assert.Equal(t, api.AnalysisStatusRunning, an.Status)
+		require.NoError(t, s.DB().Model(&store.Book{}).Where("id = ?", book.Id).
+			UpdateColumn("updated_at", time.Now().Add(-2*time.Minute)).Error)
 		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/books/"+id+"/analysis", nil, &an))
 		assert.Equal(t, api.AnalysisStatusPaused, an.Status)
 		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/characters/"+cid,
 			map[string]any{"role": "neighbour", "importance": 2}, nil))
+
+		// A renamed character keeps its old name as an alias.
+		var renamed api.CharacterDetail
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/characters/"+cid,
+			map[string]any{"name": "Anna Smith", "aliases": []string{}}, &renamed))
+		assert.Equal(t, []string{"Anna"}, renamed.Aliases)
 	})
 }

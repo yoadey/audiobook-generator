@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/analysis"
@@ -90,9 +91,10 @@ func (s *Server) toAnalysis(ctx context.Context, b *store.Book) (Analysis, error
 	if j != nil {
 		job := toJob(j)
 		out.Job = &job
-	} else if analysis.Active(b) {
+	} else if analysis.Active(b) && time.Since(b.UpdatedAt) > time.Minute {
 		// The job stopped (e.g. it saw a pause just before a resume):
-		// report it as paused, so it can be resumed.
+		// report it as paused, so it can be resumed. (Not right after a
+		// start, which sets the status before it queues the job.)
 		if err := s.Store.UpdateBook(ctx, b.ID, map[string]any{"AnalysisStatus": store.AnalysisPaused}); err != nil {
 			return Analysis{}, err
 		}
@@ -313,7 +315,7 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 		if store.NormName(name) == "" {
 			return UpdateCharacter400JSONResponse{ErrorJSONResponse(errMsg("name must contain letters or digits"))}, nil
 		}
-		fields["Name"], c.Name = name, name
+		fields["Name"] = name
 	}
 	if u.Gender != nil {
 		fields["Gender"] = store.Gender(*u.Gender)
@@ -333,14 +335,22 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 	if u.Importance != nil {
 		fields["Importance"] = *u.Importance
 	}
+	oldName := c.Name
+	if u.Name != nil {
+		c.Name = strings.TrimSpace(*u.Name)
+	}
 	err = s.Store.Tx(ctx, func(tx *store.Store) error {
 		if err := tx.UpdateCharacter(ctx, c.ID, fields); err != nil {
 			return err
 		}
 		if u.Aliases != nil {
-			return tx.SetCharacterAliases(ctx, c, *u.Aliases)
+			if err := tx.SetCharacterAliases(ctx, c, *u.Aliases); err != nil {
+				return err
+			}
 		}
-		return nil
+		// The old name stays known, so the analysis still recognises it.
+		_, err := tx.AddCharacterAliases(ctx, c, oldName)
+		return err
 	})
 	if err != nil {
 		return nil, err

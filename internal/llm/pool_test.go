@@ -483,10 +483,23 @@ func TestRejectionsAndTruncatedRepairs(t *testing.T) {
 		require.ErrorAs(t, err, &rej)
 		assert.True(t, rej.TooLong())
 
-		srv.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":"invalid schema"}`})
-		_, err = pool.Complete(ctx, userReq("bad"))
+		for _, body := range []string{`{"error":"invalid schema: maximum is not supported"}`,
+			`{"error":"max_tokens is too large: 8192. This model supports at most 4096 completion tokens"}`} {
+			srv.Enqueue(llmtest.Reply{Status: 400, Body: body})
+			_, err = pool.Complete(ctx, userReq("bad"))
+			require.ErrorAs(t, err, &rej)
+			assert.False(t, rej.TooLong(), body)
+		}
+
+		// Any provider refusing because of the size counts.
+		other := llmtest.New(t)
+		addProvider(t, s, other, "other", 1, nil)
+		srv.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":"context_length_exceeded"}`})
+		other.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":"unsupported parameter"}`})
+		_, err = pool.Complete(ctx, userReq("long"))
 		require.ErrorAs(t, err, &rej)
-		assert.False(t, rej.TooLong())
+		assert.True(t, rej.TooLong())
+		assert.Len(t, rej.Errs, 2)
 
 		req := userReq("2+3")
 		req.Schema = sumSchema

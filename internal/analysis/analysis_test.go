@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -465,3 +466,35 @@ func TestPauseStopsTheDuplicateCheck(t *testing.T) {
 		assert.Equal(t, store.AnalysisDone, got.AnalysisStatus)
 	})
 }
+
+func TestAnalysisRespectsCorrectionsAndDistrustsStrangeRefs(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, chs := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		// Known: Tom (corrected by hand to importance 1) and Mira (not
+		// mentioned in the book, so never sent with a batch).
+		tom := &store.Character{BookID: b.ID, Name: "Tom", Importance: 1, UserEdited: true}
+		require.NoError(t, s.CreateCharacter(ctx, tom))
+		mira := &store.Character{BookID: b.ID, Name: "Mira", Importance: 5}
+		require.NoError(t, s.CreateCharacter(ctx, mira))
+		require.NoError(t, s.LinkCharacterChapters(ctx, b.ID, mira.ID, chs[3].ID))
+		require.NoError(t, a.Start(ctx, b, false))
+
+		srv.Enqueue(answer(t, []char{
+			{Ref: ref(tom.ID), Name: "Tom", Importance: 5, Speaks: true, Description: "The neighbour\u0000.", Chapters: []int{1}},
+			// A made-up reference to Mira for somebody else.
+			{Ref: ref(mira.ID), Name: "Anna", Gender: "female", Importance: 3, Chapters: []int{1}},
+		}))
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+
+		cs := characters(t, s, b.ID)
+		require.Len(t, cs, 3, "Anna is new, not merged into Mira")
+		assert.Equal(t, 1, cs["Tom"].Importance, "the correction stays")
+		assert.True(t, cs["Tom"].Speaks)
+		assert.Equal(t, 1, cs["Mira"].ChapterCount)
+		assert.Equal(t, 1, cs["Anna"].ChapterCount)
+	})
+}
+
+func ref(id int64) string { return "c" + strconv.FormatInt(id, 10) }

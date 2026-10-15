@@ -115,6 +115,26 @@ func (b *bible) match(name string, aliases []string) int64 {
 	return 0
 }
 
+// related reports whether a reported name or alias shares a word with the
+// names of character id: a reference to a known character must look like
+// it (models occasionally reuse or invent a wrong id).
+func (b *bible) related(id int64, name string, aliases []string) bool {
+	known := map[string]bool{}
+	for _, n := range b.names[id] {
+		for _, w := range strings.Fields(n) {
+			known[w] = true
+		}
+	}
+	for _, s := range append([]string{name}, aliases...) {
+		for _, w := range strings.Fields(store.NormName(s)) {
+			if known[w] && !titles[w] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // relevant lists the known characters a text mentions (all words of a name
 // or alias occur in it), most important first, at most limit.
 func (b *bible) relevant(text string, limit int) []*store.Character {
@@ -194,8 +214,9 @@ func knownLines(cs []*store.Character, aliases map[int64][]store.CharacterAlias)
 	return out
 }
 
+// clip trims, shortens and cleans model output for storage.
 func clip(s string, n int) string {
-	s = strings.TrimSpace(s)
+	s = strings.TrimSpace(store.CleanText(s))
 	r := []rune(s)
 	if len(r) <= n {
 		return s
@@ -229,7 +250,11 @@ func narration(s string) store.Narration {
 
 // apply merges a batch answer into the book's character bible. It runs
 // inside the transaction that also completes the batch.
-func apply(ctx context.Context, tx *store.Store, bookID int64, b *bible, parts []chapterPart, res *batchResult) error {
+// sent are the known characters the batch was given: only their ids are
+// accepted as references.
+func apply(ctx context.Context, tx *store.Store, bookID int64, b *bible, sent map[int64]bool,
+	parts []chapterPart, res *batchResult,
+) error {
 	chapterOf := func(n int) (chapterPart, bool) {
 		if n < 1 || n > len(parts) {
 			return chapterPart{}, false
@@ -243,7 +268,7 @@ func apply(ctx context.Context, tx *store.Store, bookID int64, b *bible, parts [
 			continue
 		}
 		id := int64(0)
-		if r := parseRef(rc.Ref); r != 0 && b.chars[r] != nil {
+		if r := parseRef(rc.Ref); r != 0 && sent[r] && b.related(r, name, rc.Aliases) {
 			id = r
 		} else {
 			id = b.match(name, rc.Aliases)
@@ -263,13 +288,15 @@ func apply(ctx context.Context, tx *store.Store, bookID int64, b *bible, parts [
 		} else {
 			c = b.chars[id]
 			fields := map[string]any{}
-			if imp > c.Importance {
-				c.Importance, fields["Importance"] = imp, imp
-			}
+			// "Speaks" is a fact the user cannot edit; the rest is theirs
+			// once they corrected the character.
 			if rc.Speaks && !c.Speaks {
 				c.Speaks, fields["Speaks"] = true, true
 			}
 			if !c.UserEdited {
+				if imp > c.Importance {
+					c.Importance, fields["Importance"] = imp, imp
+				}
 				fill := func(field string, cur *string, v string, n int) {
 					if *cur == "" && strings.TrimSpace(v) != "" {
 						*cur = clip(v, n)
