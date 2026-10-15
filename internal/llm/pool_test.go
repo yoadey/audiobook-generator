@@ -425,3 +425,47 @@ func TestParseProviderConfigErrors(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, ps)
 }
+
+func TestFallsBackOnTransientErrors(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		primary, backup := llmtest.New(t), llmtest.New(t)
+		addProvider(t, s, primary, "primary", 0, nil)
+		addProvider(t, s, backup, "backup", 1, nil)
+		pool, c := newPool(s)
+
+		for _, failure := range []llmtest.Reply{
+			{Status: 503, Body: `{"error":"overloaded"}`},
+			{Status: 429, Body: `{"error":"slow down"}`}, // no Retry-After: short backoff
+		} {
+			start := c.Now()
+			primary.Enqueue(failure)
+			res, err := pool.Complete(ctx, userReq("hi"))
+			require.NoError(t, err)
+			assert.Equal(t, "backup", res.Provider, "the healthy provider takes over at once")
+			assert.Equal(t, start, c.Now(), "without waiting for the failed one's cooldown")
+			require.NoError(t, c.Sleep(ctx, time.Hour))
+		}
+
+		// When the backup fails too, the primary is waited for again.
+		primary.Enqueue(llmtest.Reply{Status: 503, Body: "{}"})
+		backup.Enqueue(llmtest.Reply{Status: 503, Body: "{}"})
+		res, err := pool.Complete(ctx, userReq("hi"))
+		require.NoError(t, err)
+		assert.Equal(t, "primary", res.Provider)
+	})
+}
+
+func TestRequestTooLargeForEveryProvider(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		srv := llmtest.New(t)
+		addProvider(t, s, srv, "tiny", 0, func(p *store.LLMProvider) { p.TPM = 10 })
+		pool, _ := newPool(s)
+		_, err := pool.Complete(context.Background(), userReq("a request that is far longer than ten tokens per minute allow"))
+		require.Error(t, err)
+		var d jobs.Deferrer
+		assert.NotErrorAs(t, err, &d, "waiting cannot help, so the job must not be deferred")
+		assert.Contains(t, err.Error(), "exceeds the limit")
+		assert.Empty(t, srv.Requests())
+	})
+}

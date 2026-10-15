@@ -287,6 +287,7 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 	}
 	est := estimateTokens(req)
 	rejected := map[int64]bool{} // providers that refused this very request
+	failed := map[int64]bool{}   // providers that failed during this call
 	var lastErr error
 	// Sends are bounded; waiting for a per-minute window is not a send.
 	for sends := 0; sends < 2*len(provs)+2; {
@@ -295,18 +296,19 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 		}
 		now := p.Now()
 		var (
-			pick    *store.LLMProvider
-			pickLim *limiter
-			pickAt  time.Time
-			reasons []string
-			retryAt time.Time
+			pick       *store.LLMProvider
+			pickLim    *limiter
+			pickAt     time.Time
+			reasons    []string
+			retryAt    time.Time
+			keyMissing bool
 		)
-		for i := range provs {
-			prov := &provs[i]
+		for _, prov := range fallbackOrder(provs, failed) {
 			if rejected[prov.ID] {
 				continue
 			}
 			if _, ok := p.apiKey(prov); !ok {
+				keyMissing = true
 				reasons = append(reasons, fmt.Sprintf("%s: API key variable %s is empty", prov.Name, prov.APIKeyEnv))
 				continue
 			}
@@ -331,13 +333,17 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 			switch {
 			case !retryAt.IsZero():
 				return nil, &ExhaustedError{RetryAt: retryAt, Reasons: reasons}
+			case keyMissing:
+				// Wait for the configuration to change, like without
+				// providers.
+				return nil, &ExhaustedError{RetryAt: now.Add(15 * time.Minute), Reasons: reasons}
 			case lastErr != nil:
 				// Every remaining provider refused this request.
 				return nil, lastErr
 			default:
-				// Nothing usable (e.g. keys missing): wait for the
-				// configuration to change, like without providers.
-				return nil, &ExhaustedError{RetryAt: now.Add(15 * time.Minute), Reasons: reasons}
+				// The request exceeds every provider's limits: waiting
+				// cannot help.
+				return nil, fmt.Errorf("no LLM provider can take this request: %s", strings.Join(reasons, "; "))
 			}
 		}
 		if wait := pickAt.Sub(now); wait > 0 {
@@ -359,11 +365,28 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 			return nil, ctx.Err()
 		}
 		lastErr = err
+		failed[pick.ID] = true
 		if classify(err) == errRequest {
 			rejected[pick.ID] = true
 		}
 	}
 	return nil, fmt.Errorf("LLM request failed on every provider: %w", lastErr)
+}
+
+// fallbackOrder lists the providers in their order, but those that already
+// failed during this call last: after an error the next provider is tried
+// before the failed one is waited for (its cooldown may be shorter than
+// MaxWait).
+func fallbackOrder(provs []store.LLMProvider, failed map[int64]bool) []*store.LLMProvider {
+	out := make([]*store.LLMProvider, 0, len(provs))
+	for _, wantFailed := range []bool{false, true} {
+		for i := range provs {
+			if failed[provs[i].ID] == wantFailed {
+				out = append(out, &provs[i])
+			}
+		}
+	}
+	return out
 }
 
 // CompleteJSON is Complete for prompts with a schema: the answer is

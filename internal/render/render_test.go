@@ -8,9 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,10 +35,14 @@ type fakeTTS struct {
 	failAt int32 // 1-based call number to fail (0: never)
 	calls  atomic.Int32
 	err    error
+	onCall func(n int32) // runs before each answer
 }
 
 func (f *fakeTTS) Synthesize(_ context.Context, s tts.Speech) ([]byte, error) {
 	n := f.calls.Add(1)
+	if f.onCall != nil {
+		f.onCall(n)
+	}
 	if f.failAt != 0 && n == f.failAt {
 		return nil, f.err
 	}
@@ -156,5 +162,81 @@ func TestRenderRejectsBadVoice(t *testing.T) {
 		err := r.Render(context.Background(), cs[1].ID, func(float64) {})
 		var perm jobs.PermanentError
 		assert.True(t, errors.As(err, &perm))
+	})
+}
+
+func TestRenderNoticesTextChanges(t *testing.T) {
+	ff := ffmpeg(t)
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir, b, cs := setup(t, s)
+		ch := cs[1]
+		fake := &fakeTTS{onCall: func(n int32) {
+			if n == 1 { // the user merges the next chapter in while it renders
+				_, err := s.MergeChapterWithNext(ctx, ch.ID)
+				require.NoError(t, err)
+			}
+		}}
+		r := &render.Renderer{
+			Store: s, TTS: fake, Encoder: audio.Encoder{FFmpeg: ff}, DataDir: dir,
+			Concurrency: 1, DefaultVoice: "af_heart", Log: slog.New(slog.DiscardHandler),
+		}
+		err := r.Render(ctx, ch.ID, func(float64) {})
+		require.ErrorContains(t, err, "text changed")
+		var perm jobs.PermanentError
+		assert.False(t, errors.As(err, &perm), "rendered again by the next attempt")
+		got, err := s.GetChapter(ctx, ch.ID)
+		require.NoError(t, err)
+		assert.NotEqual(t, store.AudioReady, got.AudioStatus)
+		assert.NoFileExists(t, filepath.Join(dir, render.AudioPath(b.ID, ch.ID)))
+
+		require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+		got, err = s.GetChapter(ctx, ch.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AudioReady, got.AudioStatus)
+	})
+}
+
+func TestRenderOfDeletedBook(t *testing.T) {
+	ff := ffmpeg(t)
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir, b, cs := setup(t, s)
+		fake := &fakeTTS{onCall: func(n int32) {
+			if n == 1 {
+				require.NoError(t, s.DeleteBook(ctx, b.ID))
+			}
+		}}
+		r := &render.Renderer{
+			Store: s, TTS: fake, Encoder: audio.Encoder{FFmpeg: ff}, DataDir: dir,
+			Concurrency: 1, DefaultVoice: "af_heart", Log: slog.New(slog.DiscardHandler),
+		}
+		err := r.Render(ctx, cs[1].ID, func(float64) {})
+		var perm jobs.PermanentError
+		require.ErrorAs(t, err, &perm)
+		assert.NoFileExists(t, filepath.Join(dir, render.AudioPath(b.ID, cs[1].ID)))
+	})
+}
+
+func TestFailedRenderCleansUp(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir, _, cs := setup(t, s)
+		r := &render.Renderer{Store: s, DataDir: dir, Log: slog.New(slog.DiscardHandler)}
+		cache := render.CacheDir(dir, cs[1].ID)
+		require.NoError(t, os.MkdirAll(cache, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(cache, "00000-x.pcm"), make([]byte, 100), 0o600))
+
+		// A long message of multi-byte characters is cut between runes:
+		// PostgreSQL rejects invalid UTF-8.
+		msg := strings.Repeat("“", 400)
+		r.Handler().OnFail(ctx, &store.Job{ChapterID: &cs[1].ID}, errors.New(msg))
+
+		got, err := s.GetChapter(ctx, cs[1].ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AudioFailed, got.AudioStatus)
+		assert.True(t, utf8.ValidString(got.AudioError))
+		assert.True(t, strings.HasPrefix(msg, strings.TrimSuffix(got.AudioError, "…")))
+		assert.NoDirExists(t, cache)
 	})
 }

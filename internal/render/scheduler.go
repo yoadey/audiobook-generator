@@ -2,6 +2,8 @@ package render
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
@@ -17,7 +19,16 @@ type Scheduler struct {
 	Store        *store.Store
 	Jobs         Enqueuer
 	DefaultVoice string
+
+	// mu makes "no render pending → enqueue one" atomic (one app
+	// instance; requests and progress saves arrive concurrently).
+	mu sync.Mutex
 }
+
+// RetryFailedAfter is how long the lookahead leaves a chapter whose render
+// failed for good alone before it tries again (a manual render retries at
+// once). Without it every progress save would queue the failing chapter.
+const RetryFailedAfter = 30 * time.Minute
 
 // Job priorities: explicit requests before lookahead.
 const (
@@ -50,6 +61,8 @@ func (s *Scheduler) RenderChapter(ctx context.Context, b *store.Book, c *store.C
 }
 
 func (s *Scheduler) enqueue(ctx context.Context, b *store.Book, c *store.Chapter, priority int, force bool) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !force && current(c, VoiceKey(NarratorVoice(b, s.DefaultVoice))) {
 		return false, nil
 	}
@@ -79,7 +92,11 @@ func (s *Scheduler) RenderAhead(ctx context.Context, b *store.Book, from, count 
 	}
 	queued := 0
 	for k := range cs {
-		ok, err := s.enqueue(ctx, b, &cs[k], priorityLookahead-k, false)
+		c := &cs[k]
+		if c.AudioStatus == store.AudioFailed && time.Since(c.UpdatedAt) < RetryFailedAfter {
+			continue
+		}
+		ok, err := s.enqueue(ctx, b, c, priorityLookahead-k, false)
 		if err != nil {
 			return queued, err
 		}

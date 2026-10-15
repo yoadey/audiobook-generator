@@ -248,9 +248,11 @@ func (l *limiter) snapshot(now time.Time) snapshot {
 	return s
 }
 
+// truncate shortens s to at most n runes (never splitting one).
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return string(r[:n]) + "…"
 }

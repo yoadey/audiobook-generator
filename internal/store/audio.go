@@ -23,7 +23,7 @@ func (s *Store) SetAudioStatus(ctx context.Context, status AudioStatus, msg stri
 		return nil
 	}
 	return s.db.WithContext(ctx).Model(&Chapter{}).Where("id IN ?", chapterIDs).
-		Updates(map[string]any{"audio_status": status, "audio_error": msg}).Error
+		Updates(map[string]any{"audio_status": status, "audio_error": CleanText(msg)}).Error
 }
 
 // SetChapterAudio records a finished render.

@@ -54,7 +54,7 @@ func (im *Importer) Handler() jobs.Handler {
 				return
 			}
 			if uerr := im.Store.UpdateBook(ctx, *j.BookID, map[string]any{
-				"Status": store.BookFailed, "Error": err.Error(),
+				"Status": store.BookFailed, "Error": store.CleanText(err.Error()),
 			}); uerr != nil {
 				im.Log.Error("mark book failed", "book", *j.BookID, "err", uerr)
 			}

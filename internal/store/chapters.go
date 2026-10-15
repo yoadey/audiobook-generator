@@ -248,3 +248,10 @@ func refreshChapterStats(tx *gorm.DB, chapterID int64) error {
 		"quote_count": quotes.N,
 	}).Error
 }
+
+// ChapterIDs returns the IDs of a book's chapters.
+func (s *Store) ChapterIDs(ctx context.Context, bookID int64) ([]int64, error) {
+	var ids []int64
+	err := s.db.WithContext(ctx).Model(&Chapter{}).Where("book_id = ?", bookID).Pluck("id", &ids).Error
+	return ids, err
+}

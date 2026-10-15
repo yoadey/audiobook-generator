@@ -85,15 +85,10 @@ func applyLimits(p *store.LLMProvider, l *LLMLimits) {
 	if l == nil {
 		return
 	}
-	set := func(dst *int, v *int) {
-		if v != nil {
-			*dst = *v
-		}
-	}
-	set(&p.RPM, l.Rpm)
-	set(&p.TPM, l.Tpm)
-	set(&p.RPD, l.Rpd)
-	set(&p.TPD, l.Tpd)
+	setIf(&p.RPM, l.Rpm)
+	setIf(&p.TPM, l.Tpm)
+	setIf(&p.RPD, l.Rpd)
+	setIf(&p.TPD, l.Tpd)
 }
 
 func setIf[T any](dst *T, v *T) {

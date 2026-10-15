@@ -149,12 +149,22 @@ func (r *Runner) notify(queue string) {
 // Run starts all workers and blocks until ctx is canceled and every
 // worker has stopped.
 func (r *Runner) Run(ctx context.Context) error {
-	n, err := r.st.RequeueRunningJobs(ctx)
+	n, failed, err := r.st.RecoverRunningJobs(ctx)
 	if err != nil {
-		return fmt.Errorf("requeue running jobs: %w", err)
+		return fmt.Errorf("recover running jobs: %w", err)
 	}
 	if n > 0 {
 		r.log.Info("requeued interrupted jobs", "count", n)
+	}
+	for i := range failed {
+		j := &failed[i]
+		r.log.Error("job failed: interrupted on its last attempt", "job", j.ID, "type", j.Type)
+		r.mu.Lock()
+		h, ok := r.handlers[j.Type]
+		r.mu.Unlock()
+		if ok && h.OnFail != nil {
+			h.OnFail(ctx, j, errors.New(store.InterruptedMessage))
+		}
 	}
 
 	r.mu.Lock()

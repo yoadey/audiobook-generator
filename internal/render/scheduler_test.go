@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,5 +87,50 @@ func TestRenderChapterSkipsCurrentAudio(t *testing.T) {
 		// A new narrator makes existing audio stale.
 		b.NarratorVoice = "bm_george"
 		assert.True(t, sched.Stale(b, got))
+	})
+}
+
+func TestLookaheadLeavesFailedChaptersAlone(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		_, b, cs := setup(t, s)
+		q := &queue{s: s}
+		sched := &render.Scheduler{Store: s, Jobs: q, DefaultVoice: "af_heart"}
+		require.NoError(t, s.SetAudioStatus(ctx, store.AudioFailed, "unknown voice", cs[1].ID))
+
+		b.Lookahead = 2
+		_, err := sched.EnsureAhead(ctx, b)
+		require.NoError(t, err)
+		require.Len(t, q.jobs, 1, "every progress save would otherwise queue the failing chapter again")
+		assert.Equal(t, cs[2].ID, *q.jobs[0].ChapterID)
+		got, err := s.GetChapter(ctx, cs[1].ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AudioFailed, got.AudioStatus, "the failure stays visible")
+
+		// After a while the lookahead tries again.
+		require.NoError(t, s.DB().Model(&store.Chapter{}).Where("id = ?", cs[1].ID).
+			UpdateColumn("updated_at", time.Now().Add(-render.RetryFailedAfter-time.Minute)).Error)
+		n, err := sched.EnsureAhead(ctx, b)
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+		assert.Equal(t, cs[1].ID, *q.jobs[1].ChapterID)
+	})
+}
+
+func TestConcurrentRequestsQueueOneRender(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		_, b, cs := setup(t, s)
+		q := &queue{s: s}
+		sched := &render.Scheduler{Store: s, Jobs: q, DefaultVoice: "af_heart"}
+		var wg sync.WaitGroup
+		for range 10 {
+			wg.Go(func() {
+				_, err := sched.RenderChapter(ctx, b, &cs[1], false)
+				assert.NoError(t, err)
+			})
+		}
+		wg.Wait()
+		assert.Len(t, q.jobs, 1)
 	})
 }

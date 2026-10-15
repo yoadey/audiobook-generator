@@ -181,6 +181,47 @@ func TestRequeuesInterruptedJobs(t *testing.T) {
 	})
 }
 
+func TestFailsJobsInterruptedOnTheirLastAttempt(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		// A job that crashed the process on its last attempt (e.g. OOM).
+		j := &store.Job{Type: "oom", Queue: "q", MaxAttempts: 1}
+		require.NoError(t, s.EnqueueJob(ctx, j))
+		_, err := s.ClaimJob(ctx, "q", time.Now().UTC())
+		require.NoError(t, err)
+
+		r := newRunner(s)
+		var ran, failed atomic.Int32
+		r.Handle("oom", jobs.Handler{
+			Queue:  "q",
+			Run:    func(context.Context, *store.Job, func(float64)) error { ran.Add(1); return nil },
+			OnFail: func(context.Context, *store.Job, error) { failed.Add(1) },
+		})
+		start(t, r)
+		got := waitStatus(t, s, j.ID, store.JobFailed)
+		assert.Equal(t, store.InterruptedMessage, got.Error)
+		assert.Eventually(t, func() bool { return failed.Load() == 1 }, time.Second, 10*time.Millisecond)
+		assert.Zero(t, ran.Load(), "not started again")
+	})
+}
+
+func TestStoresUncleanErrors(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		// An HTTP body cut in the middle of a rune, plus a NUL byte:
+		// PostgreSQL would reject both.
+		msg := "tts: 500: “broken" + string([]byte{0xe2, 0x80}) + "\x00end"
+		r.Handle("bad", jobs.Handler{Queue: "q", Run: func(context.Context, *store.Job, func(float64)) error {
+			return jobs.Permanent(errors.New(msg))
+		}})
+		start(t, r)
+		j := &store.Job{Type: "bad"}
+		require.NoError(t, r.Enqueue(context.Background(), j))
+		got := waitStatus(t, s, j.ID, store.JobFailed)
+		assert.Equal(t, "tts: 500: “broken\uFFFDend", got.Error)
+	})
+}
+
 func TestUnknownJobType(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
 		r := newRunner(s)

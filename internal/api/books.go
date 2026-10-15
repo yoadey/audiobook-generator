@@ -168,12 +168,17 @@ func (s *Server) DeleteBook(ctx context.Context, req DeleteBookRequestObject) (D
 			Body:       errMsg("the book is still being imported; delete it afterwards"),
 		}, nil
 	}
+	chapterIDs, err := s.Store.ChapterIDs(ctx, b.ID)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.Store.DeleteBook(ctx, b.ID); err != nil {
 		return nil, err
 	}
 	if err := os.RemoveAll(filepath.Join(s.DataDir, importer.BookDir(b.ID))); err != nil {
 		s.Log.WarnContext(ctx, "remove book files", "book", b.ID, "err", err)
 	}
+	s.removeRenderCache(ctx, chapterIDs...)
 	return DeleteBook204Response{}, nil
 }
 

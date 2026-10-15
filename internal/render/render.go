@@ -67,6 +67,12 @@ func AudioPath(bookID, chapterID int64) string {
 	return filepath.Join(importer.BookDir(bookID), "audio", strconv.FormatInt(chapterID, 10)+".m4a")
 }
 
+// CacheDir holds the synthesized pieces of a chapter while it renders
+// (absolute; removed when the render finishes or fails for good).
+func CacheDir(dataDir string, chapterID int64) string {
+	return filepath.Join(dataDir, "cache", "render", strconv.FormatInt(chapterID, 10))
+}
+
 // VoiceKey identifies the narration settings a file was rendered with.
 func VoiceKey(voice string, speed float64) string {
 	return fmt.Sprintf("%s@%.2f", voice, speed)
@@ -98,12 +104,11 @@ func (r *Renderer) Handler() jobs.Handler {
 			if j.ChapterID == nil {
 				return
 			}
-			msg := err.Error()
-			if len(msg) > maxSynthErrLen {
-				msg = msg[:maxSynthErrLen] + "…"
-			}
-			if serr := r.Store.SetAudioStatus(ctx, store.AudioFailed, msg, *j.ChapterID); serr != nil {
+			if serr := r.Store.SetAudioStatus(ctx, store.AudioFailed, truncate(err.Error(), maxSynthErrLen), *j.ChapterID); serr != nil {
 				r.Log.Error("mark audio failed", "chapter", *j.ChapterID, "err", serr)
+			}
+			if rerr := os.RemoveAll(CacheDir(r.DataDir, *j.ChapterID)); rerr != nil {
+				r.Log.Warn("remove render cache", "chapter", *j.ChapterID, "err", rerr)
 			}
 		},
 	}
@@ -169,6 +174,19 @@ func speakable(s string) string {
 	return s
 }
 
+// fingerprint identifies the text a render was made from, to notice a
+// merge or split of the chapter while it renders.
+func fingerprint(paras []store.Paragraph, segs []store.Segment) string {
+	h := sha256.New()
+	for _, p := range paras {
+		_, _ = fmt.Fprintf(h, "p%d:%s:%s\x00", p.ID, p.Kind, p.Text)
+	}
+	for _, s := range segs {
+		_, _ = fmt.Fprintf(h, "s%d:%d:%s\x00", s.ID, s.ParagraphID, s.Text)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func cacheKey(voiceKey, text string) string {
 	h := sha256.Sum256([]byte(voiceKey + "\x00" + text))
 	return hex.EncodeToString(h[:8])
@@ -194,11 +212,12 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	voice, speed := NarratorVoice(book, r.DefaultVoice)
 	key := VoiceKey(voice, speed)
 	items := plan(ch, paras, segs)
+	text := fingerprint(paras, segs)
 	start := time.Now()
 
 	// 1. Synthesize into the cache (skipping pieces a previous attempt
 	// already finished).
-	cacheDir := filepath.Join(r.DataDir, "cache", "render", strconv.FormatInt(ch.ID, 10))
+	cacheDir := CacheDir(r.DataDir, ch.ID)
 	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
 		return err
 	}
@@ -261,6 +280,14 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return err
 	}
+	// 3. The chapter may have been merged, split or deleted meanwhile:
+	// never mark audio of the old text as ready.
+	if err := r.checkUnchanged(ctx, ch.ID, text); err != nil {
+		if rerr := os.Remove(out); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			r.Log.Warn("remove outdated audio", "chapter", ch.ID, "err", rerr)
+		}
+		return err
+	}
 	duration := audio.Duration(pcmBytes)
 	if err := r.Store.SetChapterAudio(ctx, ch.ID, store.ChapterAudio{
 		Path: rel, DurationMs: duration.Milliseconds(), Size: st.Size(), Voice: key,
@@ -274,6 +301,24 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	r.Metrics.observe(duration, elapsed)
 	r.Log.Info("chapter rendered", "chapter", ch.ID, "audio", duration.Round(time.Second),
 		"took", elapsed.Round(time.Second), "realtime_factor", fmt.Sprintf("%.2f", duration.Seconds()/elapsed.Seconds()))
+	return nil
+}
+
+// checkUnchanged fails when the chapter is gone (permanently) or its text
+// differs from the fingerprint (to be rendered again).
+func (r *Renderer) checkUnchanged(ctx context.Context, chapterID int64, want string) error {
+	if _, err := r.Store.GetChapter(ctx, chapterID); errors.Is(err, store.ErrNotFound) {
+		return jobs.Permanent(errors.New("the chapter was deleted while it was rendered"))
+	} else if err != nil {
+		return err
+	}
+	paras, segs, err := r.Store.ChapterText(ctx, chapterID)
+	if err != nil {
+		return err
+	}
+	if fingerprint(paras, segs) != want {
+		return errors.New("the chapter text changed while it was rendered; rendering again")
+	}
 	return nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strconv"
 	"testing"
@@ -45,6 +46,7 @@ func (fakeTTS) Synthesize(_ context.Context, s tts.Speech) ([]byte, error) {
 type client struct {
 	t   *testing.T
 	url string
+	dir string // data directory
 }
 
 func (c client) do(method, path string, body io.Reader, contentType string, out any) int {
@@ -115,7 +117,7 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 		cancel()
 		<-done
 	})
-	return client{t: t, url: srv.URL}
+	return client{t: t, url: srv.URL, dir: dir}
 }
 
 func waitImported(t *testing.T, c client, id int64) api.Book {
@@ -359,3 +361,35 @@ func TestAudioFlow(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestCancelRenderKeepsAudioAndDeleteCleansUp(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		c := newAPI(t, s, 10<<20)
+		data, err := epubtest.Sample()
+		require.NoError(t, err)
+		var created api.Book
+		require.Equal(t, http.StatusAccepted, c.upload("sample.epub", data, &created))
+		waitImported(t, c, created.Id)
+		ids, err := s.ChapterIDs(ctx, created.Id)
+		require.NoError(t, err)
+		ch := ids[1]
+
+		// Ready audio, then a forced re-render that waits in the queue.
+		require.NoError(t, s.SetChapterAudio(ctx, ch, store.ChapterAudio{Path: "x.m4a", Voice: "af_heart@1.00"}))
+		require.NoError(t, s.SetAudioStatus(ctx, store.AudioQueued, "", ch))
+		j := &store.Job{Type: render.JobType, Queue: render.Queue, BookID: &created.Id, ChapterID: &ch,
+			NotBefore: time.Now().Add(time.Hour)}
+		require.NoError(t, s.EnqueueJob(ctx, j))
+		require.Equal(t, http.StatusOK, c.json(http.MethodPost, "/api/jobs/"+itoa(j.ID)+"/cancel", nil, nil))
+		got, err := s.GetChapter(ctx, ch)
+		require.NoError(t, err)
+		assert.Equal(t, store.AudioReady, got.AudioStatus, "the existing audio stays playable")
+
+		// Deleting the book removes the render cache of its chapters too.
+		cache := render.CacheDir(c.dir, ch)
+		require.NoError(t, os.MkdirAll(cache, 0o750))
+		require.Equal(t, http.StatusNoContent, c.json(http.MethodDelete, "/api/books/"+itoa(created.Id), nil, nil))
+		assert.NoDirExists(t, cache)
+	})
+}

@@ -285,7 +285,13 @@ func (s *Server) CancelJob(ctx context.Context, req CancelJobRequestObject) (Can
 		return nil, err
 	}
 	if j.Type == render.JobType && j.ChapterID != nil {
-		if err := s.Store.SetAudioStatus(ctx, store.AudioNone, "", *j.ChapterID); err != nil {
+		// A forced or stale re-render may have been canceled: existing
+		// audio stays playable.
+		status := store.AudioNone
+		if c, err := s.Store.GetChapter(ctx, *j.ChapterID); err == nil && c.AudioPath != "" {
+			status = store.AudioReady
+		}
+		if err := s.Store.SetAudioStatus(ctx, status, "", *j.ChapterID); err != nil {
 			return nil, err
 		}
 	}

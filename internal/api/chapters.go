@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
@@ -52,6 +53,7 @@ func (s *Server) chapterBook(ctx context.Context, chapterID int64) (*store.Chapt
 
 // dropAudio forgets and deletes the audio of chapters whose text changed.
 func (s *Server) dropAudio(ctx context.Context, chapterIDs ...int64) {
+	s.removeRenderCache(ctx, chapterIDs...)
 	paths, err := s.Store.ClearChapterAudio(ctx, chapterIDs...)
 	if err != nil {
 		s.Log.WarnContext(ctx, "clear chapter audio", "err", err)
@@ -59,6 +61,16 @@ func (s *Server) dropAudio(ctx context.Context, chapterIDs ...int64) {
 	}
 	for _, p := range paths {
 		s.removeFile(ctx, p)
+	}
+}
+
+// removeRenderCache deletes the synthesized pieces of chapters whose text
+// changed or that are gone.
+func (s *Server) removeRenderCache(ctx context.Context, chapterIDs ...int64) {
+	for _, id := range chapterIDs {
+		if err := os.RemoveAll(render.CacheDir(s.DataDir, id)); err != nil {
+			s.Log.WarnContext(ctx, "remove render cache", "chapter", id, "err", err)
+		}
 	}
 }
 
@@ -182,12 +194,15 @@ func (s *Server) UpdateChapter(ctx context.Context, req UpdateChapterRequestObje
 
 // MergeChapterWithNext appends the following chapter.
 func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithNextRequestObject) (MergeChapterWithNextResponseObject, error) {
-	// The next chapter disappears with the merge: remember its audio file.
-	var nextAudio string
+	// The next chapter disappears with the merge: remember its files.
+	var (
+		nextAudio string
+		nextID    int64
+	)
 	if cur, err := s.Store.GetChapter(ctx, req.ChapterId); err == nil {
-		if _, nextID, err := s.Store.AdjacentChapters(ctx, cur); err == nil && nextID != 0 {
-			if next, err := s.Store.GetChapter(ctx, nextID); err == nil {
-				nextAudio = next.AudioPath
+		if _, id, err := s.Store.AdjacentChapters(ctx, cur); err == nil && id != 0 {
+			if next, err := s.Store.GetChapter(ctx, id); err == nil {
+				nextAudio, nextID = next.AudioPath, id
 			}
 		}
 	}
@@ -202,6 +217,9 @@ func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithN
 	}
 	s.dropAudio(ctx, c.ID)
 	s.removeFile(ctx, nextAudio)
+	if nextID != 0 {
+		s.removeRenderCache(ctx, nextID)
+	}
 	c, err = s.Store.GetChapter(ctx, c.ID)
 	if err != nil {
 		return nil, err

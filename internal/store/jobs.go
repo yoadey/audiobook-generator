@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -66,7 +67,7 @@ func (s *Store) FinishJob(ctx context.Context, id int64) error {
 // RetryJob puts a failed attempt back into the queue for later.
 func (s *Store) RetryJob(ctx context.Context, id int64, msg string, at time.Time) error {
 	return s.db.WithContext(ctx).Model(&Job{ID: id}).Updates(map[string]any{
-		"status": JobQueued, "error": msg, "not_before": at,
+		"status": JobQueued, "error": CleanText(msg), "not_before": at,
 	}).Error
 }
 
@@ -82,7 +83,7 @@ func (s *Store) ReleaseJob(ctx context.Context, id int64) error {
 // attempt (e.g. while every LLM provider is out of quota).
 func (s *Store) DeferJob(ctx context.Context, id int64, msg string, at time.Time) error {
 	return s.db.WithContext(ctx).Model(&Job{ID: id}).Updates(map[string]any{
-		"status": JobQueued, "error": msg, "not_before": at,
+		"status": JobQueued, "error": CleanText(msg), "not_before": at,
 		"attempts": gorm.Expr("CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END"),
 	}).Error
 }
@@ -91,7 +92,7 @@ func (s *Store) DeferJob(ctx context.Context, id int64, msg string, at time.Time
 func (s *Store) FailJob(ctx context.Context, id int64, msg string) error {
 	now := time.Now().UTC()
 	return s.db.WithContext(ctx).Model(&Job{ID: id}).Updates(map[string]any{
-		"status": JobFailed, "error": msg, "finished_at": now,
+		"status": JobFailed, "error": CleanText(msg), "finished_at": now,
 	}).Error
 }
 
@@ -100,13 +101,37 @@ func (s *Store) SetJobProgress(ctx context.Context, id int64, p float64) error {
 	return s.db.WithContext(ctx).Model(&Job{ID: id}).UpdateColumn("progress", p).Error
 }
 
-// RequeueRunningJobs returns jobs left "running" by a previous process to
-// the queue. Only one app instance runs, so on start-up every running job
-// is orphaned.
-func (s *Store) RequeueRunningJobs(ctx context.Context) (int64, error) {
-	res := s.db.WithContext(ctx).Model(&Job{}).Where("status = ?", JobRunning).
-		Updates(map[string]any{"status": JobQueued})
-	return res.RowsAffected, res.Error
+// InterruptedMessage is the error of jobs that were running when the
+// process died on their last attempt.
+const InterruptedMessage = "interrupted on its last attempt (the process stopped or crashed while it ran)"
+
+// RecoverRunningJobs handles jobs left "running" by a previous process.
+// Only one app instance runs, so on start-up every running job is
+// orphaned: it goes back to the queue, unless that was its last attempt —
+// a job that kills the process (e.g. out of memory) must not crash-loop
+// forever. Those fail and are returned, so their failure hooks can run.
+func (s *Store) RecoverRunningJobs(ctx context.Context) (requeued int64, failed []Job, err error) {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		exhausted := tx.Where("status = ? AND attempts >= max_attempts", JobRunning)
+		if err := exhausted.Find(&failed).Error; err != nil {
+			return err
+		}
+		if len(failed) > 0 {
+			ids := make([]int64, len(failed))
+			for i := range failed {
+				ids[i] = failed[i].ID
+			}
+			if err := tx.Model(&Job{}).Where("id IN ?", ids).Updates(map[string]any{
+				"status": JobFailed, "error": InterruptedMessage, "finished_at": time.Now().UTC(),
+			}).Error; err != nil {
+				return err
+			}
+		}
+		res := tx.Model(&Job{}).Where("status = ?", JobRunning).Updates(map[string]any{"status": JobQueued})
+		requeued = res.RowsAffected
+		return res.Error
+	})
+	return requeued, failed, err
 }
 
 // JobFilter narrows ListJobs.
@@ -170,4 +195,11 @@ func (s *Store) RetryFailedJob(ctx context.Context, id int64) error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+// CleanText makes free text (error messages that may quote HTTP bodies
+// cut at a byte limit) storable on both dialects: PostgreSQL rejects
+// invalid UTF-8 and NUL bytes in text columns.
+func CleanText(s string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "")
 }
