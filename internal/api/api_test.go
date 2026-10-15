@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/api"
 	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/epub/epubtest"
@@ -102,6 +103,9 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 		Concurrency: 2, DefaultVoice: "af_heart", Log: log,
 	}).Handler())
 	scheduler := &render.Scheduler{Store: s, Jobs: runner, DefaultVoice: "af_heart"}
+	pool := llm.NewPool(s, nil, log)
+	analyzer := &analysis.Analyzer{Store: s, LLM: pool, Jobs: runner, BatchTokens: analysis.DefaultBatchTokens, Log: log}
+	runner.Handle(analysis.JobType, analyzer.Handler())
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = runner.Run(ctx); close(done) }()
@@ -109,7 +113,7 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	mux := http.NewServeMux()
 	api.NewServer(api.Options{
 		Store: s, TTS: fakeTTS{}, Jobs: runner, Scheduler: scheduler, DefaultVoice: "af_heart",
-		LLM: llm.NewPool(s, nil, log), DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
+		LLM: pool, Analyzer: analyzer, DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
 	}).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(func() {

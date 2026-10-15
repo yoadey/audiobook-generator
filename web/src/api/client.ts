@@ -3,6 +3,8 @@ import createClient from 'openapi-fetch';
 
 import type { components, paths } from './schema';
 
+export type Analysis = components['schemas']['Analysis'];
+export type AnalysisStatus = components['schemas']['AnalysisStatus'];
 export type AudioStatus = components['schemas']['AudioStatus'];
 export type Book = components['schemas']['Book'];
 export type BookUpdate = components['schemas']['BookUpdate'];
@@ -10,6 +12,9 @@ export type BookPage = components['schemas']['BookPage'];
 export type Chapter = components['schemas']['Chapter'];
 export type ChapterDetail = components['schemas']['ChapterDetail'];
 export type ChapterUpdate = components['schemas']['ChapterUpdate'];
+export type Character = components['schemas']['Character'];
+export type CharacterDetail = components['schemas']['CharacterDetail'];
+export type CharacterUpdate = components['schemas']['CharacterUpdate'];
 export type Job = components['schemas']['Job'];
 export type LLMProvider = components['schemas']['LLMProvider'];
 export type LLMProviderInput = components['schemas']['LLMProviderInput'];
@@ -49,6 +54,8 @@ async function unwrap<T>(
 
 const POLL_MS = 2000;
 
+const analysisActive = (s?: AnalysisStatus) => s === 'queued' || s === 'running' || s === 'merging';
+
 // --- Queries -----------------------------------------------------------------
 
 export const systemInfoQuery = queryOptions({
@@ -61,9 +68,13 @@ export const booksQuery = () =>
   queryOptions({
     queryKey: ['books', 'list'],
     queryFn: () => unwrap(api.GET('/books', { params: { query: { limit: 500 } } })),
-    // Keep polling while an import runs.
+    // Keep polling while an import runs (fast) or an analysis (slowly).
     refetchInterval: (q) =>
-      q.state.data?.items.some((b) => b.status === 'importing') ? POLL_MS : false,
+      q.state.data?.items.some((b) => b.status === 'importing')
+        ? POLL_MS
+        : q.state.data?.items.some((b) => analysisActive(b.analysisStatus))
+          ? 15_000
+          : false,
   });
 
 export const bookQuery = (bookId: number) =>
@@ -123,6 +134,48 @@ export const llmProvidersQuery = queryOptions({
   queryFn: () => unwrap(api.GET('/llm/providers')),
   refetchInterval: 10_000,
 });
+
+export const analysisQuery = (bookId: number) =>
+  queryOptions({
+    queryKey: ['books', bookId, 'analysis'],
+    queryFn: () => unwrap(api.GET('/books/{bookId}/analysis', { params: { path: { bookId } } })),
+    refetchInterval: (q) => (analysisActive(q.state.data?.status) ? 5000 : false),
+  });
+
+export type CharacterSort = 'importance' | 'name' | 'chapters' | 'first';
+
+export const charactersQuery = (
+  bookId: number,
+  search: string,
+  sort: CharacterSort,
+  page: number,
+  pageSize = 50,
+) =>
+  queryOptions({
+    queryKey: ['books', bookId, 'characters', { search, sort, page }],
+    queryFn: () =>
+      unwrap(
+        api.GET('/books/{bookId}/characters', {
+          params: {
+            path: { bookId },
+            query: {
+              search: search || undefined,
+              sort,
+              offset: (page - 1) * pageSize,
+              limit: pageSize,
+            },
+          },
+        }),
+      ),
+    placeholderData: (prev) => prev,
+  });
+
+export const characterQuery = (characterId: number) =>
+  queryOptions({
+    queryKey: ['characters', characterId],
+    queryFn: () =>
+      unwrap(api.GET('/characters/{characterId}', { params: { path: { characterId } } })),
+  });
 
 export const audioUrl = (chapterId: number) => `${baseUrl}/chapters/${chapterId}/audio`;
 
@@ -226,3 +279,31 @@ export const testLLMProvider = (providerId: number) =>
   unwrap(api.POST('/llm/providers/{providerId}/test', { params: { path: { providerId } } }));
 
 export const listLLMModels = (body: LLMModelsRequest) => unwrap(api.POST('/llm/models', { body }));
+
+export const startAnalysis = (bookId: number, restart = false) =>
+  unwrap(api.POST('/books/{bookId}/analysis', { params: { path: { bookId } }, body: { restart } }));
+
+export const pauseAnalysis = (bookId: number) =>
+  unwrap(api.POST('/books/{bookId}/analysis/pause', { params: { path: { bookId } } }));
+
+export const updateCharacter = (characterId: number, body: CharacterUpdate) =>
+  unwrap(api.PATCH('/characters/{characterId}', { params: { path: { characterId } }, body }));
+
+export const deleteCharacter = (characterId: number) =>
+  unwrap(api.DELETE('/characters/{characterId}', { params: { path: { characterId } } }));
+
+export const mergeCharacters = (bookId: number, targetId: number, sourceIds: number[]) =>
+  unwrap(
+    api.POST('/books/{bookId}/characters/merge', {
+      params: { path: { bookId } },
+      body: { targetId, sourceIds },
+    }),
+  );
+
+export const splitCharacter = (characterId: number, name: string, aliases: string[]) =>
+  unwrap(
+    api.POST('/characters/{characterId}/split', {
+      params: { path: { characterId } },
+      body: { name, aliases },
+    }),
+  );

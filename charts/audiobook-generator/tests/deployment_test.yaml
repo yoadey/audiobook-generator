@@ -204,6 +204,11 @@ tests:
           content:
             name: ABG_LLM_MAX_WAIT
             value: 70s
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_ANALYSIS_BATCH_TOKENS
+            value: "30000"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:

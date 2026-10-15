@@ -51,6 +51,9 @@ type LLM struct {
 	// MaxWait is how long a request waits for a provider's per-minute
 	// window before falling back to the next provider.
 	MaxWait time.Duration `env:"MAX_WAIT" envDefault:"70s"`
+	// AnalysisBatchTokens is the input size of one character analysis
+	// request (fewer, larger requests save daily request quota).
+	AnalysisBatchTokens int `env:"ANALYSIS_BATCH_TOKENS" envDefault:"30000"`
 }
 
 // Database selects and configures the GORM dialect.
@@ -117,6 +120,9 @@ func (c Config) Validate() error {
 	}
 	if c.TTS.DefaultVoice == "" {
 		errs = append(errs, errors.New("ABG_TTS_DEFAULT_VOICE must not be empty"))
+	}
+	if c.LLM.AnalysisBatchTokens < 1000 {
+		errs = append(errs, fmt.Errorf("ABG_LLM_ANALYSIS_BATCH_TOKENS must be at least 1000, got %d", c.LLM.AnalysisBatchTokens))
 	}
 	if c.LLM.MaxWait < 0 {
 		errs = append(errs, fmt.Errorf("ABG_LLM_MAX_WAIT must not be negative, got %s", c.LLM.MaxWait))

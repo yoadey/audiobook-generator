@@ -164,6 +164,11 @@ llm:
   # How long a request waits for a provider's per-minute window before it
   # falls back to the next provider.
   maxWait: 70s
+  # Input tokens per character analysis request. Larger batches need fewer
+  # requests (daily request quotas) but a provider with a large enough
+  # tokens-per-minute limit and context; batches that are too large for
+  # every provider are split automatically.
+  analysisBatchTokens: 30000
   # OpenAI-compatible providers for character analysis and speaker
   # attribution, tried in this order. More can be added in the UI (Settings);
   # providers listed here appear there read-only. Book text is sent to them:

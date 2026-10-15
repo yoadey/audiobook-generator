@@ -38,6 +38,14 @@ type Book struct {
 	// Lookahead is how many chapters after the listening position are kept
 	// rendered.
 	Lookahead int `gorm:"not null;default:3"`
+
+	// Character analysis (see AnalysisStatus); the progress is counted
+	// from the analysis batches.
+	AnalysisStatus     AnalysisStatus `gorm:"not null;default:'none'"`
+	AnalysisError      string         `gorm:"not null;default:''"`
+	AnalysisStartedAt  *time.Time
+	AnalysisFinishedAt *time.Time
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -90,6 +98,11 @@ type Chapter struct {
 	// AudioVoice is the voice key (recipe@speed) the audio was rendered with.
 	AudioVoice     string `gorm:"not null;default:''"`
 	AudioUpdatedAt *time.Time
+
+	// Narration (first/third person) and point-of-view character, from
+	// the character analysis.
+	Narration      Narration `gorm:"not null;default:''"`
+	POVCharacterID *int64
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -242,4 +255,136 @@ type LLMUsage struct {
 	Errors      int64 `gorm:"not null;default:0"`
 	RateLimited int64 `gorm:"not null;default:0"`
 	UpdatedAt   time.Time
+}
+
+// AnalysisStatus is the state of a book's character analysis.
+type AnalysisStatus string
+
+// Analysis states.
+const (
+	AnalysisNone    AnalysisStatus = "none"
+	AnalysisQueued  AnalysisStatus = "queued"
+	AnalysisRunning AnalysisStatus = "running"
+	AnalysisMerging AnalysisStatus = "merging"
+	AnalysisPaused  AnalysisStatus = "paused"
+	AnalysisDone    AnalysisStatus = "done"
+	AnalysisFailed  AnalysisStatus = "failed"
+)
+
+// Narration is how a chapter is told.
+type Narration string
+
+// Narration kinds ("" = not analysed yet).
+const (
+	NarrationFirstPerson Narration = "first_person"
+	NarrationThirdPerson Narration = "third_person"
+	NarrationMixed       Narration = "mixed"
+	NarrationUnknown     Narration = "unknown"
+)
+
+// Gender of a character (what voice casting can use).
+type Gender string
+
+// Genders.
+const (
+	GenderFemale  Gender = "female"
+	GenderMale    Gender = "male"
+	GenderUnknown Gender = "unknown"
+)
+
+// AgeGroup of a character.
+type AgeGroup string
+
+// Age groups.
+const (
+	AgeChild   AgeGroup = "child"
+	AgeTeen    AgeGroup = "teen"
+	AgeAdult   AgeGroup = "adult"
+	AgeElderly AgeGroup = "elderly"
+	AgeUnknown AgeGroup = "unknown"
+)
+
+// Character is an entry of a book's character bible.
+type Character struct {
+	ID          int64    `gorm:"primaryKey"`
+	BookID      int64    `gorm:"not null;index"`
+	Name        string   `gorm:"not null"`
+	Gender      Gender   `gorm:"not null;default:'unknown'"`
+	AgeGroup    AgeGroup `gorm:"not null;default:'unknown'"`
+	Role        string   `gorm:"not null;default:''"`
+	Description string   `gorm:"not null;default:''"`
+	SpeechStyle string   `gorm:"not null;default:''"`
+	// Importance 1 (walk-on) … 5 (protagonist), the highest any analysis
+	// batch gave.
+	Importance int `gorm:"not null;default:1"`
+	// Speaks is set once any batch saw the character speak.
+	Speaks bool `gorm:"not null;default:false"`
+	// Derived from CharacterChapter (RefreshCharacterStats).
+	ChapterCount    int `gorm:"not null;default:0"`
+	FirstChapterIdx int `gorm:"not null;default:0"`
+	// UserEdited protects the profile from being overwritten by analysis.
+	UserEdited bool `gorm:"not null;default:false"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// CharacterAlias is another name of a character. Norm is the normalized
+// form used for matching (not unique: "the captain" may be ambiguous).
+type CharacterAlias struct {
+	ID          int64  `gorm:"primaryKey"`
+	BookID      int64  `gorm:"not null;index:idx_character_aliases_book_norm,priority:1"`
+	CharacterID int64  `gorm:"not null;index"`
+	Alias       string `gorm:"not null"`
+	Norm        string `gorm:"not null;index:idx_character_aliases_book_norm,priority:2"`
+}
+
+// CharacterChapter records that a character appears in a chapter.
+type CharacterChapter struct {
+	ID          int64 `gorm:"primaryKey"`
+	BookID      int64 `gorm:"not null;index"`
+	CharacterID int64 `gorm:"not null;uniqueIndex:idx_character_chapters_pair,priority:1"`
+	ChapterID   int64 `gorm:"not null;uniqueIndex:idx_character_chapters_pair,priority:2;index"`
+}
+
+// CharacterDistinct records that two characters are different people (a
+// merge candidate was rejected, or a character was split), so they are not
+// proposed for merging again. AID < BID.
+type CharacterDistinct struct {
+	ID     int64 `gorm:"primaryKey"`
+	BookID int64 `gorm:"not null;index"`
+	AID    int64 `gorm:"column:a_id;not null;uniqueIndex:idx_character_distincts_pair,priority:1"`
+	BID    int64 `gorm:"column:b_id;not null;uniqueIndex:idx_character_distincts_pair,priority:2"`
+}
+
+// BatchStatus is the state of an analysis batch.
+type BatchStatus string
+
+// Batch states.
+const (
+	BatchPending BatchStatus = "pending"
+	BatchDone    BatchStatus = "done"
+)
+
+// AnalysisBatch is one LLM request of a book's character analysis: a run
+// of chapters (or paragraphs of one huge chapter), analysed in reading
+// order. The validated answer is kept, so results can be traced to a
+// prompt version and provider.
+type AnalysisBatch struct {
+	ID     int64 `gorm:"primaryKey"`
+	BookID int64 `gorm:"not null;index:idx_analysis_batches_order,priority:1"`
+	// Reading order of the batch's first part.
+	FirstChapterIdx int `gorm:"not null;index:idx_analysis_batches_order,priority:2"`
+	FirstParaIdx    int `gorm:"not null;index:idx_analysis_batches_order,priority:3"`
+	// Parts is a JSON array of {chapterId, fromPara, toPara} (paragraph
+	// indexes, toPara exclusive and 0 = to the end).
+	Parts        string      `gorm:"not null"`
+	Tokens       int         `gorm:"not null;default:0"` // estimated input
+	Status       BatchStatus `gorm:"not null;default:'pending'"`
+	Prompt       string      `gorm:"not null;default:''"`
+	Provider     string      `gorm:"not null;default:''"`
+	Model        string      `gorm:"not null;default:''"`
+	InputTokens  int         `gorm:"not null;default:0"`
+	OutputTokens int         `gorm:"not null;default:0"`
+	Result       string      `gorm:"not null;default:''"`
+	CompletedAt  *time.Time
 }

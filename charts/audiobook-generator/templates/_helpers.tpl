@@ -172,6 +172,8 @@ the names of variables that read them from Secrets). */}}
 {{- define "abg.llmEnv" -}}
 - name: ABG_LLM_MAX_WAIT
   value: {{ .Values.llm.maxWait | quote }}
+- name: ABG_LLM_ANALYSIS_BATCH_TOKENS
+  value: {{ .Values.llm.analysisBatchTokens | quote }}
 {{- with .Values.llm.providers }}
 {{- $providers := list }}
 {{- range $i, $p := . }}

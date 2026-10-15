@@ -47,6 +47,8 @@ func (r Request) Messages() []map[string]any {
 type Server struct {
 	*httptest.Server
 	Models []string
+	// Respond, when set, answers requests no scripted reply is queued for.
+	Respond func(Request) Reply
 
 	mu         sync.Mutex
 	replies    []Reply
@@ -120,6 +122,10 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
+	if reply == nil && s.Respond != nil {
+		r := s.Respond(req)
+		reply = &r
+	}
 	if reply == nil {
 		reply = &Reply{Content: autoAnswer(req)}
 	}

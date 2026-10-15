@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "characters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": { "type": "string" },
+          "name": { "type": "string", "minLength": 1 },
+          "aliases": { "type": "array", "items": { "type": "string" } },
+          "gender": { "type": "string", "enum": ["female", "male", "unknown"] },
+          "age": { "type": "string", "enum": ["child", "teen", "adult", "elderly", "unknown"] },
+          "role": { "type": "string" },
+          "description": { "type": "string" },
+          "speech_style": { "type": "string" },
+          "importance": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "speaks": { "type": "boolean" },
+          "chapters": { "type": "array", "items": { "type": "integer" } }
+        },
+        "required": ["ref", "name", "aliases", "gender", "age", "role", "description",
+          "speech_style", "importance", "speaks", "chapters"]
+      }
+    },
+    "chapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "n": { "type": "integer" },
+          "narration": { "type": "string", "enum": ["first_person", "third_person", "mixed", "unknown"] },
+          "pov": { "type": "string" }
+        },
+        "required": ["n", "narration", "pov"]
+      }
+    }
+  },
+  "required": ["characters", "chapters"]
+}

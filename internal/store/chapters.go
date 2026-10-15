@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ErrInvalid is returned for operations that do not make sense, e.g.
@@ -14,7 +15,8 @@ var ErrInvalid = errors.New("invalid operation")
 
 // ChapterFilter narrows ListChapters.
 type ChapterFilter struct {
-	VolumeID *int64
+	VolumeID    *int64
+	CharacterID *int64 // chapters the character appears in
 }
 
 // ListChapters returns a page of a book's chapters in reading order.
@@ -22,6 +24,10 @@ func (s *Store) ListChapters(ctx context.Context, bookID int64, f ChapterFilter,
 	q := s.db.WithContext(ctx).Model(&Chapter{}).Where("book_id = ?", bookID)
 	if f.VolumeID != nil {
 		q = q.Where("volume_id = ?", *f.VolumeID)
+	}
+	if f.CharacterID != nil {
+		q = q.Where("id IN (?)", s.db.Session(&gorm.Session{NewDB: true}).Model(&CharacterChapter{}).
+			Select("chapter_id").Where("character_id = ?", *f.CharacterID))
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -126,11 +132,17 @@ func (s *Store) MergeChapterWithNext(ctx context.Context, id int64) (*Chapter, e
 		}).Error; err != nil {
 			return err
 		}
+		if err := moveCharacterLinks(tx, c.BookID, next.ID, c.ID); err != nil {
+			return err
+		}
 		if err := tx.Delete(&Chapter{}, next.ID).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&Chapter{}).Where("book_id = ? AND idx > ?", c.BookID, next.Idx).
 			UpdateColumn("idx", gorm.Expr("idx - 1")).Error; err != nil {
+			return err
+		}
+		if err := refreshCharacterStatsTx(ctx, tx, c.BookID); err != nil {
 			return err
 		}
 		return refreshChapterStats(tx, c.ID)
@@ -204,6 +216,19 @@ func (s *Store) SplitChapter(ctx context.Context, id, paragraphID int64, title s
 		if err := refreshChapterStats(tx, c.ID); err != nil {
 			return err
 		}
+		// Both parts keep the characters of the chapter (which part they
+		// appear in is unknown) and its narration.
+		if err := copyCharacterLinks(tx, c.BookID, c.ID, created.ID); err != nil {
+			return err
+		}
+		if err := tx.Model(&Chapter{ID: created.ID}).Updates(map[string]any{
+			"narration": c.Narration, "pov_character_id": c.POVCharacterID,
+		}).Error; err != nil {
+			return err
+		}
+		if err := refreshCharacterStatsTx(ctx, tx, c.BookID); err != nil {
+			return err
+		}
 		return refreshChapterStats(tx, created.ID)
 	})
 	if err != nil {
@@ -254,4 +279,34 @@ func (s *Store) ChapterIDs(ctx context.Context, bookID int64) ([]int64, error) {
 	var ids []int64
 	err := s.db.WithContext(ctx).Model(&Chapter{}).Where("book_id = ?", bookID).Pluck("id", &ids).Error
 	return ids, err
+}
+
+// copyCharacterLinks gives chapter to the characters of chapter from.
+func copyCharacterLinks(tx *gorm.DB, bookID, from, to int64) error {
+	var charIDs []int64
+	if err := tx.Model(&CharacterChapter{}).Where("chapter_id = ?", from).Pluck("character_id", &charIDs).Error; err != nil {
+		return err
+	}
+	if len(charIDs) == 0 {
+		return nil
+	}
+	rows := make([]CharacterChapter, len(charIDs))
+	for i, id := range charIDs {
+		rows[i] = CharacterChapter{BookID: bookID, CharacterID: id, ChapterID: to}
+	}
+	return tx.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(rows, batchSize).Error
+}
+
+// moveCharacterLinks moves appearances from a chapter that is merged away.
+func moveCharacterLinks(tx *gorm.DB, bookID, from, to int64) error {
+	if err := copyCharacterLinks(tx, bookID, from, to); err != nil {
+		return err
+	}
+	return tx.Where("chapter_id = ?", from).Delete(&CharacterChapter{}).Error
+}
+
+// refreshCharacterStatsTx recomputes all character stats of a book after
+// chapters moved (first appearances are chapter indexes).
+func refreshCharacterStatsTx(ctx context.Context, tx *gorm.DB, bookID int64) error {
+	return (&Store{db: tx}).RefreshBookCharacterStats(ctx, bookID)
 }

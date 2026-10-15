@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 
+	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/api"
 	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
@@ -90,6 +91,10 @@ func run() error {
 		Log:          log,
 	}
 	runner.Handle(render.JobType, renderer.Handler())
+	analyzer := &analysis.Analyzer{
+		Store: st, LLM: llmPool, Jobs: runner, BatchTokens: cfg.LLM.AnalysisBatchTokens, Log: log,
+	}
+	runner.Handle(analysis.JobType, analyzer.Handler())
 	scheduler := &render.Scheduler{Store: st, Jobs: runner, DefaultVoice: cfg.TTS.DefaultVoice}
 	runnerDone := make(chan struct{})
 	go func() {
@@ -108,6 +113,7 @@ func run() error {
 				Jobs:           runner,
 				Scheduler:      scheduler,
 				LLM:            llmPool,
+				Analyzer:       analyzer,
 				DefaultVoice:   cfg.TTS.DefaultVoice,
 				DataDir:        cfg.DataDir,
 				MaxUploadBytes: cfg.MaxUploadMB << 20,

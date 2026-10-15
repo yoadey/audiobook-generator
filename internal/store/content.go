@@ -23,6 +23,10 @@ func chapterIDs(tx *gorm.DB, bookID int64) *gorm.DB {
 }
 
 func deleteBookContent(tx *gorm.DB, bookID int64) error {
+	// The analysis refers to chapters and is invalid without them.
+	if err := deleteAnalysis(tx, bookID); err != nil {
+		return err
+	}
 	ids := chapterIDs(tx.Session(&gorm.Session{NewDB: true}), bookID)
 	if err := tx.Where("chapter_id IN (?)", ids).Delete(&Segment{}).Error; err != nil {
 		return err

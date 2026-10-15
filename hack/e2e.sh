@@ -112,4 +112,18 @@ echo "$result"
 grep -q '"ok":true' <<<"$result"
 providers="$(curl -fsS localhost:18080/api/llm/providers)"
 grep -q '"requests":1' <<<"$providers"
+
+# The character analysis finds the speakers of the sample book.
+curl -fsS -X POST "localhost:18080/api/books/$id/analysis" >/dev/null
+for _ in $(seq 1 60); do
+  analysis="$(curl -fsS "localhost:18080/api/books/$id/analysis")"
+  grep -qE '"status":"(done|failed)"' <<<"$analysis" && break
+  sleep 1
+done
+echo "$analysis"
+grep -q '"status":"done"' <<<"$analysis"
+characters="$(curl -fsS "localhost:18080/api/books/$id/characters")"
+echo "$characters"
+grep -q '"name":"Anna"' <<<"$characters"
+grep -q '"name":"Tom"' <<<"$characters"
 echo "e2e ($db) passed"

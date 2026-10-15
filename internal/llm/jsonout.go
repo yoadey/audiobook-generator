@@ -19,6 +19,9 @@ import (
 type InvalidOutputError struct {
 	Err     error
 	Content string
+	// Truncated is set when the answer hit the output token limit (a
+	// smaller request may fit).
+	Truncated bool
 }
 
 func (e *InvalidOutputError) Error() string { return "invalid model output: " + e.Err.Error() }

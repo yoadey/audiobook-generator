@@ -5,7 +5,7 @@ info:
     HTTP API of the audiobook-generator service. This file is the single source
     of truth: the Go server (internal/api) and the TypeScript client
     (web/src/api) are generated from it.
-  version: 0.3.0
+  version: 0.4.0
 servers:
   - url: /api
 paths:
@@ -175,6 +175,13 @@ paths:
         - name: volumeId
           in: query
           required: false
+          schema:
+            type: integer
+            format: int64
+        - name: characterId
+          in: query
+          required: false
+          description: Only chapters this character appears in
           schema:
             type: integer
             format: int64
@@ -657,6 +664,221 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /books/{bookId}/analysis:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getAnalysis
+      summary: State of the book's character analysis (or an estimate before it starts)
+      tags: [characters]
+      responses:
+        "200":
+          description: Analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: startAnalysis
+      summary: Start or resume the character analysis
+      description: >-
+        Resumes where a paused or failed analysis stopped. With restart, all
+        results so far, including manual corrections, are discarded first.
+      tags: [characters]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalysisStart"
+      responses:
+        "202":
+          description: The analysis is queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/analysis/pause:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    post:
+      operationId: pauseAnalysis
+      summary: Pause the character analysis (a running batch finishes first)
+      tags: [characters]
+      responses:
+        "200":
+          description: Analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/characters:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listCharacters
+      summary: A book's characters
+      tags: [characters]
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Substring of a name or alias
+          schema:
+            type: string
+            maxLength: 100
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [importance, name, chapters, first]
+            default: importance
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of characters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterPage"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/characters/merge:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    post:
+      operationId: mergeCharacters
+      summary: Merge characters into one (their names become aliases)
+      tags: [characters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CharacterMerge"
+      responses:
+        "200":
+          description: The merged character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /characters/{characterId}:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    get:
+      operationId: getCharacter
+      summary: A character with aliases and chapters
+      tags: [characters]
+      responses:
+        "200":
+          description: Character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateCharacter
+      summary: Correct a character (protects it from being overwritten by the analysis)
+      tags: [characters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CharacterUpdate"
+      responses:
+        "200":
+          description: Character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteCharacter
+      summary: Delete a character (e.g. not a person)
+      tags: [characters]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /characters/{characterId}/split:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    post:
+      operationId: splitCharacter
+      summary: Move aliases of a character to a new character
+      tags: [characters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CharacterSplit"
+      responses:
+        "201":
+          description: The new character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
   parameters:
     BookId:
@@ -675,6 +897,13 @@ components:
         format: int64
     JobId:
       name: jobId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    CharacterId:
+      name: characterId
       in: path
       required: true
       schema:
@@ -779,6 +1008,7 @@ components:
         - narratorVoice
         - narratorSpeed
         - lookahead
+        - analysisStatus
         - createdAt
         - updatedAt
       properties:
@@ -814,6 +1044,11 @@ components:
         lookahead:
           type: integer
           description: Chapters after the listening position that are kept rendered
+        analysisStatus:
+          $ref: "#/components/schemas/AnalysisStatus"
+        analysisProgress:
+          type: number
+          description: Share of analysed batches (0..1) once the analysis is planned
         createdAt:
           type: string
           format: date-time
@@ -906,6 +1141,15 @@ components:
         audioStale:
           type: boolean
           description: The audio was rendered with another narrator voice or speed
+        narration:
+          $ref: "#/components/schemas/Narration"
+        povCharacterId:
+          type: integer
+          format: int64
+          description: Point-of-view character found by the analysis
+    Narration:
+      type: string
+      enum: [first_person, third_person, mixed, unknown]
     ChapterPage:
       type: object
       required: [items, total]
@@ -972,6 +1216,11 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Paragraph"
+            characters:
+              type: array
+              description: Characters appearing in the chapter, most important first
+              items:
+                $ref: "#/components/schemas/CharacterRef"
     ChapterUpdate:
       type: object
       properties:
@@ -1360,3 +1609,199 @@ components:
         apiKey:
           type: string
           maxLength: 1000
+
+    AnalysisStatus:
+      type: string
+      enum: [none, queued, running, merging, paused, done, failed]
+    AnalysisStart:
+      type: object
+      properties:
+        restart:
+          type: boolean
+          description: Discard all results (including manual corrections) and start over
+    Analysis:
+      type: object
+      required: [status, batchesTotal, batchesDone, estimatedTokens, inputTokens, outputTokens,
+        characterCount, batchTokens, prompt]
+      properties:
+        status:
+          $ref: "#/components/schemas/AnalysisStatus"
+        error:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        batchesTotal:
+          type: integer
+          description: LLM requests of the analysis; before it starts, the estimate
+        batchesDone:
+          type: integer
+        estimatedTokens:
+          type: integer
+          format: int64
+          description: Input tokens of all batches (estimated)
+        inputTokens:
+          type: integer
+          format: int64
+          description: Tokens used so far, as reported by the providers
+        outputTokens:
+          type: integer
+          format: int64
+        characterCount:
+          type: integer
+          format: int64
+        batchTokens:
+          type: integer
+          description: Configured input size of one request
+        prompt:
+          type: string
+          description: Prompt version new batches use
+        job:
+          $ref: "#/components/schemas/Job"
+    Gender:
+      type: string
+      enum: [female, male, unknown]
+    AgeGroup:
+      type: string
+      enum: [child, teen, adult, elderly, unknown]
+    CharacterRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+    Character:
+      type: object
+      required: [id, bookId, name, aliases, gender, ageGroup, role, description, speechStyle, importance,
+        speaks, chapterCount, firstChapterIdx, userEdited]
+      properties:
+        id:
+          type: integer
+          format: int64
+        bookId:
+          type: integer
+          format: int64
+        name:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        gender:
+          $ref: "#/components/schemas/Gender"
+        ageGroup:
+          $ref: "#/components/schemas/AgeGroup"
+        role:
+          type: string
+        description:
+          type: string
+        speechStyle:
+          type: string
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 5
+        speaks:
+          type: boolean
+        chapterCount:
+          type: integer
+        firstChapterIdx:
+          type: integer
+        userEdited:
+          type: boolean
+          description: Corrected by hand; the analysis does not overwrite the profile
+    CharacterPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Character"
+        total:
+          type: integer
+          format: int64
+    ChapterRef:
+      type: object
+      required: [id, idx, title]
+      properties:
+        id:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+        title:
+          type: string
+    CharacterDetail:
+      allOf:
+        - $ref: "#/components/schemas/Character"
+        - type: object
+          required: [chapters]
+          properties:
+            chapters:
+              type: array
+              items:
+                $ref: "#/components/schemas/ChapterRef"
+    CharacterUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        aliases:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+            maxLength: 120
+        gender:
+          $ref: "#/components/schemas/Gender"
+        ageGroup:
+          $ref: "#/components/schemas/AgeGroup"
+        role:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 1000
+        speechStyle:
+          type: string
+          maxLength: 200
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 5
+    CharacterMerge:
+      type: object
+      required: [targetId, sourceIds]
+      properties:
+        targetId:
+          type: integer
+          format: int64
+        sourceIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: integer
+            format: int64
+    CharacterSplit:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        aliases:
+          type: array
+          maxItems: 200
+          items:
+            type: string

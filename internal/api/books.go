@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -19,21 +21,22 @@ import (
 func (s *Server) toBook(b *store.Book) Book {
 	voice, speed := render.NarratorVoice(b, s.DefaultVoice)
 	return Book{
-		NarratorVoice: voice,
-		NarratorSpeed: float32(speed),
-		Lookahead:     b.Lookahead,
-		Id:            b.ID,
-		Title:         b.Title,
-		Author:        b.Author,
-		Language:      b.Language,
-		Status:        BookStatus(b.Status),
-		Progress:      float32(b.Progress),
-		Error:         nonEmpty(b.Error),
-		WordCount:     b.WordCount,
-		ChapterCount:  b.ChapterCount,
-		HasCover:      b.CoverPath != "",
-		CreatedAt:     b.CreatedAt,
-		UpdatedAt:     b.UpdatedAt,
+		NarratorVoice:  voice,
+		NarratorSpeed:  float32(speed),
+		Lookahead:      b.Lookahead,
+		Id:             b.ID,
+		Title:          b.Title,
+		Author:         b.Author,
+		Language:       b.Language,
+		Status:         BookStatus(b.Status),
+		Progress:       float32(b.Progress),
+		Error:          nonEmpty(b.Error),
+		WordCount:      b.WordCount,
+		ChapterCount:   b.ChapterCount,
+		HasCover:       b.CoverPath != "",
+		AnalysisStatus: AnalysisStatus(cmp.Or(b.AnalysisStatus, store.AnalysisNone)),
+		CreatedAt:      b.CreatedAt,
+		UpdatedAt:      b.UpdatedAt,
 	}
 }
 
@@ -46,7 +49,11 @@ func (s *Server) ListBooks(ctx context.Context, req ListBooksRequestObject) (Lis
 	}
 	out := BookPage{Items: make([]Book, 0, len(books)), Total: total}
 	for i := range books {
-		out.Items = append(out.Items, s.toBook(&books[i]))
+		bk := s.toBook(&books[i])
+		if err := s.addAnalysisProgress(ctx, &bk); err != nil {
+			return nil, err
+		}
+		out.Items = append(out.Items, bk)
 	}
 	return ListBooks200JSONResponse(out), nil
 }
@@ -59,7 +66,11 @@ func (s *Server) GetBook(ctx context.Context, req GetBookRequestObject) (GetBook
 	} else if err != nil {
 		return nil, err
 	}
-	return GetBook200JSONResponse(s.toBook(b)), nil
+	out := s.toBook(b)
+	if err := s.addAnalysisProgress(ctx, &out); err != nil {
+		return nil, err
+	}
+	return GetBook200JSONResponse(out), nil
 }
 
 // UploadBook stores an uploaded EPUB and queues its import.
@@ -167,6 +178,9 @@ func (s *Server) DeleteBook(ctx context.Context, req DeleteBookRequestObject) (D
 			StatusCode: http.StatusConflict,
 			Body:       errMsg("the book is still being imported; delete it afterwards"),
 		}, nil
+	}
+	if analysis.Active(b) {
+		return DeleteBookdefaultJSONResponse{StatusCode: http.StatusConflict, Body: errMsg(analysisBusyMsg)}, nil
 	}
 	chapterIDs, err := s.Store.ChapterIDs(ctx, b.ID)
 	if err != nil {

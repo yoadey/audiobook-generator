@@ -9,7 +9,6 @@ package llm
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,8 +42,8 @@ type Request struct {
 	Prompt   string
 	Messages []Message
 	Schema   *Schema
-	// MaxTokens bounds the answer; 0 uses the provider's MaxOutputTokens
-	// (or the server default).
+	// MaxTokens bounds the answer (capped by the provider's
+	// MaxOutputTokens); 0 leaves it to the provider setting or server.
 	MaxTokens   int
 	Temperature *float64
 }
@@ -138,7 +137,12 @@ func (e Endpoint) Complete(ctx context.Context, req Request) (Completion, error)
 		}
 	}
 	body["messages"] = msgs
-	if n := cmp.Or(req.MaxTokens, e.MaxOutputTokens); n > 0 {
+	// The provider's setting caps what a request asks for.
+	n := req.MaxTokens
+	if e.MaxOutputTokens > 0 && (n == 0 || n > e.MaxOutputTokens) {
+		n = e.MaxOutputTokens
+	}
+	if n > 0 {
 		body["max_tokens"] = n
 	}
 	if req.Temperature != nil {

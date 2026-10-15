@@ -418,6 +418,126 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/books/{bookId}/analysis': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** State of the book's character analysis (or an estimate before it starts) */
+    get: operations['getAnalysis'];
+    put?: never;
+    /**
+     * Start or resume the character analysis
+     * @description Resumes where a paused or failed analysis stopped. With restart, all results so far, including manual corrections, are discarded first.
+     */
+    post: operations['startAnalysis'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/analysis/pause': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Pause the character analysis (a running batch finishes first) */
+    post: operations['pauseAnalysis'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/characters': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** A book's characters */
+    get: operations['listCharacters'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/characters/merge': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Merge characters into one (their names become aliases) */
+    post: operations['mergeCharacters'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/characters/{characterId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    /** A character with aliases and chapters */
+    get: operations['getCharacter'];
+    put?: never;
+    post?: never;
+    /** Delete a character (e.g. not a person) */
+    delete: operations['deleteCharacter'];
+    options?: never;
+    head?: never;
+    /** Correct a character (protects it from being overwritten by the analysis) */
+    patch: operations['updateCharacter'];
+    trace?: never;
+  };
+  '/characters/{characterId}/split': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Move aliases of a character to a new character */
+    post: operations['splitCharacter'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -469,6 +589,9 @@ export interface components {
       narratorSpeed: number;
       /** @description Chapters after the listening position that are kept rendered */
       lookahead: number;
+      analysisStatus: components['schemas']['AnalysisStatus'];
+      /** @description Share of analysed batches (0..1) once the analysis is planned */
+      analysisProgress?: number;
       /** Format: date-time */
       createdAt: string;
       /** Format: date-time */
@@ -518,7 +641,15 @@ export interface components {
       audioError?: string;
       /** @description The audio was rendered with another narrator voice or speed */
       audioStale: boolean;
+      narration?: components['schemas']['Narration'];
+      /**
+       * Format: int64
+       * @description Point-of-view character found by the analysis
+       */
+      povCharacterId?: number;
     };
+    /** @enum {string} */
+    Narration: 'first_person' | 'third_person' | 'mixed' | 'unknown';
     ChapterPage: {
       items: components['schemas']['Chapter'][];
       /** Format: int64 */
@@ -551,6 +682,8 @@ export interface components {
       /** Format: int64 */
       nextChapterId?: number;
       paragraphs: components['schemas']['Paragraph'][];
+      /** @description Characters appearing in the chapter, most important first */
+      characters?: components['schemas']['CharacterRef'][];
     };
     ChapterUpdate: {
       title?: string;
@@ -762,6 +895,103 @@ export interface components {
       baseUrl?: string;
       apiKey?: string;
     };
+    /** @enum {string} */
+    AnalysisStatus: 'none' | 'queued' | 'running' | 'merging' | 'paused' | 'done' | 'failed';
+    AnalysisStart: {
+      /** @description Discard all results (including manual corrections) and start over */
+      restart?: boolean;
+    };
+    Analysis: {
+      status: components['schemas']['AnalysisStatus'];
+      error?: string;
+      /** Format: date-time */
+      startedAt?: string;
+      /** Format: date-time */
+      finishedAt?: string;
+      /** @description LLM requests of the analysis; before it starts, the estimate */
+      batchesTotal: number;
+      batchesDone: number;
+      /**
+       * Format: int64
+       * @description Input tokens of all batches (estimated)
+       */
+      estimatedTokens: number;
+      /**
+       * Format: int64
+       * @description Tokens used so far, as reported by the providers
+       */
+      inputTokens: number;
+      /** Format: int64 */
+      outputTokens: number;
+      /** Format: int64 */
+      characterCount: number;
+      /** @description Configured input size of one request */
+      batchTokens: number;
+      /** @description Prompt version new batches use */
+      prompt: string;
+      job?: components['schemas']['Job'];
+    };
+    /** @enum {string} */
+    Gender: 'female' | 'male' | 'unknown';
+    /** @enum {string} */
+    AgeGroup: 'child' | 'teen' | 'adult' | 'elderly' | 'unknown';
+    CharacterRef: {
+      /** Format: int64 */
+      id: number;
+      name: string;
+    };
+    Character: {
+      /** Format: int64 */
+      id: number;
+      /** Format: int64 */
+      bookId: number;
+      name: string;
+      aliases: string[];
+      gender: components['schemas']['Gender'];
+      ageGroup: components['schemas']['AgeGroup'];
+      role: string;
+      description: string;
+      speechStyle: string;
+      importance: number;
+      speaks: boolean;
+      chapterCount: number;
+      firstChapterIdx: number;
+      /** @description Corrected by hand; the analysis does not overwrite the profile */
+      userEdited: boolean;
+    };
+    CharacterPage: {
+      items: components['schemas']['Character'][];
+      /** Format: int64 */
+      total: number;
+    };
+    ChapterRef: {
+      /** Format: int64 */
+      id: number;
+      idx: number;
+      title: string;
+    };
+    CharacterDetail: components['schemas']['Character'] & {
+      chapters: components['schemas']['ChapterRef'][];
+    };
+    CharacterUpdate: {
+      name?: string;
+      aliases?: string[];
+      gender?: components['schemas']['Gender'];
+      ageGroup?: components['schemas']['AgeGroup'];
+      role?: string;
+      description?: string;
+      speechStyle?: string;
+      importance?: number;
+    };
+    CharacterMerge: {
+      /** Format: int64 */
+      targetId: number;
+      sourceIds: number[];
+    };
+    CharacterSplit: {
+      name: string;
+      aliases?: string[];
+    };
   };
   responses: {
     /** @description Error */
@@ -778,6 +1008,7 @@ export interface components {
     BookId: number;
     ChapterId: number;
     JobId: number;
+    CharacterId: number;
     ProviderId: number;
     Offset: number;
     Limit: number;
@@ -990,6 +1221,8 @@ export interface operations {
     parameters: {
       query?: {
         volumeId?: number;
+        /** @description Only chapters this character appears in */
+        characterId?: number;
         offset?: components['parameters']['Offset'];
         limit?: number;
       };
@@ -1529,6 +1762,250 @@ export interface operations {
       400: components['responses']['Error'];
       404: components['responses']['Error'];
       502: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getAnalysis: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Analysis */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Analysis'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  startAnalysis: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        'application/json': components['schemas']['AnalysisStart'];
+      };
+    };
+    responses: {
+      /** @description The analysis is queued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Analysis'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  pauseAnalysis: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Analysis */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Analysis'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listCharacters: {
+    parameters: {
+      query?: {
+        /** @description Substring of a name or alias */
+        search?: string;
+        sort?: 'importance' | 'name' | 'chapters' | 'first';
+        offset?: components['parameters']['Offset'];
+        limit?: components['parameters']['Limit'];
+      };
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of characters */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CharacterPage'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  mergeCharacters: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CharacterMerge'];
+      };
+    };
+    responses: {
+      /** @description The merged character */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CharacterDetail'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getCharacter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Character */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CharacterDetail'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  deleteCharacter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  updateCharacter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CharacterUpdate'];
+      };
+    };
+    responses: {
+      /** @description Character */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CharacterDetail'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  splitCharacter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CharacterSplit'];
+      };
+    };
+    responses: {
+      /** @description The new character */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CharacterDetail'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };

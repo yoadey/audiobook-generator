@@ -28,6 +28,12 @@ func (s *Server) toChapter(b *store.Book, c *store.Chapter) Chapter {
 		AudioStatus: AudioStatus(c.AudioStatus),
 		AudioError:  nonEmpty(c.AudioError),
 		AudioStale:  b != nil && s.Scheduler != nil && s.Scheduler.Stale(b, c),
+
+		PovCharacterId: c.POVCharacterID,
+	}
+	if c.Narration != "" {
+		n := Narration(c.Narration)
+		out.Narration = &n
 	}
 	if c.AudioStatus == store.AudioReady {
 		out.AudioDurationMs = &c.AudioDurationMs
@@ -113,7 +119,9 @@ func (s *Server) ListChapters(ctx context.Context, req ListChaptersRequestObject
 		return nil, err
 	}
 	offset, limit := page(req.Params.Offset, req.Params.Limit, 10000, 10000)
-	cs, total, err := s.Store.ListChapters(ctx, req.BookId, store.ChapterFilter{VolumeID: req.Params.VolumeId}, offset, limit)
+	cs, total, err := s.Store.ListChapters(ctx, req.BookId, store.ChapterFilter{
+		VolumeID: req.Params.VolumeId, CharacterID: req.Params.CharacterId,
+	}, offset, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -152,9 +160,18 @@ func (s *Server) GetChapter(ctx context.Context, req GetChapterRequestObject) (G
 		Id: ch.Id, BookId: ch.BookId, VolumeId: ch.VolumeId, Idx: ch.Idx, Title: ch.Title,
 		WordCount: ch.WordCount, QuoteCount: ch.QuoteCount, Excluded: ch.Excluded, Status: ch.Status,
 		AudioStatus: ch.AudioStatus, AudioDurationMs: ch.AudioDurationMs, AudioError: ch.AudioError,
-		AudioStale: ch.AudioStale,
+		AudioStale: ch.AudioStale, Narration: ch.Narration, PovCharacterId: ch.PovCharacterId,
 		Paragraphs: make([]Paragraph, 0, len(paras)),
 	}
+	chars, err := s.Store.ChapterCharacters(ctx, c.ID)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]CharacterRef, 0, len(chars))
+	for _, ch := range chars {
+		refs = append(refs, CharacterRef{Id: ch.ID, Name: ch.Name})
+	}
+	out.Characters = &refs
 	if prev != 0 {
 		out.PrevChapterId = &prev
 	}
@@ -206,6 +223,11 @@ func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithN
 			}
 		}
 	}
+	if busy, err := s.analysisBusy(ctx, req.ChapterId); err != nil {
+		return nil, err
+	} else if busy {
+		return MergeChapterWithNext409JSONResponse{Message: analysisBusyMsg}, nil
+	}
 	c, err := s.Store.MergeChapterWithNext(ctx, req.ChapterId)
 	switch {
 	case isNotFound(err):
@@ -232,6 +254,11 @@ func (s *Server) SplitChapter(ctx context.Context, req SplitChapterRequestObject
 	title := strings.TrimSpace(req.Body.Title)
 	if title == "" {
 		return SplitChapter400JSONResponse{ErrorJSONResponse(errMsg("title must not be empty"))}, nil
+	}
+	if busy, err := s.analysisBusy(ctx, req.ChapterId); err != nil {
+		return nil, err
+	} else if busy {
+		return SplitChapter409JSONResponse{Message: analysisBusyMsg}, nil
 	}
 	c, err := s.Store.SplitChapter(ctx, req.ChapterId, req.Body.ParagraphId, title)
 	switch {

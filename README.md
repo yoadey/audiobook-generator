@@ -8,16 +8,18 @@ Go backend, React frontend, shipped as a self-contained Helm chart that
 brings the app, the [Kokoro](https://github.com/remsky/Kokoro-FastAPI) TTS
 server and storage.
 
-> **Status:** milestone M3 — a usable single-voice audiobook plus the LLM
-> layer. EPUBs are split into volumes, chapters and narration/quote segments
+> **Status:** milestone M4 — a usable single-voice audiobook plus the
+> character bible. EPUBs are split into volumes, chapters and narration/quote segments
 > (a 3-million-word book imports in seconds) and can be reviewed in the UI;
 > chapters are rendered with a narrator voice of your choice (Kokoro, voice
 > mixes, speed, previews) and played in the built-in player, which resumes
 > where you stopped and keeps the next chapters rendered ahead of you. Free
 > LLM providers (any OpenAI-compatible endpoint) can be configured with
-> their rate limits and daily quotas, tested and watched in the UI.
-> Character analysis and one voice per character follow in M4–M6 — see
-> [`docs/PLAN.md`](docs/PLAN.md).
+> their rate limits and daily quotas, tested and watched in the UI; they
+> read the whole book once to build its character list (names, aliases,
+> gender, age, role, speech style, chapters, point of view), which can be
+> corrected, merged and split in the UI. One voice per character follows
+> in M5–M6 — see [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Install
 
@@ -39,13 +41,15 @@ Common options (all values: [`charts/audiobook-generator/values.yaml`](charts/au
 | `tts.defaultVoice` | `af_heart` | narrator of books without an own voice |
 | `tts.concurrency` | `2` | parallel synthesis requests (~1–2 per Kokoro replica) |
 | `llm.providers` | `[]` | OpenAI-compatible LLM providers with limits; keys from Secrets (see below). More can be added in the UI |
+| `llm.analysisBatchTokens` | `30000` | input tokens per character analysis request (fewer, larger requests save daily request quota) |
 | `ingress.enabled` | `false` | expose the UI |
 | `metrics.serviceMonitor.enabled` | `false` | Prometheus Operator scraping of `/metrics` |
 
 ### LLM providers
 
-Character analysis and speaker attribution (from M4 on) use free tiers of
-OpenAI-compatible LLM APIs. Providers are tried in order; when one hits its
+The character analysis and speaker attribution (from M6 on) use free tiers
+of OpenAI-compatible LLM APIs. A 5-million-word book needs roughly 200
+analysis requests (about 7M input tokens), i.e. a day or two of free quota. Providers are tried in order; when one hits its
 rate limit or daily quota the next takes over, and when all are exhausted
 the work waits until a quota resets. Configure them in the UI
 (**Settings**) or in the values:
@@ -95,8 +99,8 @@ api/openapi.yaml          API contract (source of truth)
 cmd/audiobook-generator/  main
 internal/                 Go packages: epub (parser), segment (quotes, chunking),
                           importer, jobs (persistent queue), render (TTS + ffmpeg,
-                          lookahead), llm (providers, limits, prompts), audio,
-                          store, api, tts, webui
+                          lookahead), llm (providers, limits, prompts), analysis
+                          (character bible), audio, store, api, tts, webui
 web/                      React + Mantine frontend (built into internal/webui/dist)
 charts/audiobook-generator/  Helm chart
 hack/                     CI helpers: kubeconform, kind e2e, fake TTS/LLM server

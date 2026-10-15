@@ -86,6 +86,14 @@ func (e *ExhaustedError) Error() string {
 // DeferUntil implements jobs.Deferrer.
 func (e *ExhaustedError) DeferUntil() time.Time { return e.RetryAt }
 
+// TooLargeError means the request exceeds the limits of every provider;
+// waiting cannot help, a smaller request might.
+type TooLargeError struct{ Reasons []string }
+
+func (e *TooLargeError) Error() string {
+	return "no LLM provider can take this request: " + strings.Join(e.Reasons, "; ")
+}
+
 // Result is a completion and where it came from.
 type Result struct {
 	Completion
@@ -343,7 +351,7 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 			default:
 				// The request exceeds every provider's limits: waiting
 				// cannot help.
-				return nil, fmt.Errorf("no LLM provider can take this request: %s", strings.Join(reasons, "; "))
+				return nil, &TooLargeError{Reasons: reasons}
 			}
 		}
 		if wait := pickAt.Sub(now); wait > 0 {
@@ -406,7 +414,8 @@ func (p *Pool) CompleteJSON(ctx context.Context, req Request, out any) (*Result,
 	}
 	p.Metrics.request(res.Provider, outcomeInvalid)
 	if res.FinishReason == "length" {
-		return nil, &InvalidOutputError{Err: fmt.Errorf("answer truncated at the output token limit: %w", verr), Content: res.Content}
+		return nil, &InvalidOutputError{Err: fmt.Errorf("answer truncated at the output token limit: %w", verr),
+			Content: res.Content, Truncated: true}
 	}
 	p.Log.Info("llm answer invalid, asking for a repair", "provider", res.Provider, "prompt", req.Prompt, "err", verr)
 	repair := req

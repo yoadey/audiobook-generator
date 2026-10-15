@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  Badge,
   Box,
   Breadcrumbs,
   Button,
@@ -44,6 +45,22 @@ import { AnchorLink } from '../components/links';
 import { confirmMerge } from '../lib/confirm';
 import { formatListeningTime, formatNumber } from '../lib/format';
 import { notifyError, notifySuccess } from '../lib/notify';
+
+const narrations: Record<NonNullable<ChapterDetail['narration']>, string> = {
+  first_person: 'First person',
+  third_person: 'Third person',
+  mixed: 'Mixed narration',
+  unknown: '',
+};
+
+function narrationLabel(c: ChapterDetail): string {
+  const label = c.narration ? narrations[c.narration] : '';
+  const pov = c.characters?.find((x) => x.id === c.povCharacterId)?.name;
+  if (!label && !pov) {
+    return '';
+  }
+  return `${[label, pov && `POV ${pov}`].filter(Boolean).join(', ')} · `;
+}
 
 function ParagraphView({ p, onSplit }: { p: Paragraph; onSplit?: () => void }) {
   const body =
@@ -300,6 +317,29 @@ export function ChapterPage() {
           {chapter.audioStatus === 'ready' ? 'Render again' : 'Render audio'}
         </Button>
       </Group>
+
+      {(chapter.characters?.length ?? 0) > 0 && (
+        <Group gap={6} data-testid="chapter-characters">
+          <Text size="sm" c="dimmed">
+            {narrationLabel(chapter)}Characters:
+          </Text>
+          {chapter.characters?.map((c) => (
+            <AnchorLink
+              key={c.id}
+              to="/books/$bookId/characters/$characterId"
+              params={{ bookId: String(bookId), characterId: String(c.id) }}
+              size="sm"
+            >
+              <Badge
+                variant={c.id === chapter.povCharacterId ? 'filled' : 'light'}
+                style={{ cursor: 'pointer' }}
+              >
+                {c.name}
+              </Badge>
+            </AnchorLink>
+          ))}
+        </Group>
+      )}
 
       <Stack gap="sm" mt="md">
         {chapter.paragraphs.map((p, i) => (

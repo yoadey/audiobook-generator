@@ -100,3 +100,15 @@ func (s *Store) PendingRenderJob(ctx context.Context, jobType string, chapterID 
 	}
 	return &j, err
 }
+
+// PendingBookJob returns the queued or running job of a type for a book.
+func (s *Store) PendingBookJob(ctx context.Context, jobType string, bookID int64) (*Job, error) {
+	var j Job
+	err := s.db.WithContext(ctx).
+		Where("type = ? AND book_id = ? AND status IN ?", jobType, bookID, []JobStatus{JobQueued, JobRunning}).
+		Order("id DESC").Take(&j).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &j, err
+}

@@ -197,6 +197,89 @@ var migrations = []*gormigrate.Migration{
 			return tx.Migrator().DropTable("llm_usages", "llm_providers")
 		},
 	},
+	{
+		ID: "202610170001_characters",
+		Migrate: func(tx *gorm.DB) error {
+			type Book struct {
+				AnalysisStatus     string `gorm:"not null;default:'none'"`
+				AnalysisError      string `gorm:"not null;default:''"`
+				AnalysisStartedAt  *time.Time
+				AnalysisFinishedAt *time.Time
+			}
+			for _, col := range []string{"AnalysisStatus", "AnalysisError", "AnalysisStartedAt", "AnalysisFinishedAt"} {
+				if err := tx.Migrator().AddColumn(&Book{}, col); err != nil {
+					return fmt.Errorf("books.%s: %w", col, err)
+				}
+			}
+			type Chapter struct {
+				Narration      string `gorm:"not null;default:''"`
+				POVCharacterID *int64
+			}
+			for _, col := range []string{"Narration", "POVCharacterID"} {
+				if err := tx.Migrator().AddColumn(&Chapter{}, col); err != nil {
+					return fmt.Errorf("chapters.%s: %w", col, err)
+				}
+			}
+			type Character struct {
+				ID              int64  `gorm:"primaryKey"`
+				BookID          int64  `gorm:"not null;index"`
+				Name            string `gorm:"not null"`
+				Gender          string `gorm:"not null;default:'unknown'"`
+				AgeGroup        string `gorm:"not null;default:'unknown'"`
+				Role            string `gorm:"not null;default:''"`
+				Description     string `gorm:"not null;default:''"`
+				SpeechStyle     string `gorm:"not null;default:''"`
+				Importance      int    `gorm:"not null;default:1"`
+				Speaks          bool   `gorm:"not null;default:false"`
+				ChapterCount    int    `gorm:"not null;default:0"`
+				FirstChapterIdx int    `gorm:"not null;default:0"`
+				UserEdited      bool   `gorm:"not null;default:false"`
+				CreatedAt       time.Time
+				UpdatedAt       time.Time
+			}
+			type CharacterAlias struct {
+				ID          int64  `gorm:"primaryKey"`
+				BookID      int64  `gorm:"not null;index:idx_character_aliases_book_norm,priority:1"`
+				CharacterID int64  `gorm:"not null;index"`
+				Alias       string `gorm:"not null"`
+				Norm        string `gorm:"not null;index:idx_character_aliases_book_norm,priority:2"`
+			}
+			type CharacterChapter struct {
+				ID          int64 `gorm:"primaryKey"`
+				BookID      int64 `gorm:"not null;index"`
+				CharacterID int64 `gorm:"not null;uniqueIndex:idx_character_chapters_pair,priority:1"`
+				ChapterID   int64 `gorm:"not null;uniqueIndex:idx_character_chapters_pair,priority:2;index"`
+			}
+			type CharacterDistinct struct {
+				ID     int64 `gorm:"primaryKey"`
+				BookID int64 `gorm:"not null;index"`
+				AID    int64 `gorm:"column:a_id;not null;uniqueIndex:idx_character_distincts_pair,priority:1"`
+				BID    int64 `gorm:"column:b_id;not null;uniqueIndex:idx_character_distincts_pair,priority:2"`
+			}
+			type AnalysisBatch struct {
+				ID              int64  `gorm:"primaryKey"`
+				BookID          int64  `gorm:"not null;index:idx_analysis_batches_order,priority:1"`
+				FirstChapterIdx int    `gorm:"not null;index:idx_analysis_batches_order,priority:2"`
+				FirstParaIdx    int    `gorm:"not null;index:idx_analysis_batches_order,priority:3"`
+				Parts           string `gorm:"not null"`
+				Tokens          int    `gorm:"not null;default:0"`
+				Status          string `gorm:"not null;default:'pending'"`
+				Prompt          string `gorm:"not null;default:''"`
+				Provider        string `gorm:"not null;default:''"`
+				Model           string `gorm:"not null;default:''"`
+				InputTokens     int    `gorm:"not null;default:0"`
+				OutputTokens    int    `gorm:"not null;default:0"`
+				Result          string `gorm:"not null;default:''"`
+				CompletedAt     *time.Time
+			}
+			return tx.Migrator().CreateTable(&Character{}, &CharacterAlias{}, &CharacterChapter{},
+				&CharacterDistinct{}, &AnalysisBatch{})
+		},
+		Rollback: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable("analysis_batches", "character_distincts", "character_chapters",
+				"character_aliases", "characters")
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

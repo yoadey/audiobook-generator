@@ -49,6 +49,9 @@ make chart-test    # helm lint, helm unittest, kubeconform
   of failing them.
 - Prompts are embedded under `internal/llm/prompts/<name>/v<N>/`; never edit
   a version whose results may be stored — add a new version.
+- The character analysis (`internal/analysis`) applies each LLM answer in
+  the same transaction that marks its batch done; keep it that way so a
+  stop at any point loses nothing and never spends quota twice.
 - Pin all image and chart versions (Renovate bumps them).
 - Generated files are committed: `internal/api/api.gen.go`,
   `web/src/api/schema.d.ts`. CI fails when they are stale.

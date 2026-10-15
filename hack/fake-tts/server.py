@@ -7,8 +7,10 @@ the text (20 ms per character), as 24 kHz 16-bit mono PCM; any other
 response_format gets a WAV file.
 
 LLM (OpenAI-compatible): GET /v1/models and POST /v1/chat/completions, which
-answers the app's provider test prompt correctly and anything else with
-"{}". When FAKE_LLM_KEY is set, requests must carry it as bearer token.
+answers the app's provider test prompt correctly, the character analysis
+with everyone who "said" something, merge checks with "different", and
+anything else with "{}". When FAKE_LLM_KEY is set, requests must carry it
+as bearer token.
 """
 
 import json
@@ -39,14 +41,42 @@ def wav(pcm: bytes) -> bytes:
     return header + pcm
 
 
+def analyse(text: str) -> str:
+    """Character analysis: speakers of "..., said Name." per chapter."""
+    chapters = re.split(r"^=== \[(\d+)\] .* ===$", text, flags=re.M)
+    found: dict[str, list[int]] = {}
+    numbers = []
+    for i in range(1, len(chapters) - 1, 2):
+        n = int(chapters[i])
+        numbers.append(n)
+        for name in re.findall(r"said ([A-Z][a-z]+)", chapters[i + 1]):
+            found.setdefault(name, [])
+            if n not in found[name]:
+                found[name].append(n)
+    characters = [
+        {"ref": "", "name": name, "aliases": [], "gender": "unknown", "age": "unknown",
+         "role": "", "description": "", "speech_style": "", "importance": 3,
+         "speaks": True, "chapters": chs}
+        for name, chs in found.items()
+    ]
+    return json.dumps({
+        "characters": characters,
+        "chapters": [{"n": n, "narration": "third_person", "pov": ""} for n in numbers],
+    })
+
+
 def chat_answer(req: dict) -> str:
-    """Solves the provider test prompt ("Add A and B ... word: W")."""
-    for m in req.get("messages", []):
+    """Answers the app's prompts (see the module docstring)."""
+    for m in reversed(req.get("messages", [])):
         text = m.get("content") or ""
         add = re.search(r"Add (\d+) and (\d+)", text)
         word = re.search(r"exactly this word: (\w+)", text)
         if add and word:
             return json.dumps({"sum": int(add[1]) + int(add[2]), "echo": word[1]})
+        if text.startswith("Pairs ("):
+            return json.dumps({"decisions": []})
+        if "Chapters (" in text:
+            return analyse(text)
     return "{}"
 
 

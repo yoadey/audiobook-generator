@@ -69,6 +69,18 @@ function BookCard({ book }: { book: Book }) {
             {formatListeningTime(book.wordCount)}
           </Text>
         )}
+        {book.analysisStatus !== 'none' && (
+          <Text size="xs" c={book.analysisStatus === 'failed' ? 'red' : 'dimmed'}>
+            Characters:{' '}
+            {book.analysisStatus === 'done'
+              ? 'analysed'
+              : `${book.analysisStatus}${
+                  book.analysisProgress !== undefined
+                    ? ` (${Math.round(book.analysisProgress * 100)} %)`
+                    : ''
+                }`}
+          </Text>
+        )}
       </Stack>
     </CardLink>
   );

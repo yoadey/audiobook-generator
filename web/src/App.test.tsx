@@ -44,8 +44,38 @@ const book = {
   narratorVoice: 'af_heart',
   narratorSpeed: 1,
   lookahead: 3,
+  analysisStatus: 'none',
   createdAt: '2026-10-15T00:00:00Z',
   updatedAt: '2026-10-15T00:00:00Z',
+};
+
+const analysisBase = {
+  status: 'none',
+  batchesTotal: 190,
+  batchesDone: 0,
+  estimatedTokens: 5_600_000,
+  inputTokens: 0,
+  outputTokens: 0,
+  characterCount: 0,
+  batchTokens: 30000,
+  prompt: 'character_analysis@v1',
+};
+
+const erin = {
+  id: 7,
+  bookId: 1,
+  name: 'Erin Solstice',
+  aliases: ['Erin', 'the Innkeeper'],
+  gender: 'female',
+  ageGroup: 'adult',
+  role: 'innkeeper',
+  description: 'Runs the inn.',
+  speechStyle: 'warm, chatty',
+  importance: 5,
+  speaks: true,
+  chapterCount: 812,
+  firstChapterIdx: 0,
+  userEdited: false,
 };
 
 const chapters = [
@@ -303,6 +333,12 @@ describe('App', () => {
           },
           { id: 102, idx: 2, kind: 'scene_break', text: '* * *', segments: [] },
         ],
+        narration: 'third_person',
+        povCharacterId: 7,
+        characters: [
+          { id: 7, name: 'Erin Solstice' },
+          { id: 8, name: 'Lyonette' },
+        ],
       },
     });
     const { container } = renderAt('/books/1/chapters/10');
@@ -314,6 +350,12 @@ describe('App', () => {
     expect(screen.getAllByRole('button', { name: 'Split here' })).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Previous chapter' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Next chapter' })).toBeEnabled();
+    const cast = screen.getByTestId('chapter-characters');
+    expect(within(cast).getByText(/Third person, POV Erin Solstice/)).toBeInTheDocument();
+    expect(within(cast).getByRole('link', { name: 'Lyonette' })).toHaveAttribute(
+      'href',
+      '/books/1/characters/8',
+    );
   });
 
   it('shows database and TTS status', async () => {
@@ -421,6 +463,143 @@ describe('App', () => {
     expect(save).toBeDisabled();
     fireEvent.change(within(dialog).getByLabelText(/^API key/), { target: { value: 'new' } });
     expect(save).toBeEnabled();
+  });
+
+  it('estimates and starts the character analysis', async () => {
+    const fetch = stubApi({
+      '/api/voices': [],
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: chapters, total: 2 },
+      'GET /api/books/1/analysis': analysisBase,
+      'POST /api/books/1/analysis': { ...analysisBase, status: 'queued' },
+      '/api/llm/providers': [
+        { ...helmProvider, limits: { rpm: 10, tpm: 250000, rpd: 100, tpd: 0 } },
+      ],
+    });
+    renderAt('/books/1');
+    const card = await screen.findByTestId('analysis-card');
+    expect(await within(card).findByText(/≈ 190\s+LLM requests/)).toBeInTheDocument();
+    expect(within(card).getByText(/about 2 days/)).toBeInTheDocument();
+    expect(within(card).getByText('not started')).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button', { name: 'Start analysis' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'POST')).toBe(
+        true,
+      ),
+    );
+  });
+
+  it('shows a running analysis waiting for quota', async () => {
+    stubApi({
+      '/api/voices': [],
+      '/api/books/1': { ...book, analysisStatus: 'running', analysisProgress: 0.25 },
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: chapters, total: 2 },
+      '/api/books/1/analysis': {
+        ...analysisBase,
+        status: 'running',
+        batchesDone: 40,
+        batchesTotal: 160,
+        inputTokens: 1_200_000,
+        outputTokens: 80_000,
+        characterCount: 312,
+        job: {
+          id: 3,
+          type: 'analyze_book',
+          status: 'queued',
+          attempts: 0,
+          maxAttempts: 5,
+          progress: 0.24,
+          error: 'all LLM providers are busy',
+          notBefore: '2099-01-01T00:00:00Z',
+          createdAt: '2026-10-15T00:00:00Z',
+          updatedAt: '2026-10-15T00:00:00Z',
+        },
+      },
+      '/api/llm/providers': [],
+    });
+    renderAt('/books/1');
+    const card = await screen.findByTestId('analysis-card');
+    expect(await within(card).findByText(/40 of 160 requests/)).toBeInTheDocument();
+    expect(within(card).getByText(/1.3M tokens used/)).toBeInTheDocument();
+    expect(within(card).getByText(/Waiting for LLM quota until/)).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Pause' })).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: /312 characters/ })).toHaveAttribute(
+      'href',
+      '/books/1/characters',
+    );
+  });
+
+  it('lists characters and merges a selection', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/analysis': { ...analysisBase, status: 'done', characterCount: 2 },
+      'GET /api/books/1/characters': {
+        items: [
+          erin,
+          { ...erin, id: 8, name: 'Erin', aliases: [], chapterCount: 3, importance: 2 },
+        ],
+        total: 2,
+      },
+      'POST /api/books/1/characters/merge': { ...erin, chapters: [] },
+    });
+    renderAt('/books/1/characters');
+    expect(await screen.findByRole('link', { name: 'Erin Solstice' })).toHaveAttribute(
+      'href',
+      '/books/1/characters/7',
+    );
+    expect(screen.getByText('Erin, the Innkeeper')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Erin Solstice' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Erin' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Merge 2 selected' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      within(dialog).getByRole('radio', { name: /Erin Solstice \(812 chapters\)/ }),
+    ).toBeChecked();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Merge' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'POST')).toBe(
+        true,
+      ),
+    );
+    const post = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'POST')!;
+    expect(await (post[0] as Request).json()).toEqual({ targetId: 7, sourceIds: [8] });
+  });
+
+  it('edits a character', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      'GET /api/characters/7': {
+        ...erin,
+        chapters: [{ id: 10, idx: 0, title: 'Chapter 1' }],
+      },
+      'PATCH /api/characters/7': { ...erin, chapters: [] },
+    });
+    renderAt('/books/1/characters/7');
+    expect(await screen.findByRole('heading', { name: 'Erin Solstice' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Chapter 1' })).toHaveAttribute(
+      'href',
+      '/books/1/chapters/10',
+    );
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Speech style', { exact: false }), {
+      target: { value: 'brisk' },
+    });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PATCH')).toBe(
+        true,
+      ),
+    );
+    const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
+    expect(await (patch[0] as Request).json()).toMatchObject({
+      name: 'Erin Solstice',
+      speechStyle: 'brisk',
+      aliases: ['Erin', 'the Innkeeper'],
+    });
   });
 
   it('shows when a deferred job runs again', async () => {

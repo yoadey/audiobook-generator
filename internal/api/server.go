@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
 	"github.com/yoadey/audiobook-generator/internal/llm"
 	"github.com/yoadey/audiobook-generator/internal/render"
@@ -33,6 +34,7 @@ type Options struct {
 	Jobs           Enqueuer
 	Scheduler      *render.Scheduler
 	LLM            *llm.Pool
+	Analyzer       *analysis.Analyzer
 	DefaultVoice   string
 	DataDir        string
 	MaxUploadBytes int64

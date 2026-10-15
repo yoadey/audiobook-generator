@@ -26,6 +26,7 @@ import {
   renderBookChapters,
   volumesQuery,
 } from '../api/client';
+import { AnalysisCard } from '../components/AnalysisCard';
 import { ChapterTable } from '../components/ChapterTable';
 import { AnchorLink, ButtonLink } from '../components/links';
 import { NarratorSettings } from '../components/NarratorSettings';
@@ -177,6 +178,7 @@ export function BookPage() {
 
       {imported && b.status !== 'failed' && (
         <>
+          <AnalysisCard book={b} />
           <NarratorSettings key={`${b.narratorVoice}:${b.narratorSpeed}:${b.lookahead}`} book={b} />
           <Group>
             <TextInput

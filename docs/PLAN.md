@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-15 · Status: **M0–M3 implemented** (usable single-voice audiobook, LLM layer), M4 next
+Last updated: 2026-10-15 · Status: **M0–M4 implemented** (usable single-voice audiobook, LLM layer, character bible), M5 next
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -186,6 +186,36 @@ an optional later feature (M8), not a requirement.
 2. Only ambiguous candidates ("Erin" vs. "Erin Solstice" vs. "the
    [Innkeeper]") go to an LLM merge request as compact profiles.
 3. Manual correction in the UI: merge, split, move an alias.
+
+As implemented in M4 (`internal/analysis`):
+
+- One `analyze_book` job per book on the `llm` queue (one at a time, the
+  quotas are shared). Batches of about `llm.analysisBatchTokens` (30k)
+  tokens of whole chapters; oversized chapters are split at paragraphs.
+  The plan and every validated answer are stored (`analysis_batches`, with
+  prompt version, provider, model and tokens); each answer is merged into
+  the bible in the same transaction that completes its batch, so pausing,
+  quota deferrals and restarts lose nothing.
+- Per batch, only the known characters the batch text mentions (all words
+  of a name or alias occur in it) are sent, with ids (`c12`), at most 250.
+  A reported character is matched by `ref`, else by its full name, else by
+  aliases that all point to one character; otherwise it is new.
+  Profiles are filled in, never overwritten (and not at all once edited by
+  hand); importance and "speaks" keep the strongest signal.
+- An answer cut off at the output limit, or a batch no provider accepts
+  (tokens per minute), is split in two and retried.
+- Duplicate check after the last batch: single-word proper names that are
+  the first or last word of another's full name, and names equal apart
+  from titles, go to the `merge_characters` prompt in groups of 20; "same"
+  merges (the character with more chapters survives), "different" is
+  stored (`character_distincts`) and never asked again. Pairs with
+  different known genders are distinct without asking ("Mr." vs. "Mrs.
+  Bennet"). Generic words ("Mom", "the guard") never match.
+- Per chapter: narration (first/third person, mixed) and point-of-view
+  character.
+- While an analysis is queued or running, chapters cannot be merged or
+  split and characters cannot be merged, split or deleted (409); it can be
+  paused, resumed or restarted (restart discards all results).
 
 ### 3.5 Voice casting
 
@@ -383,6 +413,8 @@ POST   /api/voices/preview                recipe + text → audio (cached)
 GET    /api/books/{id}/lexicon  (+ CRUD)
 GET    /api/jobs  · POST /api/jobs/{id}/retry|cancel · POST /api/queue/pause
 GET    /api/llm/providers (+ CRUD, /{id}/test) · POST /api/llm/models
+GET    /api/books/{id}/analysis · POST …/analysis (start/resume/restart) · POST …/analysis/pause
+POST   /api/books/{id}/characters/merge · GET|PATCH|DELETE /api/characters/{id} · POST …/split
 GET    /api/events                        SSE: job and progress events
 GET    /api/chapters/{id}/audio           range requests for the player
 PUT    /api/books/{id}/progress           listening position
