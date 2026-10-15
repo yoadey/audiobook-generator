@@ -42,6 +42,7 @@
     "securityContext": { "$ref": "#/definitions/object" },
     "resources": { "$ref": "#/definitions/object" },
     "tmpSizeLimit": { "$ref": "#/definitions/quantity" },
+    "maxUploadMB": { "type": "integer", "minimum": 1 },
     "log": {
       "type": "object",
       "additionalProperties": false,

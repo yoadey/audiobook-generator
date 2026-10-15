@@ -19,6 +19,13 @@ export default defineConfig([
       ecmaVersion: 2023,
       globals: globals.browser,
     },
+    rules: {
+      // createLink() wraps Mantine components into router links.
+      'react-refresh/only-export-components': [
+        'error',
+        { allowConstantExport: true, extraHOCs: ['createLink'] },
+      ],
+    },
   },
   {
     files: ['*.{js,cjs}'],

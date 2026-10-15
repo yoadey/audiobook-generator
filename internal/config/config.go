@@ -27,6 +27,9 @@ type Config struct {
 	// database file.
 	DataDir string `env:"DATA_DIR" envDefault:"/data"`
 
+	// MaxUploadMB bounds EPUB uploads (and every other request body).
+	MaxUploadMB int64 `env:"MAX_UPLOAD_MB" envDefault:"512"`
+
 	LogLevel  string `env:"LOG_LEVEL" envDefault:"info"`
 	LogFormat string `env:"LOG_FORMAT" envDefault:"json"`
 
@@ -87,6 +90,9 @@ func (c Config) Validate() error {
 	}
 	if _, err := url.ParseRequestURI(c.TTS.URL); err != nil {
 		errs = append(errs, fmt.Errorf("ABG_TTS_URL: %w", err))
+	}
+	if c.MaxUploadMB < 1 {
+		errs = append(errs, fmt.Errorf("ABG_MAX_UPLOAD_MB must be at least 1, got %d", c.MaxUploadMB))
 	}
 	if _, err := c.SlogLevel(); err != nil {
 		errs = append(errs, err)

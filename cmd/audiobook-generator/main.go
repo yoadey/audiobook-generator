@@ -19,6 +19,8 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
 	"github.com/yoadey/audiobook-generator/internal/config"
 	"github.com/yoadey/audiobook-generator/internal/httpserver"
+	"github.com/yoadey/audiobook-generator/internal/importer"
+	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 	"github.com/yoadey/audiobook-generator/internal/webui"
@@ -54,13 +56,31 @@ func run() error {
 		return err
 	}
 
+	runner := jobs.New(st, log)
+	imp := &importer.Importer{Store: st, DataDir: cfg.DataDir, Log: log}
+	runner.Handle(importer.JobType, imp.Handler())
+	runnerDone := make(chan struct{})
+	go func() {
+		defer close(runnerDone)
+		if err := runner.Run(ctx); err != nil {
+			log.Error("job runner stopped", "err", err)
+		}
+	}()
+
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: httpserver.Handler(httpserver.Options{
-			API:      api.NewServer(st, tts.New(cfg.TTS.URL, cfg.TTS.Timeout), log),
+			API: api.NewServer(api.Options{
+				Store:          st,
+				TTS:            tts.New(cfg.TTS.URL, cfg.TTS.Timeout),
+				Jobs:           runner,
+				DataDir:        cfg.DataDir,
+				MaxUploadBytes: cfg.MaxUploadMB << 20,
+				Log:            log,
+			}),
 			Ready:    st,
 			WebUI:    webui.Handler(),
 			Registry: reg,
@@ -77,6 +97,8 @@ func run() error {
 
 	select {
 	case err := <-errCh:
+		stop()
+		<-runnerDone
 		return err
 	case <-ctx.Done():
 	}
@@ -86,6 +108,8 @@ func run() error {
 	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// Running jobs see the canceled context and return to the queue.
+	<-runnerDone
 	return nil
 }
 

@@ -16,9 +16,12 @@
   "dependencies": {
     "@mantine/core": "9.7.2",
     "@mantine/hooks": "9.7.2",
+    "@mantine/modals": "9.7.2",
+    "@mantine/notifications": "9.7.2",
     "@tabler/icons-react": "3.49.0",
     "@tanstack/react-query": "5.104.3",
     "@tanstack/react-router": "1.170.44",
+    "@tanstack/react-virtual": "3.14.20",
     "openapi-fetch": "0.17.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"

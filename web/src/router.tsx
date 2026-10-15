@@ -6,6 +6,8 @@ import {
   type RouterHistory,
 } from '@tanstack/react-router';
 
+import { BookPage } from './routes/BookPage';
+import { ChapterPage } from './routes/ChapterPage';
 import { Layout } from './routes/Layout';
 import { LibraryPage } from './routes/LibraryPage';
 import { NotFound } from './routes/NotFound';
@@ -30,13 +32,35 @@ const libraryRoute = createRoute({
   component: LibraryPage,
 });
 
+const bookRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/books/$bookId',
+});
+
+const bookIndexRoute = createRoute({
+  getParentRoute: () => bookRoute,
+  path: '/',
+  component: BookPage,
+});
+
+const chapterRoute = createRoute({
+  getParentRoute: () => bookRoute,
+  path: '/chapters/$chapterId',
+  component: ChapterPage,
+});
+
 const systemRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/system',
   component: SystemPage,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, libraryRoute, systemRoute]);
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  libraryRoute,
+  bookRoute.addChildren([bookIndexRoute, chapterRoute]),
+  systemRoute,
+]);
 
 export function createAppRouter(history?: RouterHistory) {
   return createRouter({ routeTree, history });

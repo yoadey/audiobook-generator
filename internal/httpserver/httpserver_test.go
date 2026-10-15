@@ -40,7 +40,9 @@ func newServer(t *testing.T, s *store.Store, speech api.TTS, ready httpserver.Pi
 	t.Helper()
 	log := slog.New(slog.DiscardHandler)
 	srv := httptest.NewServer(httpserver.Handler(httpserver.Options{
-		API:   api.NewServer(s, speech, log),
+		API: api.NewServer(api.Options{
+			Store: s, TTS: speech, DataDir: t.TempDir(), MaxUploadBytes: 1 << 20, Log: log,
+		}),
 		Ready: ready,
 		WebUI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("spa"))

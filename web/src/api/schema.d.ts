@@ -31,6 +31,159 @@ export interface paths {
     /** List books */
     get: operations['listBooks'];
     put?: never;
+    /** Upload an EPUB and start its import */
+    post: operations['uploadBook'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** Get a book */
+    get: operations['getBook'];
+    put?: never;
+    post?: never;
+    /** Delete a book with all its data and files */
+    delete: operations['deleteBook'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/cover': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** The book's cover image */
+    get: operations['getBookCover'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/volumes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** List a book's volumes */
+    get: operations['listVolumes'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/chapters': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** List a book's chapters in reading order */
+    get: operations['listChapters'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/chapters/{chapterId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    /** A chapter with its paragraphs and segments */
+    get: operations['getChapter'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Rename a chapter or exclude it from narration */
+    patch: operations['updateChapter'];
+    trace?: never;
+  };
+  '/chapters/{chapterId}/merge-next': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Append the following chapter to this one */
+    post: operations['mergeChapterWithNext'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/chapters/{chapterId}/split': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Start a new chapter at the given paragraph */
+    post: operations['splitChapter'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/jobs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List background jobs, newest first */
+    get: operations['listJobs'];
+    put?: never;
     post?: never;
     delete?: never;
     options?: never;
@@ -51,6 +204,8 @@ export interface components {
       commit: string;
       database: components['schemas']['DatabaseInfo'];
       tts: components['schemas']['TTSInfo'];
+      /** Format: int64 */
+      maxUploadBytes: number;
     };
     DatabaseInfo: {
       /** @enum {string} */
@@ -66,13 +221,22 @@ export interface components {
       error?: string;
     };
     /** @enum {string} */
-    BookStatus: 'imported' | 'analyzing' | 'ready' | 'failed';
+    BookStatus: 'importing' | 'imported' | 'analyzing' | 'ready' | 'failed';
     Book: {
       /** Format: int64 */
       id: number;
       title: string;
       author: string;
+      language: string;
       status: components['schemas']['BookStatus'];
+      /** @description Progress of the running import (0..1) */
+      progress: number;
+      /** @description Why the import failed */
+      error?: string;
+      /** Format: int64 */
+      wordCount: number;
+      chapterCount: number;
+      hasCover: boolean;
       /** Format: date-time */
       createdAt: string;
       /** Format: date-time */
@@ -80,6 +244,107 @@ export interface components {
     };
     BookPage: {
       items: components['schemas']['Book'][];
+      /** Format: int64 */
+      total: number;
+    };
+    Volume: {
+      /** Format: int64 */
+      id: number;
+      idx: number;
+      title: string;
+      chapterCount: number;
+      /** Format: int64 */
+      wordCount: number;
+    };
+    /** @enum {string} */
+    ChapterStatus: 'imported';
+    Chapter: {
+      /** Format: int64 */
+      id: number;
+      /** Format: int64 */
+      bookId: number;
+      /** Format: int64 */
+      volumeId?: number;
+      /** @description Position in the book (0-based) */
+      idx: number;
+      title: string;
+      wordCount: number;
+      quoteCount: number;
+      /** @description Front/back matter that is not narrated */
+      excluded: boolean;
+      status: components['schemas']['ChapterStatus'];
+    };
+    ChapterPage: {
+      items: components['schemas']['Chapter'][];
+      /** Format: int64 */
+      total: number;
+    };
+    /** @enum {string} */
+    ParagraphKind: 'text' | 'heading' | 'scene_break';
+    /** @enum {string} */
+    SegmentKind: 'narration' | 'quote';
+    Segment: {
+      /** Format: int64 */
+      id: number;
+      idx: number;
+      kind: components['schemas']['SegmentKind'];
+      /** @description Number of the quotation within the chapter (0 for narration) */
+      quoteRef: number;
+      text: string;
+    };
+    Paragraph: {
+      /** Format: int64 */
+      id: number;
+      idx: number;
+      kind: components['schemas']['ParagraphKind'];
+      text: string;
+      segments: components['schemas']['Segment'][];
+    };
+    ChapterDetail: components['schemas']['Chapter'] & {
+      /** Format: int64 */
+      prevChapterId?: number;
+      /** Format: int64 */
+      nextChapterId?: number;
+      paragraphs: components['schemas']['Paragraph'][];
+    };
+    ChapterUpdate: {
+      title?: string;
+      excluded?: boolean;
+    };
+    ChapterSplit: {
+      /**
+       * Format: int64
+       * @description First paragraph of the new chapter
+       */
+      paragraphId: number;
+      title: string;
+    };
+    /** @enum {string} */
+    JobStatus: 'queued' | 'running' | 'done' | 'failed' | 'canceled';
+    Job: {
+      /** Format: int64 */
+      id: number;
+      type: string;
+      status: components['schemas']['JobStatus'];
+      /** Format: int64 */
+      bookId?: number;
+      /** Format: int64 */
+      chapterId?: number;
+      attempts: number;
+      maxAttempts: number;
+      progress: number;
+      error?: string;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: date-time */
+      updatedAt: string;
+      /** Format: date-time */
+      startedAt?: string;
+      /** Format: date-time */
+      finishedAt?: string;
+    };
+    JobPage: {
+      items: components['schemas']['Job'][];
       /** Format: int64 */
       total: number;
     };
@@ -96,6 +361,8 @@ export interface components {
     };
   };
   parameters: {
+    BookId: number;
+    ChapterId: number;
     Offset: number;
     Limit: number;
   };
@@ -145,6 +412,292 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['BookPage'];
+        };
+      };
+      default: components['responses']['Error'];
+    };
+  };
+  uploadBook: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /** Format: binary */
+          file: string;
+        };
+      };
+    };
+    responses: {
+      /** @description The book was stored; the import runs in the background */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Book'];
+        };
+      };
+      400: components['responses']['Error'];
+      413: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getBook: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The book */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Book'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  deleteBook: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getBookCover: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Cover image */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'image/*': string;
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listVolumes: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Volumes in reading order */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Volume'][];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listChapters: {
+    parameters: {
+      query?: {
+        volumeId?: number;
+        offset?: components['parameters']['Offset'];
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of chapters */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterPage'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getChapter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The chapter */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterDetail'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  updateChapter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ChapterUpdate'];
+      };
+    };
+    responses: {
+      /** @description The updated chapter */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Chapter'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  mergeChapterWithNext: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The merged chapter */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Chapter'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  splitChapter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ChapterSplit'];
+      };
+    };
+    responses: {
+      /** @description The new chapter */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Chapter'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listJobs: {
+    parameters: {
+      query?: {
+        bookId?: number;
+        status?: components['schemas']['JobStatus'][];
+        offset?: components['parameters']['Offset'];
+        limit?: components['parameters']['Limit'];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of jobs */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['JobPage'];
         };
       };
       default: components['responses']['Error'];

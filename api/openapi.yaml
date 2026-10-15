@@ -5,7 +5,7 @@ info:
     HTTP API of the audiobook-generator service. This file is the single source
     of truth: the Go server (internal/api) and the TypeScript client
     (web/src/api) are generated from it.
-  version: 0.1.0
+  version: 0.2.0
 servers:
   - url: /api
 paths:
@@ -23,6 +23,7 @@ paths:
                 $ref: "#/components/schemas/SystemInfo"
         default:
           $ref: "#/components/responses/Error"
+
   /books:
     get:
       operationId: listBooks
@@ -40,8 +41,283 @@ paths:
                 $ref: "#/components/schemas/BookPage"
         default:
           $ref: "#/components/responses/Error"
+    post:
+      operationId: uploadBook
+      summary: Upload an EPUB and start its import
+      tags: [books]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "202":
+          description: The book was stored; the import runs in the background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "400":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getBook
+      summary: Get a book
+      tags: [books]
+      responses:
+        "200":
+          description: The book
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteBook
+      summary: Delete a book with all its data and files
+      tags: [books]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/cover:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getBookCover
+      summary: The book's cover image
+      tags: [books]
+      responses:
+        "200":
+          description: Cover image
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/volumes:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listVolumes
+      summary: List a book's volumes
+      tags: [chapters]
+      responses:
+        "200":
+          description: Volumes in reading order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Volume"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/chapters:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listChapters
+      summary: List a book's chapters in reading order
+      tags: [chapters]
+      parameters:
+        - name: volumeId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - $ref: "#/components/parameters/Offset"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 10000
+            default: 10000
+      responses:
+        "200":
+          description: A page of chapters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterPage"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    get:
+      operationId: getChapter
+      summary: A chapter with its paragraphs and segments
+      tags: [chapters]
+      responses:
+        "200":
+          description: The chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterDetail"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateChapter
+      summary: Rename a chapter or exclude it from narration
+      tags: [chapters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChapterUpdate"
+      responses:
+        "200":
+          description: The updated chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/merge-next:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      operationId: mergeChapterWithNext
+      summary: Append the following chapter to this one
+      tags: [chapters]
+      responses:
+        "200":
+          description: The merged chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/split:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      operationId: splitChapter
+      summary: Start a new chapter at the given paragraph
+      tags: [chapters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChapterSplit"
+      responses:
+        "200":
+          description: The new chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /jobs:
+    get:
+      operationId: listJobs
+      summary: List background jobs, newest first
+      tags: [jobs]
+      parameters:
+        - name: bookId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/JobStatus"
+          style: form
+          explode: true
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of jobs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobPage"
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
   parameters:
+    BookId:
+      name: bookId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ChapterId:
+      name: chapterId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
     Offset:
       name: offset
       in: query
@@ -75,9 +351,10 @@ components:
       properties:
         message:
           type: string
+
     SystemInfo:
       type: object
-      required: [version, commit, database, tts]
+      required: [version, commit, database, tts, maxUploadBytes]
       properties:
         version:
           type: string
@@ -88,6 +365,9 @@ components:
           $ref: "#/components/schemas/DatabaseInfo"
         tts:
           $ref: "#/components/schemas/TTSInfo"
+        maxUploadBytes:
+          type: integer
+          format: int64
     DatabaseInfo:
       type: object
       required: [dialect, schemaVersion]
@@ -111,12 +391,14 @@ components:
           description: Number of voices the TTS server offers (when reachable)
         error:
           type: string
+
     BookStatus:
       type: string
-      enum: [imported, analyzing, ready, failed]
+      enum: [importing, imported, analyzing, ready, failed]
     Book:
       type: object
-      required: [id, title, author, status, createdAt, updatedAt]
+      required:
+        [id, title, author, language, status, progress, wordCount, chapterCount, hasCover, createdAt, updatedAt]
       properties:
         id:
           type: integer
@@ -125,8 +407,23 @@ components:
           type: string
         author:
           type: string
+        language:
+          type: string
         status:
           $ref: "#/components/schemas/BookStatus"
+        progress:
+          type: number
+          description: Progress of the running import (0..1)
+        error:
+          type: string
+          description: Why the import failed
+        wordCount:
+          type: integer
+          format: int64
+        chapterCount:
+          type: integer
+        hasCover:
+          type: boolean
         createdAt:
           type: string
           format: date-time
@@ -141,6 +438,193 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Book"
+        total:
+          type: integer
+          format: int64
+
+    Volume:
+      type: object
+      required: [id, idx, title, chapterCount, wordCount]
+      properties:
+        id:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+        title:
+          type: string
+        chapterCount:
+          type: integer
+        wordCount:
+          type: integer
+          format: int64
+
+    ChapterStatus:
+      type: string
+      enum: [imported]
+    Chapter:
+      type: object
+      required: [id, bookId, idx, title, wordCount, quoteCount, excluded, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        bookId:
+          type: integer
+          format: int64
+        volumeId:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+          description: Position in the book (0-based)
+        title:
+          type: string
+        wordCount:
+          type: integer
+        quoteCount:
+          type: integer
+        excluded:
+          type: boolean
+          description: Front/back matter that is not narrated
+        status:
+          $ref: "#/components/schemas/ChapterStatus"
+    ChapterPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Chapter"
+        total:
+          type: integer
+          format: int64
+    ParagraphKind:
+      type: string
+      enum: [text, heading, scene_break]
+    SegmentKind:
+      type: string
+      enum: [narration, quote]
+    Segment:
+      type: object
+      required: [id, idx, kind, quoteRef, text]
+      properties:
+        id:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+        kind:
+          $ref: "#/components/schemas/SegmentKind"
+        quoteRef:
+          type: integer
+          description: Number of the quotation within the chapter (0 for narration)
+        text:
+          type: string
+    Paragraph:
+      type: object
+      required: [id, idx, kind, text, segments]
+      properties:
+        id:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+        kind:
+          $ref: "#/components/schemas/ParagraphKind"
+        text:
+          type: string
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Segment"
+    ChapterDetail:
+      allOf:
+        - $ref: "#/components/schemas/Chapter"
+        - type: object
+          required: [paragraphs]
+          properties:
+            prevChapterId:
+              type: integer
+              format: int64
+            nextChapterId:
+              type: integer
+              format: int64
+            paragraphs:
+              type: array
+              items:
+                $ref: "#/components/schemas/Paragraph"
+    ChapterUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        excluded:
+          type: boolean
+    ChapterSplit:
+      type: object
+      required: [paragraphId, title]
+      properties:
+        paragraphId:
+          type: integer
+          format: int64
+          description: First paragraph of the new chapter
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    JobStatus:
+      type: string
+      enum: [queued, running, done, failed, canceled]
+    Job:
+      type: object
+      required: [id, type, status, attempts, maxAttempts, progress, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        type:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        bookId:
+          type: integer
+          format: int64
+        chapterId:
+          type: integer
+          format: int64
+        attempts:
+          type: integer
+        maxAttempts:
+          type: integer
+        progress:
+          type: number
+        error:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+    JobPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"
         total:
           type: integer
           format: int64

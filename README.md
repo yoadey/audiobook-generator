@@ -8,10 +8,11 @@ Go backend, React frontend, shipped as a self-contained Helm chart that
 brings the app, the [Kokoro](https://github.com/remsky/Kokoro-FastAPI) TTS
 server and storage.
 
-> **Status:** milestone M0 (skeleton). The app starts, migrates its database
-> (SQLite or PostgreSQL), reports its status and serves an empty library.
-> EPUB import, character analysis and rendering follow in M1–M7 — see
-> [`docs/PLAN.md`](docs/PLAN.md).
+> **Status:** milestone M1. EPUBs can be uploaded and are split into volumes,
+> chapters, paragraphs and narration/quote segments (a 3-million-word book
+> imports in seconds); chapters can be reviewed, renamed, excluded, merged and
+> split in the UI. Rendering, character analysis and voices follow in M2–M7 —
+> see [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Install
 
@@ -28,6 +29,7 @@ Common options (all values: [`charts/audiobook-generator/values.yaml`](charts/au
 | `database.type` | `sqlite` | `sqlite` (file on the data volume) or `postgres` |
 | `database.postgres.mode` | `external` | `external` (host/user/password or `existingSecret`) or `cnpg` (renders a CloudNativePG `Cluster`) |
 | `persistence.size` | `50Gi` | EPUBs, rendered audio, SQLite file |
+| `maxUploadMB` | `512` | largest accepted EPUB (raise your ingress body limit to match) |
 | `tts.kokoro.enabled` | `true` | bundled Kokoro-FastAPI (CPU); set `false` + `tts.externalUrl` to use your own |
 | `ingress.enabled` | `false` | expose the UI |
 | `metrics.serviceMonitor.enabled` | `false` | Prometheus Operator scraping of `/metrics` |
@@ -54,7 +56,8 @@ Layout:
 ```
 api/openapi.yaml          API contract (source of truth)
 cmd/audiobook-generator/  main
-internal/                 Go packages (store, api, tts, webui, …)
+internal/                 Go packages: epub (parser), segment (quotes, chunking),
+                          importer, jobs (persistent queue), store, api, tts, webui
 web/                      React + Mantine frontend (built into internal/webui/dist)
 charts/audiobook-generator/  Helm chart
 hack/                     CI helper scripts (kubeconform, kind e2e)

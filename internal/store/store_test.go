@@ -19,7 +19,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 		v, err := s.SchemaVersion(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, "202610150001_create_books", v)
+		assert.Equal(t, store.LatestSchemaVersion(), v)
 		require.NoError(t, s.Ping(ctx))
 	})
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -11,31 +12,37 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/tts"
 )
 
-// Store is the persistence the API needs.
-type Store interface {
-	Dialect() string
-	SchemaVersion(ctx context.Context) (string, error)
-	ListBooks(ctx context.Context, offset, limit int) ([]store.Book, int64, error)
-}
-
 // TTS is the speech server the API reports on.
 type TTS interface {
 	BaseURL() string
 	Voices(ctx context.Context) ([]tts.Voice, error)
 }
 
+// Enqueuer schedules background jobs.
+type Enqueuer interface {
+	Enqueue(ctx context.Context, j *store.Job) error
+}
+
+// Options wires the API's dependencies.
+type Options struct {
+	Store          *store.Store
+	TTS            TTS
+	Jobs           Enqueuer
+	DataDir        string
+	MaxUploadBytes int64
+	Log            *slog.Logger
+}
+
 // Server implements StrictServerInterface.
 type Server struct {
-	store Store
-	tts   TTS
-	log   *slog.Logger
+	Options
 }
 
 var _ StrictServerInterface = (*Server)(nil)
 
-// NewServer wires the API implementation.
-func NewServer(s Store, t TTS, log *slog.Logger) *Server {
-	return &Server{store: s, tts: t, log: log}
+// NewServer returns the API implementation.
+func NewServer(o Options) *Server {
+	return &Server{Options: o}
 }
 
 // Register mounts the API under /api on mux.
@@ -45,13 +52,20 @@ func (s *Server) Register(mux *http.ServeMux) {
 			writeError(w, http.StatusBadRequest, err.Error())
 		},
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			s.log.ErrorContext(r.Context(), "api handler failed", "path", r.URL.Path, "err", err)
+			s.Log.ErrorContext(r.Context(), "api handler failed", "path", r.URL.Path, "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 		},
 	})
 	HandlerWithOptions(strict, StdHTTPServerOptions{
 		BaseURL:    "/api",
 		BaseRouter: mux,
+		Middlewares: []MiddlewareFunc{func(next http.Handler) http.Handler {
+			// Bounds every request body; uploads are the only large ones.
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				r.Body = http.MaxBytesReader(w, r.Body, s.MaxUploadBytes)
+				next.ServeHTTP(w, r)
+			})
+		}},
 		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, err.Error())
 		},
@@ -64,7 +78,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 
 // GetSystemInfo reports version, database and TTS status.
 func (s *Server) GetSystemInfo(ctx context.Context, _ GetSystemInfoRequestObject) (GetSystemInfoResponseObject, error) {
-	schema, err := s.store.SchemaVersion(ctx)
+	schema, err := s.Store.SchemaVersion(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -72,17 +86,18 @@ func (s *Server) GetSystemInfo(ctx context.Context, _ GetSystemInfoRequestObject
 		Version: buildinfo.Version,
 		Commit:  buildinfo.Commit,
 		Database: DatabaseInfo{
-			Dialect:       DatabaseInfoDialect(s.store.Dialect()),
+			Dialect:       DatabaseInfoDialect(s.Store.Dialect()),
 			SchemaVersion: schema,
 		},
-		Tts: TTSInfo{Url: s.tts.BaseURL()},
+		Tts:            TTSInfo{Url: s.TTS.BaseURL()},
+		MaxUploadBytes: s.MaxUploadBytes,
 	}
 
 	// The TTS server may be restarting or still loading its model; report
 	// that instead of failing the whole request.
 	ttsCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	if voices, err := s.tts.Voices(ttsCtx); err != nil {
+	if voices, err := s.TTS.Voices(ttsCtx); err != nil {
 		msg := err.Error()
 		info.Tts.Error = &msg
 	} else {
@@ -93,29 +108,24 @@ func (s *Server) GetSystemInfo(ctx context.Context, _ GetSystemInfoRequestObject
 	return GetSystemInfo200JSONResponse(info), nil
 }
 
-// ListBooks returns a page of books.
-func (s *Server) ListBooks(ctx context.Context, req ListBooksRequestObject) (ListBooksResponseObject, error) {
-	offset, limit := 0, 50
-	if req.Params.Offset != nil {
-		offset = max(0, int(*req.Params.Offset))
+func errMsg(msg string) Error { return Error{Message: msg} }
+
+func isNotFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
+
+func page(offset *int32, limit *int32, def, maxLimit int) (int, int) {
+	o, l := 0, def
+	if offset != nil {
+		o = max(0, int(*offset))
 	}
-	if req.Params.Limit != nil {
-		limit = min(max(1, int(*req.Params.Limit)), 500)
+	if limit != nil {
+		l = min(max(1, int(*limit)), maxLimit)
 	}
-	books, total, err := s.store.ListBooks(ctx, offset, limit)
-	if err != nil {
-		return nil, err
+	return o, l
+}
+
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
 	}
-	page := BookPage{Items: make([]Book, 0, len(books)), Total: total}
-	for _, b := range books {
-		page.Items = append(page.Items, Book{
-			Id:        b.ID,
-			Title:     b.Title,
-			Author:    b.Author,
-			Status:    BookStatus(b.Status),
-			CreatedAt: b.CreatedAt,
-			UpdatedAt: b.UpdatedAt,
-		})
-	}
-	return ListBooks200JSONResponse(page), nil
+	return &s
 }

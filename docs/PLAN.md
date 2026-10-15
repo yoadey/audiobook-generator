@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-15 · Status: **M0 (skeleton) implemented**, M1 next
+Last updated: 2026-10-15 · Status: **M0 and M1 implemented**, M2 next
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,

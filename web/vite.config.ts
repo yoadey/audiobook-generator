@@ -24,6 +24,8 @@ export default defineConfig({
   build: {
     outDir,
     emptyOutDir: true,
+    // A single bundle (~150 kB gzipped, mostly Mantine) is fine for a LAN app.
+    chunkSizeWarningLimit: 1024,
   },
   server: {
     // `go run ./cmd/audiobook-generator` listens on :8080.

@@ -1,31 +1,105 @@
 import {
   Alert,
-  Badge,
   Button,
+  Card,
   Center,
+  FileButton,
   Group,
+  Image,
   Loader,
+  Progress,
+  SimpleGrid,
   Stack,
-  Table,
   Text,
   Title,
 } from '@mantine/core';
-import { IconBooks, IconUpload } from '@tabler/icons-react';
-import { useQuery } from '@tanstack/react-query';
+import { IconBook2, IconBooks, IconUpload } from '@tabler/icons-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 
-import { booksQuery } from '../api/client';
+import { type Book, booksQuery, coverUrl, uploadBook } from '../api/client';
+import { formatListeningTime, formatNumber } from '../lib/format';
+import { CardLink } from '../components/links';
+import { StatusBadge } from '../components/StatusBadge';
+import { notifyError, notifySuccess } from '../lib/notify';
+
+function Cover({ book }: { book: Book }) {
+  const [failed, setFailed] = useState(false);
+  if (!book.hasCover || failed) {
+    return (
+      <Center h={180} bg="var(--mantine-color-default-hover)">
+        <IconBook2 size={48} stroke={1.2} />
+      </Center>
+    );
+  }
+  return (
+    <Image src={coverUrl(book.id)} h={180} fit="contain" alt="" onError={() => setFailed(true)} />
+  );
+}
+
+function BookCard({ book }: { book: Book }) {
+  return (
+    <CardLink withBorder padding="sm" to="/books/$bookId" params={{ bookId: String(book.id) }}>
+      <Card.Section>
+        <Cover book={book} />
+      </Card.Section>
+      <Stack gap={4} mt="sm">
+        <Group justify="space-between" wrap="nowrap" align="flex-start">
+          <Text fw={600} lineClamp={2}>
+            {book.title}
+          </Text>
+          <StatusBadge status={book.status} />
+        </Group>
+        {book.author && (
+          <Text size="sm" c="dimmed" lineClamp={1}>
+            {book.author}
+          </Text>
+        )}
+        {book.status === 'importing' && (
+          <Progress value={book.progress * 100} animated size="sm" mt={4} />
+        )}
+        {book.status === 'failed' && book.error && (
+          <Text size="xs" c="red" lineClamp={3}>
+            {book.error}
+          </Text>
+        )}
+        {book.chapterCount > 0 && (
+          <Text size="xs" c="dimmed">
+            {formatNumber(book.chapterCount)} chapters · {formatNumber(book.wordCount)} words · ~
+            {formatListeningTime(book.wordCount)}
+          </Text>
+        )}
+      </Stack>
+    </CardLink>
+  );
+}
 
 export function LibraryPage() {
+  const queryClient = useQueryClient();
   const { data, error, isPending } = useQuery(booksQuery());
+  const upload = useMutation({
+    mutationFn: uploadBook,
+    onSuccess: (book) => {
+      notifySuccess(`“${book.title}” uploaded, importing…`);
+      return queryClient.invalidateQueries({ queryKey: ['books'] });
+    },
+    onError: (err) => notifyError('Upload failed', err),
+  });
 
   return (
     <Stack>
       <Group justify="space-between">
         <Title order={2}>Library</Title>
-        {/* EPUB import arrives with milestone M1. */}
-        <Button leftSection={<IconUpload size={16} />} disabled>
-          Upload EPUB
-        </Button>
+        <FileButton
+          onChange={(file) => file && upload.mutate(file)}
+          accept=".epub,application/epub+zip"
+        >
+          {(props) => (
+            <Button {...props} leftSection={<IconUpload size={16} />} loading={upload.isPending}>
+              Upload EPUB
+            </Button>
+          )}
+        </FileButton>
       </Group>
 
       {isPending && (
@@ -44,32 +118,17 @@ export function LibraryPage() {
             <IconBooks size={48} stroke={1.2} />
             <Text fw={500}>No books yet</Text>
             <Text c="dimmed" size="sm">
-              Uploaded EPUBs will appear here.
+              Upload a DRM-free EPUB to get started.
             </Text>
           </Stack>
         </Center>
       )}
       {data && data.total > 0 && (
-        <Table striped highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Title</Table.Th>
-              <Table.Th>Author</Table.Th>
-              <Table.Th>Status</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {data.items.map((book) => (
-              <Table.Tr key={book.id}>
-                <Table.Td>{book.title}</Table.Td>
-                <Table.Td>{book.author}</Table.Td>
-                <Table.Td>
-                  <Badge variant="light">{book.status}</Badge>
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
+        <SimpleGrid cols={{ base: 1, xs: 2, md: 3, lg: 4 }}>
+          {data.items.map((book) => (
+            <BookCard key={book.id} book={book} />
+          ))}
+        </SimpleGrid>
       )}
     </Stack>
   );

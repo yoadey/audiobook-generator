@@ -30,6 +30,11 @@ tests:
       - equal:
           path: spec.template.spec.volumes[0].persistentVolumeClaim.claimName
           value: abg-audiobook-generator-data
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_MAX_UPLOAD_MB
+            value: "512"
       - equal:
           path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
           value: true

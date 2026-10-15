@@ -58,4 +58,18 @@ grep -q "\"dialect\":\"$db\"" <<<"$info"
 grep -q '"reachable":false' <<<"$info"
 curl -fsS localhost:18080/api/books | grep -q '"total":0'
 curl -fsS localhost:18080/library | grep -q '<div id="root">'
+
+# Upload the sample EPUB and wait for its import.
+book="$(curl -fsS -F "file=@$root/hack/testdata/sample.epub" localhost:18080/api/books)"
+echo "$book"
+id="$(sed -E 's/.*"id":([0-9]+).*/\1/' <<<"$book")"
+for _ in $(seq 1 60); do
+  book="$(curl -fsS "localhost:18080/api/books/$id")"
+  grep -q '"status":"importing"' <<<"$book" || break
+  sleep 1
+done
+echo "$book"
+grep -q '"status":"imported"' <<<"$book"
+grep -q '"chapterCount":4' <<<"$book"
+curl -fsS "localhost:18080/api/books/$id/chapters" | grep -q '"title":"Chapter 1"'
 echo "e2e ($db) passed"

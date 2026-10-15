@@ -48,6 +48,11 @@ resources:
 # Size limit of the /tmp emptyDir (render scratch space).
 tmpSizeLimit: 4Gi
 
+# Largest accepted EPUB upload in MiB. Reverse proxies have their own limit
+# (ingress-nginx: nginx.ingress.kubernetes.io/proxy-body-size; Traefik has
+# none by default).
+maxUploadMB: 512
+
 log:
   level: info # debug | info | warn | error
   format: json # json | text

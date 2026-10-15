@@ -54,6 +54,8 @@ spec:
               value: ":8080"
             - name: ABG_DATA_DIR
               value: /data
+            - name: ABG_MAX_UPLOAD_MB
+              value: {{ .Values.maxUploadMB | quote }}
             - name: ABG_LOG_LEVEL
               value: {{ .Values.log.level | quote }}
             - name: ABG_LOG_FORMAT

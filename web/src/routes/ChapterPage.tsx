@@ -1,0 +1,298 @@
+import {
+  ActionIcon,
+  Alert,
+  Box,
+  Breadcrumbs,
+  Button,
+  Center,
+  Divider,
+  Group,
+  Loader,
+  Stack,
+  Switch,
+  Text,
+  TextInput,
+  Title,
+  Tooltip,
+} from '@mantine/core';
+import { modals } from '@mantine/modals';
+import {
+  IconArrowLeft,
+  IconArrowRight,
+  IconCheck,
+  IconGitMerge,
+  IconScissors,
+} from '@tabler/icons-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate, useParams } from '@tanstack/react-router';
+import { useState } from 'react';
+
+import {
+  bookQuery,
+  type ChapterDetail,
+  chapterQuery,
+  mergeChapterWithNext,
+  type Paragraph,
+  splitChapter,
+  updateChapter,
+} from '../api/client';
+import { AnchorLink } from '../components/links';
+import { confirmMerge } from '../lib/confirm';
+import { formatListeningTime, formatNumber } from '../lib/format';
+import { notifyError, notifySuccess } from '../lib/notify';
+
+function ParagraphView({ p, onSplit }: { p: Paragraph; onSplit?: () => void }) {
+  const body =
+    p.kind === 'scene_break' ? (
+      <Divider my="sm" label="⁂" labelPosition="center" />
+    ) : p.kind === 'heading' ? (
+      <Title order={3}>{p.text}</Title>
+    ) : (
+      <Text style={{ lineHeight: 1.7 }}>
+        {p.segments.map((s, i) => (
+          <span key={s.id}>
+            {i > 0 && ' '}
+            {s.kind === 'quote' ? (
+              <Tooltip label={`Quote ${s.quoteRef}`} openDelay={400}>
+                <Box
+                  component="span"
+                  data-quote={s.quoteRef}
+                  style={{
+                    background: 'var(--mantine-color-blue-light)',
+                    borderRadius: 4,
+                    padding: '1px 2px',
+                  }}
+                >
+                  {s.text}
+                </Box>
+              </Tooltip>
+            ) : (
+              s.text
+            )}
+          </span>
+        ))}
+      </Text>
+    );
+  return (
+    <Group align="flex-start" wrap="nowrap" gap="xs">
+      <Box w={28} pt={2}>
+        {onSplit && (
+          <Tooltip label="Start a new chapter here">
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              onClick={onSplit}
+              aria-label="Split here"
+            >
+              <IconScissors size={14} />
+            </ActionIcon>
+          </Tooltip>
+        )}
+      </Box>
+      <Box style={{ flex: 1 }}>{body}</Box>
+    </Group>
+  );
+}
+
+function TitleEditor({ chapter, onSave }: { chapter: ChapterDetail; onSave: (t: string) => void }) {
+  // Remounted (key) when the stored title changes, so no syncing effect.
+  const [title, setTitle] = useState(chapter.title);
+  const dirty = title.trim() !== '' && title.trim() !== chapter.title;
+  return (
+    <TextInput
+      value={title}
+      onChange={(e) => setTitle(e.currentTarget.value)}
+      onKeyDown={(e) => e.key === 'Enter' && dirty && onSave(title.trim())}
+      size="lg"
+      aria-label="Chapter title"
+      style={{ flex: 1 }}
+      rightSection={
+        dirty && (
+          <ActionIcon onClick={() => onSave(title.trim())} aria-label="Save title">
+            <IconCheck size={16} />
+          </ActionIcon>
+        )
+      }
+    />
+  );
+}
+
+function SplitTitle({ onSubmit }: { onSubmit: (title: string) => void }) {
+  const [title, setTitle] = useState('');
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (title.trim()) onSubmit(title.trim());
+      }}
+    >
+      <Stack>
+        <Text size="sm">Everything from this paragraph on becomes a new chapter.</Text>
+        <TextInput
+          label="Title of the new chapter"
+          value={title}
+          onChange={(e) => setTitle(e.currentTarget.value)}
+          data-autofocus
+        />
+        <Group justify="flex-end">
+          <Button type="submit" disabled={!title.trim()}>
+            Split
+          </Button>
+        </Group>
+      </Stack>
+    </form>
+  );
+}
+
+export function ChapterPage() {
+  const { bookId: rawBook, chapterId: raw } = useParams({
+    from: '/books/$bookId/chapters/$chapterId',
+  });
+  const bookId = Number(rawBook);
+  const chapterId = Number(raw);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const book = useQuery(bookQuery(bookId));
+  const { data: chapter, error, isPending } = useQuery(chapterQuery(chapterId));
+
+  const invalidate = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['books', bookId] }),
+      queryClient.invalidateQueries({ queryKey: ['chapters'] }),
+    ]);
+  const update = useMutation({
+    mutationFn: (body: { title?: string; excluded?: boolean }) => updateChapter(chapterId, body),
+    onSuccess: invalidate,
+    onError: (err) => notifyError('Could not update chapter', err),
+  });
+  const merge = useMutation({
+    mutationFn: () => mergeChapterWithNext(chapterId),
+    onSuccess: invalidate,
+    onError: (err) => notifyError('Could not merge chapters', err),
+  });
+  const split = useMutation({
+    mutationFn: ({ paragraphId, title }: { paragraphId: number; title: string }) =>
+      splitChapter(chapterId, paragraphId, title),
+    onSuccess: async (created) => {
+      await invalidate();
+      notifySuccess(`Created “${created.title}”`);
+      await navigate({
+        to: '/books/$bookId/chapters/$chapterId',
+        params: { bookId: String(bookId), chapterId: String(created.id) },
+      });
+    },
+    onError: (err) => notifyError('Could not split chapter', err),
+  });
+
+  if (isPending) {
+    return (
+      <Center py="xl">
+        <Loader />
+      </Center>
+    );
+  }
+  if (error) {
+    return (
+      <Alert color="red" title="Could not load chapter">
+        {error.message}
+      </Alert>
+    );
+  }
+
+  const go = (id: number | undefined) =>
+    id &&
+    navigate({
+      to: '/books/$bookId/chapters/$chapterId',
+      params: { bookId: String(bookId), chapterId: String(id) },
+    });
+
+  return (
+    <Stack maw={860}>
+      <Breadcrumbs>
+        <AnchorLink to="/library" size="sm">
+          Library
+        </AnchorLink>
+        <AnchorLink to="/books/$bookId" params={{ bookId: String(bookId) }} size="sm">
+          {book.data?.title ?? 'Book'}
+        </AnchorLink>
+        <Text size="sm">
+          #{chapter.idx + 1} {chapter.title}
+        </Text>
+      </Breadcrumbs>
+
+      <Group wrap="nowrap">
+        <TitleEditor
+          key={`${chapter.id}:${chapter.title}`}
+          chapter={chapter}
+          onSave={(title) => update.mutate({ title })}
+        />
+      </Group>
+      <Group justify="space-between">
+        <Text size="sm" c="dimmed">
+          {formatNumber(chapter.wordCount)} words · {formatNumber(chapter.quoteCount)} quotes ·{' '}
+          {formatListeningTime(chapter.wordCount)}
+        </Text>
+        <Group>
+          <Switch
+            label="Narrate"
+            checked={!chapter.excluded}
+            onChange={(e) => update.mutate({ excluded: !e.currentTarget.checked })}
+          />
+          <Button
+            variant="default"
+            size="xs"
+            leftSection={<IconGitMerge size={14} />}
+            disabled={!chapter.nextChapterId}
+            onClick={() => confirmMerge(chapter, undefined, () => merge.mutate())}
+          >
+            Merge with next
+          </Button>
+          <ActionIcon.Group>
+            <ActionIcon
+              variant="default"
+              disabled={!chapter.prevChapterId}
+              onClick={() => go(chapter.prevChapterId)}
+              aria-label="Previous chapter"
+            >
+              <IconArrowLeft size={16} />
+            </ActionIcon>
+            <ActionIcon
+              variant="default"
+              disabled={!chapter.nextChapterId}
+              onClick={() => go(chapter.nextChapterId)}
+              aria-label="Next chapter"
+            >
+              <IconArrowRight size={16} />
+            </ActionIcon>
+          </ActionIcon.Group>
+        </Group>
+      </Group>
+
+      <Stack gap="sm" mt="md">
+        {chapter.paragraphs.map((p, i) => (
+          <ParagraphView
+            key={p.id}
+            p={p}
+            onSplit={
+              i === 0
+                ? undefined
+                : () =>
+                    modals.open({
+                      title: 'Split chapter',
+                      children: (
+                        <SplitTitle
+                          onSubmit={(title) => {
+                            modals.closeAll();
+                            split.mutate({ paragraphId: p.id, title });
+                          }}
+                        />
+                      ),
+                    })
+            }
+          />
+        ))}
+      </Stack>
+    </Stack>
+  );
+}

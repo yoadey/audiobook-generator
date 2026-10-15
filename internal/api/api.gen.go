@@ -11,10 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for BookStatus.
@@ -22,6 +25,7 @@ const (
 	BookStatusAnalyzing BookStatus = "analyzing"
 	BookStatusFailed    BookStatus = "failed"
 	BookStatusImported  BookStatus = "imported"
+	BookStatusImporting BookStatus = "importing"
 	BookStatusReady     BookStatus = "ready"
 )
 
@@ -34,7 +38,24 @@ func (e BookStatus) Valid() bool {
 		return true
 	case BookStatusImported:
 		return true
+	case BookStatusImporting:
+		return true
 	case BookStatusReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ChapterStatus.
+const (
+	ChapterStatusImported ChapterStatus = "imported"
+)
+
+// Valid indicates whether the value is a known member of the ChapterStatus enum.
+func (e ChapterStatus) Valid() bool {
+	switch e {
+	case ChapterStatusImported:
 		return true
 	default:
 		return false
@@ -59,14 +80,90 @@ func (e DatabaseInfoDialect) Valid() bool {
 	}
 }
 
+// Defines values for JobStatus.
+const (
+	JobStatusCanceled JobStatus = "canceled"
+	JobStatusDone     JobStatus = "done"
+	JobStatusFailed   JobStatus = "failed"
+	JobStatusQueued   JobStatus = "queued"
+	JobStatusRunning  JobStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the JobStatus enum.
+func (e JobStatus) Valid() bool {
+	switch e {
+	case JobStatusCanceled:
+		return true
+	case JobStatusDone:
+		return true
+	case JobStatusFailed:
+		return true
+	case JobStatusQueued:
+		return true
+	case JobStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ParagraphKind.
+const (
+	ParagraphKindHeading    ParagraphKind = "heading"
+	ParagraphKindSceneBreak ParagraphKind = "scene_break"
+	ParagraphKindText       ParagraphKind = "text"
+)
+
+// Valid indicates whether the value is a known member of the ParagraphKind enum.
+func (e ParagraphKind) Valid() bool {
+	switch e {
+	case ParagraphKindHeading:
+		return true
+	case ParagraphKindSceneBreak:
+		return true
+	case ParagraphKindText:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SegmentKind.
+const (
+	SegmentKindNarration SegmentKind = "narration"
+	SegmentKindQuote     SegmentKind = "quote"
+)
+
+// Valid indicates whether the value is a known member of the SegmentKind enum.
+func (e SegmentKind) Valid() bool {
+	switch e {
+	case SegmentKindNarration:
+		return true
+	case SegmentKindQuote:
+		return true
+	default:
+		return false
+	}
+}
+
 // Book defines model for Book.
 type Book struct {
-	Author    string     `json:"author"`
-	CreatedAt time.Time  `json:"createdAt"`
-	Id        int64      `json:"id"`
+	Author       string    `json:"author"`
+	ChapterCount int       `json:"chapterCount"`
+	CreatedAt    time.Time `json:"createdAt"`
+
+	// Error Why the import failed
+	Error    *string `json:"error,omitempty"`
+	HasCover bool    `json:"hasCover"`
+	Id       int64   `json:"id"`
+	Language string  `json:"language"`
+
+	// Progress Progress of the running import (0..1)
+	Progress  float32    `json:"progress"`
 	Status    BookStatus `json:"status"`
 	Title     string     `json:"title"`
 	UpdatedAt time.Time  `json:"updatedAt"`
+	WordCount int64      `json:"wordCount"`
 }
 
 // BookPage defines model for BookPage.
@@ -77,6 +174,65 @@ type BookPage struct {
 
 // BookStatus defines model for BookStatus.
 type BookStatus string
+
+// Chapter defines model for Chapter.
+type Chapter struct {
+	BookId int64 `json:"bookId"`
+
+	// Excluded Front/back matter that is not narrated
+	Excluded bool  `json:"excluded"`
+	Id       int64 `json:"id"`
+
+	// Idx Position in the book (0-based)
+	Idx        int           `json:"idx"`
+	QuoteCount int           `json:"quoteCount"`
+	Status     ChapterStatus `json:"status"`
+	Title      string        `json:"title"`
+	VolumeId   *int64        `json:"volumeId,omitempty"`
+	WordCount  int           `json:"wordCount"`
+}
+
+// ChapterDetail defines model for ChapterDetail.
+type ChapterDetail struct {
+	BookId int64 `json:"bookId"`
+
+	// Excluded Front/back matter that is not narrated
+	Excluded bool  `json:"excluded"`
+	Id       int64 `json:"id"`
+
+	// Idx Position in the book (0-based)
+	Idx           int           `json:"idx"`
+	NextChapterId *int64        `json:"nextChapterId,omitempty"`
+	Paragraphs    []Paragraph   `json:"paragraphs"`
+	PrevChapterId *int64        `json:"prevChapterId,omitempty"`
+	QuoteCount    int           `json:"quoteCount"`
+	Status        ChapterStatus `json:"status"`
+	Title         string        `json:"title"`
+	VolumeId      *int64        `json:"volumeId,omitempty"`
+	WordCount     int           `json:"wordCount"`
+}
+
+// ChapterPage defines model for ChapterPage.
+type ChapterPage struct {
+	Items []Chapter `json:"items"`
+	Total int64     `json:"total"`
+}
+
+// ChapterSplit defines model for ChapterSplit.
+type ChapterSplit struct {
+	// ParagraphId First paragraph of the new chapter
+	ParagraphId int64  `json:"paragraphId"`
+	Title       string `json:"title"`
+}
+
+// ChapterStatus defines model for ChapterStatus.
+type ChapterStatus string
+
+// ChapterUpdate defines model for ChapterUpdate.
+type ChapterUpdate struct {
+	Excluded *bool   `json:"excluded,omitempty"`
+	Title    *string `json:"title,omitempty"`
+}
 
 // DatabaseInfo defines model for DatabaseInfo.
 type DatabaseInfo struct {
@@ -94,11 +250,64 @@ type Error struct {
 	Message string `json:"message"`
 }
 
+// Job defines model for Job.
+type Job struct {
+	Attempts    int        `json:"attempts"`
+	BookId      *int64     `json:"bookId,omitempty"`
+	ChapterId   *int64     `json:"chapterId,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	Error       *string    `json:"error,omitempty"`
+	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
+	Id          int64      `json:"id"`
+	MaxAttempts int        `json:"maxAttempts"`
+	Progress    float32    `json:"progress"`
+	StartedAt   *time.Time `json:"startedAt,omitempty"`
+	Status      JobStatus  `json:"status"`
+	Type        string     `json:"type"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+}
+
+// JobPage defines model for JobPage.
+type JobPage struct {
+	Items []Job `json:"items"`
+	Total int64 `json:"total"`
+}
+
+// JobStatus defines model for JobStatus.
+type JobStatus string
+
+// Paragraph defines model for Paragraph.
+type Paragraph struct {
+	Id       int64         `json:"id"`
+	Idx      int           `json:"idx"`
+	Kind     ParagraphKind `json:"kind"`
+	Segments []Segment     `json:"segments"`
+	Text     string        `json:"text"`
+}
+
+// ParagraphKind defines model for ParagraphKind.
+type ParagraphKind string
+
+// Segment defines model for Segment.
+type Segment struct {
+	Id   int64       `json:"id"`
+	Idx  int         `json:"idx"`
+	Kind SegmentKind `json:"kind"`
+
+	// QuoteRef Number of the quotation within the chapter (0 for narration)
+	QuoteRef int    `json:"quoteRef"`
+	Text     string `json:"text"`
+}
+
+// SegmentKind defines model for SegmentKind.
+type SegmentKind string
+
 // SystemInfo defines model for SystemInfo.
 type SystemInfo struct {
-	Commit   string       `json:"commit"`
-	Database DatabaseInfo `json:"database"`
-	Tts      TTSInfo      `json:"tts"`
+	Commit         string       `json:"commit"`
+	Database       DatabaseInfo `json:"database"`
+	MaxUploadBytes int64        `json:"maxUploadBytes"`
+	Tts            TTSInfo      `json:"tts"`
 
 	// Version Example: 0.1.0
 	Version string `json:"version"`
@@ -114,6 +323,21 @@ type TTSInfo struct {
 	VoiceCount *int `json:"voiceCount,omitempty"`
 }
 
+// Volume defines model for Volume.
+type Volume struct {
+	ChapterCount int    `json:"chapterCount"`
+	Id           int64  `json:"id"`
+	Idx          int    `json:"idx"`
+	Title        string `json:"title"`
+	WordCount    int64  `json:"wordCount"`
+}
+
+// BookId defines model for BookId.
+type BookId = int64
+
+// ChapterId defines model for ChapterId.
+type ChapterId = int64
+
 // Limit defines model for Limit.
 type Limit = int32
 
@@ -126,11 +350,73 @@ type ListBooksParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// UploadBookMultipartBody defines parameters for UploadBook.
+type UploadBookMultipartBody struct {
+	File openapi_types.File `json:"file"`
+}
+
+// ListChaptersParams defines parameters for ListChapters.
+type ListChaptersParams struct {
+	VolumeId *int64  `form:"volumeId,omitempty" json:"volumeId,omitempty"`
+	Offset   *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit    *int32  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListJobsParams defines parameters for ListJobs.
+type ListJobsParams struct {
+	BookId *int64       `form:"bookId,omitempty" json:"bookId,omitempty"`
+	Status *[]JobStatus `form:"status,omitempty" json:"status,omitempty"`
+	Offset *Offset      `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *Limit       `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// UploadBookMultipartRequestBody defines body for UploadBook for multipart/form-data ContentType.
+type UploadBookMultipartRequestBody UploadBookMultipartBody
+
+// UpdateChapterJSONRequestBody defines body for UpdateChapter for application/json ContentType.
+type UpdateChapterJSONRequestBody = ChapterUpdate
+
+// SplitChapterJSONRequestBody defines body for SplitChapter for application/json ContentType.
+type SplitChapterJSONRequestBody = ChapterSplit
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListBooks List books
 	// (GET /books)
 	ListBooks(w http.ResponseWriter, r *http.Request, params ListBooksParams)
+	// UploadBook Upload an EPUB and start its import
+	// (POST /books)
+	UploadBook(w http.ResponseWriter, r *http.Request)
+	// DeleteBook Delete a book with all its data and files
+	// (DELETE /books/{bookId})
+	DeleteBook(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// GetBook Get a book
+	// (GET /books/{bookId})
+	GetBook(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// ListChapters List a book's chapters in reading order
+	// (GET /books/{bookId}/chapters)
+	ListChapters(w http.ResponseWriter, r *http.Request, bookId BookId, params ListChaptersParams)
+	// GetBookCover The book's cover image
+	// (GET /books/{bookId}/cover)
+	GetBookCover(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// ListVolumes List a book's volumes
+	// (GET /books/{bookId}/volumes)
+	ListVolumes(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// GetChapter A chapter with its paragraphs and segments
+	// (GET /chapters/{chapterId})
+	GetChapter(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
+	// UpdateChapter Rename a chapter or exclude it from narration
+	// (PATCH /chapters/{chapterId})
+	UpdateChapter(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
+	// MergeChapterWithNext Append the following chapter to this one
+	// (POST /chapters/{chapterId}/merge-next)
+	MergeChapterWithNext(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
+	// SplitChapter Start a new chapter at the given paragraph
+	// (POST /chapters/{chapterId}/split)
+	SplitChapter(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
+	// ListJobs List background jobs, newest first
+	// (GET /jobs)
+	ListJobs(w http.ResponseWriter, r *http.Request, params ListJobsParams)
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(w http.ResponseWriter, r *http.Request)
@@ -182,6 +468,368 @@ func (siw *ServerInterfaceWrapper) ListBooks(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListBooks(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadBook operation middleware
+func (siw *ServerInterfaceWrapper) UploadBook(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadBook(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBook operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBook(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBook operation middleware
+func (siw *ServerInterfaceWrapper) GetBook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBook(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListChapters operation middleware
+func (siw *ServerInterfaceWrapper) ListChapters(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListChaptersParams
+
+	// ------------- Optional query parameter "volumeId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "volumeId", r.URL.Query(), &params.VolumeId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "volumeId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volumeId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListChapters(w, r, bookId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBookCover operation middleware
+func (siw *ServerInterfaceWrapper) GetBookCover(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBookCover(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListVolumes operation middleware
+func (siw *ServerInterfaceWrapper) ListVolumes(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListVolumes(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetChapter operation middleware
+func (siw *ServerInterfaceWrapper) GetChapter(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chapterId" -------------
+	var chapterId ChapterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chapterId", r.PathValue("chapterId"), &chapterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chapterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetChapter(w, r, chapterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateChapter operation middleware
+func (siw *ServerInterfaceWrapper) UpdateChapter(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chapterId" -------------
+	var chapterId ChapterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chapterId", r.PathValue("chapterId"), &chapterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chapterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateChapter(w, r, chapterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MergeChapterWithNext operation middleware
+func (siw *ServerInterfaceWrapper) MergeChapterWithNext(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chapterId" -------------
+	var chapterId ChapterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chapterId", r.PathValue("chapterId"), &chapterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chapterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MergeChapterWithNext(w, r, chapterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SplitChapter operation middleware
+func (siw *ServerInterfaceWrapper) SplitChapter(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chapterId" -------------
+	var chapterId ChapterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chapterId", r.PathValue("chapterId"), &chapterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chapterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SplitChapter(w, r, chapterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListJobs operation middleware
+func (siw *ServerInterfaceWrapper) ListJobs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListJobsParams
+
+	// ------------- Optional query parameter "bookId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bookId", r.URL.Query(), &params.BookId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bookId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListJobs(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -327,6 +975,17 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system", wrapper.GetSystemInfo)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books", wrapper.ListBooks)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books", wrapper.UploadBook)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/books/{bookId}", wrapper.DeleteBook)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}", wrapper.GetBook)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/cover", wrapper.GetBookCover)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/volumes", wrapper.ListVolumes)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/chapters", wrapper.ListChapters)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/chapters/{chapterId}", wrapper.GetChapter)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/chapters/{chapterId}", wrapper.UpdateChapter)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/merge-next", wrapper.MergeChapterWithNext)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/split", wrapper.SplitChapter)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/jobs", wrapper.ListJobs)
 
 	return m
 }
@@ -361,6 +1020,649 @@ type ListBooksdefaultJSONResponse struct {
 }
 
 func (response ListBooksdefaultJSONResponse) VisitListBooksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadBookRequestObject struct {
+	Body *multipart.Reader
+}
+
+type UploadBookResponseObject interface {
+	VisitUploadBookResponse(w http.ResponseWriter) error
+}
+
+type UploadBook202JSONResponse Book
+
+func (response UploadBook202JSONResponse) VisitUploadBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadBook400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UploadBook400JSONResponse) VisitUploadBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadBook413JSONResponse Error
+
+func (response UploadBook413JSONResponse) VisitUploadBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadBookdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response UploadBookdefaultJSONResponse) VisitUploadBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBookRequestObject struct {
+	BookId BookId `json:"bookId"`
+}
+
+type DeleteBookResponseObject interface {
+	VisitDeleteBookResponse(w http.ResponseWriter) error
+}
+
+type DeleteBook204Response struct {
+}
+
+func (response DeleteBook204Response) VisitDeleteBookResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteBook404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteBook404JSONResponse) VisitDeleteBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBookdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response DeleteBookdefaultJSONResponse) VisitDeleteBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBookRequestObject struct {
+	BookId BookId `json:"bookId"`
+}
+
+type GetBookResponseObject interface {
+	VisitGetBookResponse(w http.ResponseWriter) error
+}
+
+type GetBook200JSONResponse Book
+
+func (response GetBook200JSONResponse) VisitGetBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBook404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetBook404JSONResponse) VisitGetBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBookdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetBookdefaultJSONResponse) VisitGetBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListChaptersRequestObject struct {
+	BookId BookId `json:"bookId"`
+	Params ListChaptersParams
+}
+
+type ListChaptersResponseObject interface {
+	VisitListChaptersResponse(w http.ResponseWriter) error
+}
+
+type ListChapters200JSONResponse ChapterPage
+
+func (response ListChapters200JSONResponse) VisitListChaptersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListChapters404JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListChapters404JSONResponse) VisitListChaptersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListChaptersdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListChaptersdefaultJSONResponse) VisitListChaptersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBookCoverRequestObject struct {
+	BookId BookId `json:"bookId"`
+}
+
+type GetBookCoverResponseObject interface {
+	VisitGetBookCoverResponse(w http.ResponseWriter) error
+}
+
+type GetBookCover200ImageResponse struct {
+	Body          io.Reader
+	ContentType   string
+	ContentLength int64
+}
+
+func (response GetBookCover200ImageResponse) VisitGetBookCoverResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", response.ContentType)
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetBookCover404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetBookCover404JSONResponse) VisitGetBookCoverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBookCoverdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetBookCoverdefaultJSONResponse) VisitGetBookCoverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListVolumesRequestObject struct {
+	BookId BookId `json:"bookId"`
+}
+
+type ListVolumesResponseObject interface {
+	VisitListVolumesResponse(w http.ResponseWriter) error
+}
+
+type ListVolumes200JSONResponse []Volume
+
+func (response ListVolumes200JSONResponse) VisitListVolumesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListVolumes404JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListVolumes404JSONResponse) VisitListVolumesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListVolumesdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListVolumesdefaultJSONResponse) VisitListVolumesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetChapterRequestObject struct {
+	ChapterId ChapterId `json:"chapterId"`
+}
+
+type GetChapterResponseObject interface {
+	VisitGetChapterResponse(w http.ResponseWriter) error
+}
+
+type GetChapter200JSONResponse ChapterDetail
+
+func (response GetChapter200JSONResponse) VisitGetChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetChapter404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetChapter404JSONResponse) VisitGetChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetChapterdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetChapterdefaultJSONResponse) VisitGetChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateChapterRequestObject struct {
+	ChapterId ChapterId `json:"chapterId"`
+	Body      *UpdateChapterJSONRequestBody
+}
+
+type UpdateChapterResponseObject interface {
+	VisitUpdateChapterResponse(w http.ResponseWriter) error
+}
+
+type UpdateChapter200JSONResponse Chapter
+
+func (response UpdateChapter200JSONResponse) VisitUpdateChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateChapter400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateChapter400JSONResponse) VisitUpdateChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateChapter404JSONResponse Error
+
+func (response UpdateChapter404JSONResponse) VisitUpdateChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateChapterdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response UpdateChapterdefaultJSONResponse) VisitUpdateChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergeChapterWithNextRequestObject struct {
+	ChapterId ChapterId `json:"chapterId"`
+}
+
+type MergeChapterWithNextResponseObject interface {
+	VisitMergeChapterWithNextResponse(w http.ResponseWriter) error
+}
+
+type MergeChapterWithNext200JSONResponse Chapter
+
+func (response MergeChapterWithNext200JSONResponse) VisitMergeChapterWithNextResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergeChapterWithNext404JSONResponse struct{ ErrorJSONResponse }
+
+func (response MergeChapterWithNext404JSONResponse) VisitMergeChapterWithNextResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergeChapterWithNext409JSONResponse Error
+
+func (response MergeChapterWithNext409JSONResponse) VisitMergeChapterWithNextResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergeChapterWithNextdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response MergeChapterWithNextdefaultJSONResponse) VisitMergeChapterWithNextResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SplitChapterRequestObject struct {
+	ChapterId ChapterId `json:"chapterId"`
+	Body      *SplitChapterJSONRequestBody
+}
+
+type SplitChapterResponseObject interface {
+	VisitSplitChapterResponse(w http.ResponseWriter) error
+}
+
+type SplitChapter200JSONResponse Chapter
+
+func (response SplitChapter200JSONResponse) VisitSplitChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SplitChapter400JSONResponse struct{ ErrorJSONResponse }
+
+func (response SplitChapter400JSONResponse) VisitSplitChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SplitChapter404JSONResponse Error
+
+func (response SplitChapter404JSONResponse) VisitSplitChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SplitChapter409JSONResponse Error
+
+func (response SplitChapter409JSONResponse) VisitSplitChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SplitChapterdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response SplitChapterdefaultJSONResponse) VisitSplitChapterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListJobsRequestObject struct {
+	Params ListJobsParams
+}
+
+type ListJobsResponseObject interface {
+	VisitListJobsResponse(w http.ResponseWriter) error
+}
+
+type ListJobs200JSONResponse JobPage
+
+func (response ListJobs200JSONResponse) VisitListJobsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListJobsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListJobsdefaultJSONResponse) VisitListJobsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -415,6 +1717,39 @@ type StrictServerInterface interface {
 	// ListBooks List books
 	// (GET /books)
 	ListBooks(ctx context.Context, request ListBooksRequestObject) (ListBooksResponseObject, error)
+	// UploadBook Upload an EPUB and start its import
+	// (POST /books)
+	UploadBook(ctx context.Context, request UploadBookRequestObject) (UploadBookResponseObject, error)
+	// DeleteBook Delete a book with all its data and files
+	// (DELETE /books/{bookId})
+	DeleteBook(ctx context.Context, request DeleteBookRequestObject) (DeleteBookResponseObject, error)
+	// GetBook Get a book
+	// (GET /books/{bookId})
+	GetBook(ctx context.Context, request GetBookRequestObject) (GetBookResponseObject, error)
+	// ListChapters List a book's chapters in reading order
+	// (GET /books/{bookId}/chapters)
+	ListChapters(ctx context.Context, request ListChaptersRequestObject) (ListChaptersResponseObject, error)
+	// GetBookCover The book's cover image
+	// (GET /books/{bookId}/cover)
+	GetBookCover(ctx context.Context, request GetBookCoverRequestObject) (GetBookCoverResponseObject, error)
+	// ListVolumes List a book's volumes
+	// (GET /books/{bookId}/volumes)
+	ListVolumes(ctx context.Context, request ListVolumesRequestObject) (ListVolumesResponseObject, error)
+	// GetChapter A chapter with its paragraphs and segments
+	// (GET /chapters/{chapterId})
+	GetChapter(ctx context.Context, request GetChapterRequestObject) (GetChapterResponseObject, error)
+	// UpdateChapter Rename a chapter or exclude it from narration
+	// (PATCH /chapters/{chapterId})
+	UpdateChapter(ctx context.Context, request UpdateChapterRequestObject) (UpdateChapterResponseObject, error)
+	// MergeChapterWithNext Append the following chapter to this one
+	// (POST /chapters/{chapterId}/merge-next)
+	MergeChapterWithNext(ctx context.Context, request MergeChapterWithNextRequestObject) (MergeChapterWithNextResponseObject, error)
+	// SplitChapter Start a new chapter at the given paragraph
+	// (POST /chapters/{chapterId}/split)
+	SplitChapter(ctx context.Context, request SplitChapterRequestObject) (SplitChapterResponseObject, error)
+	// ListJobs List background jobs, newest first
+	// (GET /jobs)
+	ListJobs(ctx context.Context, request ListJobsRequestObject) (ListJobsResponseObject, error)
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(ctx context.Context, request GetSystemInfoRequestObject) (GetSystemInfoResponseObject, error)
@@ -478,6 +1813,312 @@ func (sh *strictHandler) ListBooks(w http.ResponseWriter, r *http.Request, param
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListBooksResponseObject); ok {
 		if err := validResponse.VisitListBooksResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UploadBook operation middleware
+func (sh *strictHandler) UploadBook(w http.ResponseWriter, r *http.Request) {
+	var request UploadBookRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UploadBook(ctx, request.(UploadBookRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UploadBook")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UploadBookResponseObject); ok {
+		if err := validResponse.VisitUploadBookResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteBook operation middleware
+func (sh *strictHandler) DeleteBook(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request DeleteBookRequestObject
+
+	request.BookId = bookId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteBook(ctx, request.(DeleteBookRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteBook")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteBookResponseObject); ok {
+		if err := validResponse.VisitDeleteBookResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetBook operation middleware
+func (sh *strictHandler) GetBook(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request GetBookRequestObject
+
+	request.BookId = bookId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBook(ctx, request.(GetBookRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBook")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBookResponseObject); ok {
+		if err := validResponse.VisitGetBookResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListChapters operation middleware
+func (sh *strictHandler) ListChapters(w http.ResponseWriter, r *http.Request, bookId BookId, params ListChaptersParams) {
+	var request ListChaptersRequestObject
+
+	request.BookId = bookId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListChapters(ctx, request.(ListChaptersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListChapters")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListChaptersResponseObject); ok {
+		if err := validResponse.VisitListChaptersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetBookCover operation middleware
+func (sh *strictHandler) GetBookCover(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request GetBookCoverRequestObject
+
+	request.BookId = bookId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBookCover(ctx, request.(GetBookCoverRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBookCover")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBookCoverResponseObject); ok {
+		if err := validResponse.VisitGetBookCoverResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListVolumes operation middleware
+func (sh *strictHandler) ListVolumes(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request ListVolumesRequestObject
+
+	request.BookId = bookId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListVolumes(ctx, request.(ListVolumesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListVolumes")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListVolumesResponseObject); ok {
+		if err := validResponse.VisitListVolumesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetChapter operation middleware
+func (sh *strictHandler) GetChapter(w http.ResponseWriter, r *http.Request, chapterId ChapterId) {
+	var request GetChapterRequestObject
+
+	request.ChapterId = chapterId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetChapter(ctx, request.(GetChapterRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetChapter")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetChapterResponseObject); ok {
+		if err := validResponse.VisitGetChapterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateChapter operation middleware
+func (sh *strictHandler) UpdateChapter(w http.ResponseWriter, r *http.Request, chapterId ChapterId) {
+	var request UpdateChapterRequestObject
+
+	request.ChapterId = chapterId
+
+	var body UpdateChapterJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateChapter(ctx, request.(UpdateChapterRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateChapter")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateChapterResponseObject); ok {
+		if err := validResponse.VisitUpdateChapterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// MergeChapterWithNext operation middleware
+func (sh *strictHandler) MergeChapterWithNext(w http.ResponseWriter, r *http.Request, chapterId ChapterId) {
+	var request MergeChapterWithNextRequestObject
+
+	request.ChapterId = chapterId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.MergeChapterWithNext(ctx, request.(MergeChapterWithNextRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "MergeChapterWithNext")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(MergeChapterWithNextResponseObject); ok {
+		if err := validResponse.VisitMergeChapterWithNextResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SplitChapter operation middleware
+func (sh *strictHandler) SplitChapter(w http.ResponseWriter, r *http.Request, chapterId ChapterId) {
+	var request SplitChapterRequestObject
+
+	request.ChapterId = chapterId
+
+	var body SplitChapterJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SplitChapter(ctx, request.(SplitChapterRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SplitChapter")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SplitChapterResponseObject); ok {
+		if err := validResponse.VisitSplitChapterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListJobs operation middleware
+func (sh *strictHandler) ListJobs(w http.ResponseWriter, r *http.Request, params ListJobsParams) {
+	var request ListJobsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListJobs(ctx, request.(ListJobsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListJobs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListJobsResponseObject); ok {
+		if err := validResponse.VisitListJobsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
