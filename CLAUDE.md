@@ -17,14 +17,19 @@ Read `docs/PLAN.md` first — it is the agreed design and milestone plan.
 ## Stack (fixed)
 
 - Backend: **Go** (`cmd/`, `internal/`)
-- Frontend: **React + TypeScript** (`web/`), embedded into the Go binary
+- Frontend: **React + TypeScript + Mantine** (`web/`), embedded into the Go binary
+- Persistence: **GORM** with **SQLite** (default, pure-Go driver, no CGO) or
+  **PostgreSQL**, chosen by configuration; migrations via gormigrate
 - API contract: OpenAPI (`api/openapi.yaml`) is the single source of truth;
   Go server and TS client are generated from it
 - Deployment: Helm chart in `charts/audiobook-generator`, image + chart on ghcr.io
 
 ## Working rules
 
-- Work on feature branches and open PRs against `main`.
+- Code, docs and README in English.
+- Work on feature branches and open PRs against `main`; releases via Git tags.
+- Everything in the store layer must work on both SQLite and PostgreSQL: no
+  raw SQL outside the small dialect interface, tests run against both.
 - Never let the LLM rewrite book text: segmentation is deterministic code, the
   LLM only returns compact labels (see `docs/PLAN.md` §3).
 - Every long-running step is a persistent, resumable job.

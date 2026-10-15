@@ -1,348 +1,364 @@
-# Projektplan: audiobook-generator
+# Project plan: audiobook-generator
 
-Stand: 2026-10-15 · Status: **Entwurf zur Abstimmung**
+Last updated: 2026-10-15 · Status: **agreed design, implementation not started**
 
-Ziel: Ein selbst gehosteter Dienst, der sehr große englische EPUBs in
-mehrstimmige Hörbücher verwandelt. Vorab werden alle Figuren des Buchs
-analysiert, jede (wichtige) Figur bekommt eine eigene Stimme, und über eine
-Weboberfläche lassen sich Kapitel, Figuren und Stimmen ansehen und anpassen.
-Vertont wird kapitelweise. Ausgeliefert wird alles als **ein Helm-Chart, das
-alles mitbringt, was es braucht**.
+Goal: a self-hosted service that turns very large English EPUBs into
+multi-voice audiobooks. All characters of the book are analysed up front,
+every (important) character gets its own voice, and a web UI lets you browse
+and adjust chapters, characters and voices. Audio is generated chapter by
+chapter. Everything ships as **one Helm chart that brings everything it
+needs**.
 
 - Backend: **Go**
-- Frontend: **React** (TypeScript)
-- Auslieferung: **Helm-Chart** + Container-Image auf ghcr.io
+- Frontend: **React** (TypeScript) with **Mantine**
+- Persistence: **GORM**, with **SQLite** (default) or **PostgreSQL**
+- Delivery: **Helm chart** + container image on ghcr.io
 
 ---
 
-## 1. Rahmenbedingungen
+## 1. Constraints
 
-| Thema | Vorgabe / Annahme |
+| Topic | Requirement / assumption |
 |---|---|
-| Bücher | Englisch, DRM-frei, sehr groß: Beispiel-EPUB 12 MB ohne Bilder ≈ **4–6 Mio. Wörter**, vermutlich > 1000 Kapitel, Hunderte bis Tausende Figuren |
-| Hörbuchlänge | bei ~155 Wörtern/min ≈ **450–650 h Audio** pro Buch |
-| Hardware | Kubernetes (Talos) auf Proxmox, **keine GPU** (iGPU UHD 770 vorerst ungenutzt), Nodes ~16 GB RAM |
-| LLM | Cloud erlaubt, aber **kostenlos**: Free-Tiers OpenAI-kompatibler Anbieter (primär Gemini Flash), optional lokales Modell als Fallback |
-| TTS | **Kokoro-82M** über Kokoro-FastAPI (CPU-Image, OpenAI-kompatibel, Stimm-Mischung) |
-| Nutzung | Ein Haushalt, LAN-only, wenige Nutzer, kein Multi-Tenant |
+| Books | English, DRM-free, very large: the reference EPUB is 12 MB without images ≈ **4–6 M words**, probably > 1000 chapters, hundreds to thousands of characters |
+| Audio length | at ~155 words/min ≈ **450–650 h of audio** per book |
+| Hardware | Kubernetes (Talos) on Proxmox, **no GPU** (the UHD 770 iGPU stays unused for now), nodes ~16 GB RAM |
+| LLM | Cloud is fine but must be **free**: free tiers of OpenAI-compatible providers (Gemini Flash first), optional local model as fallback |
+| TTS | **Kokoro-82M** via Kokoro-FastAPI (CPU image, OpenAI-compatible, voice mixing) |
+| Usage | One household, LAN only, a handful of users, not multi-tenant |
 
-Abgeleitete Grundsätze:
+Principles derived from these:
 
-1. **Just-in-time statt alles vorab.** Die Figurenanalyse läuft einmal über
-   das ganze Buch; Sprecherzuordnung und Vertonung passieren kapitelweise kurz
-   bevor sie gebraucht werden ("immer die nächsten N Kapitel nach der
-   Hörposition fertig halten"). Erzeugung (~3–5× Echtzeit) ist schneller als
-   Hören.
-2. **Das LLM schreibt nie den Buchtext neu.** Text wird deterministisch im
-   Code segmentiert; das LLM liefert nur kompakte Zuordnungen
-   (`q17 → char_42`). Spart Free-Tier-Kontingent und verhindert, dass das
-   Modell Text verfälscht.
-3. **Alles ist fortsetzbar.** Jeder Arbeitsschritt ist ein persistenter Job;
-   Neustarts, 429-Rate-Limits und Tageskontingente unterbrechen nur, sie
-   verlieren nichts.
-4. **Stimmen sind deterministisch.** Eine Figurenstimme ist ein "Rezept"
-   (Mischung aus Kokoro-Grundstimmen + Tempo). Gleiches Rezept ⇒ gleiche
-   Stimme in Kapitel 3 und Kapitel 1300.
-5. **Self-contained.** Ein `helm install` reicht: App, TTS-Server,
-   Datenhaltung. Externe Abhängigkeiten (OIDC, S3-Backup, externer TTS) sind
-   optional.
+1. **Just in time, not everything up front.** Character analysis runs once
+   over the whole book; speaker attribution and rendering happen per chapter
+   shortly before they are needed ("always keep the next N chapters after the
+   listening position ready"). Rendering (~3–5× real time) is faster than
+   listening.
+2. **The LLM never rewrites book text.** Text is segmented deterministically
+   in code; the LLM only returns compact labels (`q17 → char_42`). Saves
+   free-tier quota and stops the model from altering the text.
+3. **Everything is resumable.** Every step is a persisted job; restarts,
+   429 rate limits and daily quotas only pause work, they never lose it.
+4. **Voices are deterministic.** A character voice is a "recipe" (a weighted
+   mix of Kokoro base voices + speed). Same recipe ⇒ same voice in chapter 3
+   and chapter 1300.
+5. **Self-contained.** One `helm install` is enough: app, TTS server,
+   storage. External dependencies (PostgreSQL, OIDC, S3 backup, external TTS)
+   are optional.
 
 ---
 
-## 2. Architektur
+## 2. Architecture
 
 ```
-                       ┌──────────────────── Helm-Release ─────────────────────┐
- Browser (React SPA) ──┼─▶ Ingress ─▶ app (Go, 1 Pod)                          │
- Podcast-App (RSS) ────┤               ├─ HTTP-API (OpenAPI) + SPA (embed.FS)  │
-                       │               ├─ Job-Runner                           │
-                       │               │    ├─ LLM-Worker (rate-limited) ──────┼──▶ Gemini / Groq / OpenRouter / lokal
-                       │               │    ├─ TTS-Worker (N parallel) ───┐    │      (OpenAI-kompatibel)
-                       │               │    └─ Audio-Assembler (ffmpeg)   │    │
-                       │               ├─ SQLite (WAL) ─┐                 │    │
-                       │               └─ /data (PVC) ◀─┘ EPUBs, Audio    │    │
-                       │                    └─ optional Litestream ───────┼────┼──▶ S3 (z. B. Garage) Backup
+                       ┌──────────────────── Helm release ─────────────────────┐
+ Browser (React SPA) ──┼─▶ Ingress ─▶ app (Go, 1 pod)                          │
+ Podcast app (RSS) ────┤               ├─ HTTP API (OpenAPI) + SPA (embed.FS)  │
+                       │               ├─ Job runner                           │
+                       │               │    ├─ LLM worker (rate-limited) ──────┼──▶ Gemini / Groq / OpenRouter / local
+                       │               │    ├─ TTS workers (N parallel) ──┐    │      (OpenAI-compatible)
+                       │               │    └─ Audio assembler (ffmpeg)   │    │
+                       │               ├─ GORM ─┬─ SQLite (WAL, on PVC)   │    │
+                       │               │        └─ or PostgreSQL ─────────┼────┼──▶ external / CNPG cluster
+                       │               └─ /data (PVC): EPUBs, audio       │    │
+                       │                    └─ optional Litestream ───────┼────┼──▶ S3 backup (SQLite only)
                        │                                                  ▼    │
-                       │              kokoro (Kokoro-FastAPI CPU, 1..n Pods)   │
+                       │              kokoro (Kokoro-FastAPI CPU, 1..n pods)   │
                        └───────────────────────────────────────────────────────┘
 ```
 
-### 2.1 Komponenten
+### 2.1 Components
 
-| Komponente | Aufgabe |
+| Component | Responsibility |
 |---|---|
-| **app** (Go-Binary) | API, ausgelieferte SPA, Job-Runner, EPUB-Import, Segmentierung, LLM-Orchestrierung, Audio-Zusammenbau, Player-Backend, RSS-Feed |
-| **kokoro** | Kokoro-FastAPI (CPU), nur clusterintern erreichbar; skalierbar über Replicas |
-| **SQLite** auf PVC | Bücher, Kapitel, Segmente, Figuren, Stimmen, Jobs, Kontingente, Hörfortschritt |
-| **/data** auf PVC | Original-EPUBs, fertige Kapitel-Audios, temporäre Render-Dateien |
-| **ffmpeg** (im app-Image) | Zusammenfügen, Lautheitsnormalisierung, AAC/M4B mit Kapitelmarken |
+| **app** (Go binary) | API, serves the SPA, job runner, EPUB import, segmentation, LLM orchestration, audio assembly, player backend, RSS feed |
+| **kokoro** | Kokoro-FastAPI (CPU), cluster-internal only; scales via replicas |
+| **Database** (GORM) | Books, chapters, segments, characters, voices, jobs, quotas, listening progress |
+| **/data** on a PVC | Original EPUBs, rendered chapter audio, temporary render files (and the SQLite file in SQLite mode) |
+| **ffmpeg** (in the app image) | Concatenation, loudness normalisation, AAC/M4B with chapter markers |
 
-### 2.2 Entscheidung Datenbank: SQLite statt Postgres
+### 2.2 Decision: GORM with SQLite or PostgreSQL
 
-Empfehlung **SQLite** (pure Go, `modernc.org/sqlite`, kein CGO):
+Both databases are supported through **GORM**; the dialect is chosen by
+configuration.
 
-- Das Chart bleibt wirklich eigenständig (kein Postgres-Operator, kein
-  zweites StatefulSet).
-- Ein Prozess, ein Writer: passt zum Single-Pod-Design; WAL-Modus reicht
-  für parallele TTS-Worker locker (Schreiblast ist gering).
-- Mengengerüst: ~1 Mio. Segmente pro Buch, ~30 MB Text — problemlos.
-- Backup: optionaler **Litestream**-Sidecar repliziert kontinuierlich nach S3
-  (im Homelab: Garage, das ohnehin Teil der Backup-Kette ist). Zusätzlich
-  JSON-Export/-Import der Analyse-Ergebnisse (Figuren, Stimmen, Zuordnungen),
-  denn die kosten Tage an LLM-Kontingent.
-- Die Store-Schicht kapselt die DB (sqlc-generierter Code hinter
-  Interfaces); ein späterer Wechsel auf Postgres bleibt möglich.
+| | SQLite (default) | PostgreSQL |
+|---|---|---|
+| Driver | `github.com/glebarez/sqlite` (GORM driver on `modernc.org/sqlite`, pure Go, **no CGO**) | `gorm.io/driver/postgres` (pgx) |
+| Where | file on the data PVC, WAL mode | external server or a CNPG `Cluster` rendered by the chart |
+| Backup | optional **Litestream** sidecar → S3 (e.g. Garage) | the database's own backup (e.g. CNPG barman) |
+| Use case | self-contained, zero dependencies | clusters that already run Postgres operators and backups |
 
-Konsequenz: `replicas: 1`, Strategy `Recreate`, PVC `ReadWriteOnce`.
+Rules that keep both dialects working:
 
-### 2.3 Entscheidung Player: eingebaut statt Audiobookshelf-Pflicht
+- **Migrations** with **gormigrate** (`github.com/go-gormigrate/gormigrate/v2`):
+  versioned, ordered steps written against the GORM migrator API, so they
+  run on both dialects. No bare `AutoMigrate` at startup in production.
+- **No dialect-specific SQL** in the store layer. Where it is unavoidable
+  (e.g. job claiming), it lives behind a small interface with one
+  implementation per dialect and is covered by tests on both.
+- **No JSON columns for things we query.** Aliases, chapter appearances etc.
+  are proper tables; only opaque payloads (job parameters, raw LLM output)
+  are stored as JSON text.
+- **Job claiming**: a single `UPDATE … SET status='running' … WHERE id =
+  (SELECT … LIMIT 1) RETURNING …` works on SQLite (≥ 3.35) and PostgreSQL;
+  PostgreSQL additionally uses `FOR UPDATE SKIP LOCKED`.
+- **Single replica in both modes**: the audio PVC is `ReadWriteOnce`, and
+  the job runner lives in the same process. Strategy `Recreate`.
+- Also a **JSON export/import** of the analysis results (characters, voices,
+  attributions), because they cost days of LLM quota, independent of which
+  database is used.
 
-Der Dienst bringt einen **eigenen Web-Player** mit (Fortschritt pro Nutzer,
-Kapitelnavigation, Geschwindigkeit, Lockscreen-Steuerung über die Media
-Session API) und einen **Podcast-RSS-Feed** pro Buch/Band, damit jede
-Podcast-App auf dem Handy funktioniert. Der eingebaute Player liefert direkt
-die Hörposition für die Just-in-time-Vertonung.
+Volume: ~1 M segments per book, ~30 MB of text — trivial for either.
 
-Audiobookshelf-Export (Upload per API oder gemeinsames Volume) ist ein
-optionales späteres Feature, keine Voraussetzung.
+### 2.3 Decision: built-in player, Audiobookshelf later
+
+The service ships its **own web player** (per-user progress, chapter
+navigation, playback speed, lock-screen controls through the Media Session
+API) and a **podcast RSS feed** per book/volume so any podcast app on a
+phone works. The built-in player also provides the listening position that
+drives just-in-time rendering.
+
+An **Audiobookshelf export** (upload through its API or a shared volume) is
+an optional later feature (M8), not a requirement.
 
 ---
 
-## 3. Verarbeitungs-Pipeline
+## 3. Processing pipeline
 
 ```
- EPUB ─▶ 1 Import ─▶ 2 Segmentierung ─▶ 3 Figurenanalyse ─▶ 4 Zusammenführen ─▶ 5 Besetzung
-         (einmalig)   (einmalig, Code)    (einmalig, LLM,      (Code + LLM)        (Code + LLM)
-                                           ~150–250 Requests)
+ EPUB ─▶ 1 Import ─▶ 2 Segmentation ─▶ 3 Character analysis ─▶ 4 Merge ─▶ 5 Casting
+         (once)       (once, code)       (once, LLM,             (code +    (code +
+                                          ~150–250 requests)      LLM)       LLM)
                                                                      │
-          ┌──────────────────────── pro Kapitel, just in time ───────┘
+          ┌──────────────────────── per chapter, just in time ───────┘
           ▼
-   6 Sprecherzuordnung (LLM) ─▶ 7 Vertonung (Kokoro) ─▶ 8 Zusammenbau (ffmpeg) ─▶ Player / RSS / Download
+   6 Speaker attribution (LLM) ─▶ 7 Rendering (Kokoro) ─▶ 8 Assembly (ffmpeg) ─▶ player / RSS / download
 ```
 
-### 3.1 Import (EPUB → Bände/Kapitel/Absätze)
+### 3.1 Import (EPUB → volumes/chapters/paragraphs)
 
-- EPUB selbst parsen: `archive/zip` + `encoding/xml` (OPF, NCX) +
-  `golang.org/x/net/html` (XHTML, nav). Keine schwere Abhängigkeit.
-- Struktur aus dem Inhaltsverzeichnis (nav.xhtml bzw. NCX) **inklusive
-  Fragment-Anker** — bei großen Web-Serials stecken oft viele Kapitel in
-  einer XHTML-Datei. Fallbacks: Überschriften (`h1`–`h3`), dann
-  Spine-Dokumente.
-- Hierarchie **Band → Kapitel**, abgeleitet aus der TOC-Verschachtelung.
-- Normalisierung: typografische Zeichen, Fußnoten/Endnoten entfernen,
-  Szenenwechsel (`***`, `<hr>`) als Pausenmarker, Kursivschrift als Markup
-  erhalten (späteres Feature: Gedanken).
-- Streaming-fähig: auch eine einzelne 30-MB-XHTML-Datei darf den Speicher
-  nicht sprengen.
-- Ergebnis prüfbar in der UI: Kapitel zusammenführen/teilen/umbenennen,
-  Front-/Backmatter ausschließen.
+- Parse the EPUB ourselves: `archive/zip` + `encoding/xml` (OPF, NCX) +
+  `golang.org/x/net/html` (XHTML, nav). No heavy dependency.
+- Structure from the table of contents (nav.xhtml or NCX) **including
+  fragment anchors** — large web serials often put many chapters into one
+  XHTML file. Fallbacks: headings (`h1`–`h3`), then spine documents.
+- Hierarchy **volume → chapter**, derived from TOC nesting.
+- Normalisation: typography, strip footnotes/endnotes, scene breaks (`***`,
+  `<hr>`) become pause markers, italics are kept as markup (later feature:
+  inner thoughts).
+- Streaming-capable: a single 30 MB XHTML file must not blow up memory.
+- Reviewable in the UI: merge/split/rename chapters, exclude front/back
+  matter.
 
-### 3.2 Segmentierung (deterministisch, im Code)
+### 3.2 Segmentation (deterministic, in code)
 
-- Absätze in **Erzählung** und **wörtliche Rede** zerlegen. Zustandsautomat
-  über Anführungszeichen; Anführungsstil wird pro Buch statistisch erkannt
-  (`“…”` vs. `"…"` vs. britisch `‘…’`). Mehrabsätzige Zitate (Absatz ohne
-  schließendes Zeichen) werden korrekt fortgeführt.
-- Jedes Zitat bekommt eine stabile ID (`q<n>` pro Kapitel).
-- Lange Erzählabschnitte werden satzweise in TTS-taugliche Stücke geteilt
-  (Kokoro arbeitet am besten mit ≤ ~400 Zeichen pro Aufruf).
-- Begleitsätze ("…, she said.") bleiben Erzählung.
+- Split paragraphs into **narration** and **quoted speech** with a state
+  machine over quote characters; the quote style is detected per book from
+  statistics (`“…”` vs. `"…"` vs. British `‘…’`). Multi-paragraph quotes
+  (a paragraph without a closing mark) continue correctly.
+- Every quote gets a stable ID (`q<n>` per chapter).
+- Long narration is split at sentence boundaries into TTS-sized pieces
+  (Kokoro works best with ≤ ~400 characters per call).
+- Dialogue tags ("…, she said.") stay narration.
 
-### 3.3 Figurenanalyse (einmalig, ganzes Buch)
+### 3.3 Character analysis (once, whole book)
 
-- Kapitel werden zu Batches von ~30–50k Tokens gebündelt
-  (≈ 150–250 Requests für ein Buch mit 5 Mio. Wörtern).
-- Batches laufen **sequenziell**; jeder Request bekommt den kompakten
-  Index der bereits bekannten Figuren (nur kanonischer Name + Aliase) mit,
-  damit das Modell vorhandene Namen wiederverwendet statt Dubletten zu
-  erzeugen.
-- Antwort als JSON-Schema (strukturierte Ausgabe), pro Figur: kanonischer
-  Name, Aliase/Titel, Geschlecht, Altersgruppe, Rolle, Kurzbeschreibung,
-  Sprechweise, geschätzte Wichtigkeit, Kapitel mit Auftritten.
-- Pro Kapitel zusätzlich: **Erzählperspektive** (Ich-Erzähler? Wer?) —
-  wichtig für Web-Serials mit wechselnden POV-Kapiteln.
-- Ergebnis: Figurenbibel + Index "Figur → Kapitel" (+ Erwähnungszähler).
-- Dauer im Free-Tier: grob **1–3 Tage** inkl. automatischer Pausen. Die UI
-  zeigt Fortschritt und verbrauchtes Tageskontingent.
+- Chapters are bundled into batches of ~30–50k tokens
+  (≈ 150–250 requests for a 5 M-word book).
+- Batches run **sequentially**; every request includes the compact index of
+  already known characters (canonical name + aliases only) so the model
+  reuses existing names instead of producing duplicates.
+- Response as a JSON schema (structured output); per character: canonical
+  name, aliases/titles, gender, age group, role, short description, speech
+  style, estimated importance, chapters it appears in.
+- Per chapter additionally: **point of view** (first-person narrator? who?)
+  — matters for web serials with changing POV chapters.
+- Result: the character bible + an index "character → chapters" (+ mention
+  counts).
+- Duration on a free tier: roughly **1–3 days** including automatic pauses.
+  The UI shows progress and the day's quota usage.
 
-### 3.4 Zusammenführen (Entity Resolution)
+### 3.4 Merge (entity resolution)
 
-1. Deterministisch: Normalisierung (Groß/Klein, Titel wie *Mr./Lady/Captain*),
-   Alias-Überschneidung ⇒ Union-Find-Cluster.
-2. Nur unklare Kandidaten ("Erin" vs. "Erin Solstice" vs. "the [Innkeeper]")
-   gehen als kompakte Profile in einen LLM-Merge-Request.
-3. Manuelle Korrektur in der UI: zusammenführen, aufteilen, Alias
-   verschieben.
+1. Deterministic: normalisation (case, titles such as *Mr./Lady/Captain*),
+   alias overlap ⇒ union-find clusters.
+2. Only ambiguous candidates ("Erin" vs. "Erin Solstice" vs. "the
+   [Innkeeper]") go to an LLM merge request as compact profiles.
+3. Manual correction in the UI: merge, split, move an alias.
 
-### 3.5 Besetzung (Voice Casting)
+### 3.5 Voice casting
 
-- **Stimmkatalog**: Kokoro-Stimmen mit Metadaten (Geschlecht, Akzent US/UK,
-  Qualitätsstufe, Klangcharakter) als eingebettete Katalogdatei, abgeglichen
-  mit `/v1/audio/voices` des TTS-Servers.
-- **Erzähler**: feste Stimme pro Buch (wählbar).
-- **Hauptfiguren** (Top ~40–60 nach Wichtigkeit/Redeanteil): das LLM
-  bekommt Figurenprofil + Katalog und schlägt ein Rezept vor
-  (z. B. `bm_george(0.7)+am_michael(0.3)`, Tempo 0.95). Der Code erzwingt:
-  Geschlecht passt, Rezepte unterscheiden sich ausreichend (Mindestabstand im
-  Gewichtsraum), keine Kollision mit dem Erzähler.
-- **Nebenfiguren**: Pool-Stimmen nach (Geschlecht, Altersgruppe),
-  deterministisch per Hash zugeteilt — dieselbe Nebenfigur klingt immer
-  gleich.
-- Jede Figur lässt sich in der UI hochstufen/herabstufen und das Rezept frei
-  bearbeiten; Hörprobe mit einem **echten Zitat der Figur**.
-- Unbekannte Sprecher ("a guard") → generische Pool-Stimme nach Geschlecht.
+- **Voice catalogue**: Kokoro voices with metadata (gender, US/UK accent,
+  quality grade, timbre) as an embedded catalogue file, reconciled against
+  the TTS server's `/v1/audio/voices`.
+- **Narrator**: one fixed voice per book (selectable).
+- **Main characters** (top ~40–60 by importance/lines): the LLM gets the
+  character profile + catalogue and proposes a recipe
+  (e.g. `bm_george(0.7)+am_michael(0.3)`, speed 0.95). Code enforces:
+  gender matches, recipes differ enough (minimum distance in weight space),
+  no collision with the narrator.
+- **Minor characters**: pool voices by (gender, age group), assigned
+  deterministically by hash — the same minor character always sounds the
+  same.
+- Every character can be promoted/demoted in the UI and its recipe edited
+  freely; previews use a **real quote of that character**.
+- Unknown speakers ("a guard") → generic pool voice by gender.
 
-### 3.6 Sprecherzuordnung (pro Kapitel, just in time)
+### 3.6 Speaker attribution (per chapter, just in time)
 
-- Eingabe: Kapiteltext mit Zitat-Markern (`[q12]“…”`), die im Kapitel
-  vorkommenden Figuren (aus dem Index) + die Sprecher der letzten Zitate des
-  Vorkapitels als Kontext.
-- Ausgabe: `{ "q12": { "speaker": "char_42" | "unknown" | "new:Name",
+- Input: chapter text with quote markers (`[q12]“…”`), the characters
+  appearing in the chapter (from the index) + the speakers of the last quotes
+  of the previous chapter as context.
+- Output: `{ "q12": { "speaker": "char_42" | "unknown" | "new:Name",
   "emotion": "angry", "confidence": 0.8 } }`.
-- Validierung: alle Zitat-IDs abgedeckt, nur bekannte IDs; sonst
-  Reparatur-Request. `new:`-Figuren landen als Nebenfigur in der Bibel.
-- Zu lange Kapitel werden an Szenenwechseln geteilt, mit Überlappung.
-- Niedrige Konfidenz wird in der UI markiert.
-- Optional später: Ich-Erzähl-Kapitel mit der Stimme der POV-Figur erzählen.
+- Validation: every quote ID covered, only known IDs; otherwise a repair
+  request. `new:` characters are added to the bible as minor characters.
+- Overlong chapters are split at scene breaks, with overlap.
+- Low confidence is flagged in the UI.
+- Optional later: narrate first-person chapters with the POV character's
+  voice.
 
-### 3.7 Vertonung und Zusammenbau
+### 3.7 Rendering and assembly
 
-- Jedes Segment → `POST /v1/audio/speech` (Rezept, Tempo, Format PCM/WAV).
-  Parallelität konfigurierbar (≈ Anzahl Kokoro-Replicas × 1–2).
-- Ausspracheliste pro Buch (Fantasy-Namen) wird vor dem TTS-Aufruf
-  angewendet (Ersetzung bzw. Kokoro-Phonem-Syntax).
-- Zusammenbau mit ffmpeg: Pausen (Erzählung↔Dialog ~150 ms, Absatz ~400 ms,
-  Szenenwechsel ~1,2 s, Kapiteltitel + 1 s), `loudnorm`, **AAC 64 kbit/s
-  mono** pro Kapitel (`.m4a`) mit Metadaten; auf Wunsch ein M4B pro Band mit
-  Kapitelmarken.
-- Temporäre Dateien liegen nur während des Jobs auf der Platte. In v1 wird
-  nach einer Korrektur das ganze Kapitel neu erzeugt (wenige CPU-Minuten);
-  ein Segment-Cache (Opus) ist eine spätere Optimierung.
-- Speicherbedarf fertige Audios: ~22–29 MB/h ⇒ **~10–19 GB** pro Riesenbuch.
+- Every segment → `POST /v1/audio/speech` (recipe, speed, PCM/WAV).
+  Concurrency is configurable (≈ Kokoro replicas × 1–2).
+- A per-book pronunciation lexicon (fantasy names) is applied before the TTS
+  call (text replacement or Kokoro phoneme syntax).
+- Assembly with ffmpeg: pauses (narration↔dialogue ~150 ms, paragraph
+  ~400 ms, scene break ~1.2 s, chapter title + 1 s), `loudnorm`,
+  **AAC 64 kbit/s mono** per chapter (`.m4a`) with metadata; optionally one
+  M4B per volume with chapter markers.
+- Temporary files exist only during the job. In v1 a correction re-renders
+  the whole chapter (a few CPU minutes); a per-segment cache (Opus) is a
+  later optimisation.
+- Storage for finished audio: ~22–29 MB/h ⇒ **~10–19 GB** per huge book.
 
-### 3.8 Scheduler und Jobs
+### 3.8 Scheduler and jobs
 
-- Job-Tabelle in SQLite; Typen: `import`, `analyze_batch`, `merge`,
+- Job table in the database; types: `import`, `analyze_batch`, `merge`,
   `cast`, `attribute_chapter`, `render_chapter`, `assemble_volume`.
-- Eigene Worker-Pools: **LLM** (Concurrency 1, Rate-Limiter) und **TTS**
-  (Concurrency N), damit die eine Ressource die andere nicht blockiert.
-- **Lookahead-Policy**: hält die nächsten *N* Kapitel nach der Hörposition
-  fertig (attributiert + vertont). Zusätzlich manuell: einzelne Kapitel oder
-  Bereiche einreihen, priorisieren, pausieren.
-- Abhängigkeiten: `render_chapter` setzt `attribute_chapter` voraus, das
-  wiederum eine abgeschlossene Analyse + Besetzung.
-- Live-Fortschritt an die UI per **Server-Sent Events**.
+- Separate worker pools: **LLM** (concurrency 1, rate limiter) and **TTS**
+  (concurrency N), so one resource never blocks the other.
+- **Lookahead policy**: keeps the next *N* chapters after the listening
+  position ready (attributed + rendered). Manual control too: enqueue single
+  chapters or ranges, prioritise, pause.
+- Dependencies: `render_chapter` needs `attribute_chapter`, which needs a
+  finished analysis + casting.
+- Live progress to the UI via **Server-Sent Events**.
 
-### 3.9 LLM-Schicht
+### 3.9 LLM layer
 
-- Ein schlanker OpenAI-kompatibler Client (Chat Completions + JSON-Schema),
-  mehrere **Provider** konfigurierbar mit Basis-URL, Modell, API-Key und
-  Limits (RPM, TPM, RPD).
-- Token-Bucket pro Provider, Tageszähler persistent, `429`/`Retry-After`
-  wird respektiert, danach Fallback auf den nächsten Provider der Liste.
-- Kontingent-Anzeige in der UI ("heute 312/1000 Requests bei Gemini").
-- Prompts als versionierte, eingebettete Templates; Prompt-Version wird mit
-  dem Ergebnis gespeichert (Nachvollziehbarkeit, gezieltes Neu-Rechnen).
-- Hinweis in der Doku: Free-Tiers dürfen Eingaben oft zum Training nutzen;
-  Limits ändern sich häufig ⇒ alles konfigurierbar, nichts hart kodiert.
+- A small OpenAI-compatible client (chat completions + JSON schema),
+  multiple **providers** configurable with base URL, model, API key and
+  limits (RPM, TPM, RPD).
+- Token bucket per provider, persistent daily counters, `429`/`Retry-After`
+  honoured, then fallback to the next provider in the list.
+- Quota display in the UI ("today 312/1000 requests on Gemini").
+- Prompts are versioned, embedded templates; the prompt version is stored
+  with every result (traceability, targeted recomputation).
+- Documented caveat: free tiers often may use inputs for training; limits
+  change frequently ⇒ everything is configuration, nothing hard-coded.
 
 ---
 
-## 4. Datenmodell (Skizze)
+## 4. Data model (sketch, GORM models)
 
 ```
-book            id, title, author, language, cover_path, epub_path, quote_style,
-                narrator_voice_id, status, created_at
-volume          id, book_id, idx, title
-chapter         id, book_id, volume_id, idx, title, word_count, pov_character_id,
-                excluded, status (imported|attributed|rendered|failed), audio_path,
-                audio_duration_ms, prompt_version
-paragraph       id, chapter_id, idx, kind (text|scene_break|heading), text
-segment         id, chapter_id, paragraph_id, idx, kind (narration|quote), quote_ref,
-                text, speaker_character_id, emotion, confidence, manual_override
-character       id, book_id, name, aliases (json), gender, age_group, role,
-                description, speech_style, importance, mention_count, line_count,
-                tier (main|minor|pool), merged_into_id
-character_chapter  character_id, chapter_id, mentions
-voice           id, book_id, recipe (z. B. "bm_george(0.7)+am_michael(0.3)"),
-                speed, label
-character_voice character_id, voice_id
-lexicon_entry   id, book_id, term, replacement, is_phonemes
-job             id, type, book_id, chapter_id, status, priority, attempts,
-                not_before, error, payload (json), created_at, updated_at
-llm_usage       provider, day, requests, input_tokens, output_tokens
-listen_progress user_id, book_id, chapter_id, position_ms, updated_at
-user            id, oidc_subject, name                (nur wenn OIDC aktiv)
+Book             ID, Title, Author, Language, CoverPath, EpubPath, QuoteStyle,
+                 NarratorVoiceID, Status, CreatedAt, UpdatedAt
+Volume           ID, BookID, Idx, Title
+Chapter          ID, BookID, VolumeID, Idx, Title, WordCount, POVCharacterID,
+                 Excluded, Status (imported|attributed|rendered|failed),
+                 AudioPath, AudioDurationMs, PromptVersion
+Paragraph        ID, ChapterID, Idx, Kind (text|scene_break|heading), Text
+Segment          ID, ChapterID, ParagraphID, Idx, Kind (narration|quote), QuoteRef,
+                 Text, SpeakerCharacterID, Emotion, Confidence, ManualOverride
+Character        ID, BookID, Name, Gender, AgeGroup, Role, Description, SpeechStyle,
+                 Importance, MentionCount, LineCount, Tier (main|minor|pool),
+                 MergedIntoID, VoiceID
+CharacterAlias   ID, CharacterID, Alias                      (unique per book)
+CharacterChapter CharacterID, ChapterID, Mentions
+Voice            ID, BookID, Recipe ("bm_george(0.7)+am_michael(0.3)"), Speed, Label
+LexiconEntry     ID, BookID, Term, Replacement, IsPhonemes
+Job              ID, Type, BookID, ChapterID, Status, Priority, Attempts,
+                 NotBefore, Error, Payload (JSON text), CreatedAt, UpdatedAt
+LLMUsage         Provider, Day, Requests, InputTokens, OutputTokens
+ListenProgress   UserID, BookID, ChapterID, PositionMs, UpdatedAt
+User             ID, OIDCSubject, Name                   (only with OIDC enabled)
 ```
 
-Migrationen mit **goose**, Queries mit **sqlc**.
+Large tables (`Segment`, `Paragraph`) are written in batches
+(`CreateInBatches`) and read paginated per chapter; indexes on every foreign
+key plus `(chapter_id, idx)`.
 
 ---
 
 ## 5. Backend (Go)
 
-| Bereich | Wahl |
+| Area | Choice |
 |---|---|
-| Sprache | Go (aktuelle stabile Version, ≥ 1.25) |
-| HTTP | `net/http` (ServeMux mit Patterns) + **oapi-codegen** (strict server) |
-| API-Vertrag | **OpenAPI 3.1** in `api/openapi.yaml` als Single Source of Truth |
-| DB | `modernc.org/sqlite`, **sqlc**, **goose** |
-| OIDC | `github.com/coreos/go-oidc/v3` + `golang.org/x/oauth2`, Session-Cookie; abschaltbar |
-| Logging / Metriken | `log/slog` (JSON), Prometheus `/metrics` (Jobs, Kontingente, Renderzeit, Echtzeitfaktor) |
-| Konfiguration | Env-Variablen + optionale YAML-Datei (Provider-Liste, Limits) |
-| Audio | `ffmpeg`/`ffprobe` als Prozess (im Image enthalten) |
-| Frontend-Auslieferung | `embed.FS`, SPA-Fallback auf `index.html` |
-| Tests | `testing` + testify, Golden-Files, Fake-LLM- und Fake-TTS-Server (httptest) |
+| Language | Go (current stable, ≥ 1.25) |
+| HTTP | `net/http` (ServeMux patterns) + **oapi-codegen** (strict server) |
+| API contract | **OpenAPI 3.1** in `api/openapi.yaml` as the single source of truth |
+| Persistence | **GORM**; `github.com/glebarez/sqlite` + `gorm.io/driver/postgres`; migrations with **gormigrate** |
+| OIDC | `github.com/coreos/go-oidc/v3` + `golang.org/x/oauth2`, session cookie; can be disabled |
+| Logging / metrics | `log/slog` (JSON), Prometheus `/metrics` (jobs, quotas, render time, real-time factor) |
+| Configuration | environment variables + optional YAML file (provider list, limits) |
+| Audio | `ffmpeg`/`ffprobe` as subprocesses (shipped in the image) |
+| Frontend delivery | `embed.FS`, SPA fallback to `index.html` |
+| Tests | `testing` + testify, golden files, fake LLM and fake TTS servers (httptest); store tests against **both** SQLite and PostgreSQL (testcontainers / CI service container) |
 | Lint | golangci-lint |
 
-### Paketstruktur
+### Package layout
 
 ```
 cmd/audiobook-generator/     main: config, wiring, server + runner
 internal/config/
-internal/store/              sqlc-Code, Migrationen, Transaktionen
-internal/epub/               OPF/NCX/nav-Parser, XHTML → Absätze, Kapitel-Split
-internal/segment/            Anführungszeichen-Automat, Satz-Chunking
-internal/llm/                OpenAI-kompatibler Client, Provider, Rate-Limiter, Usage
-internal/analysis/           Figurenanalyse-Batches, Merge, POV
-internal/casting/            Stimmkatalog, Rezept-Vergabe, Pool
-internal/attribution/        Sprecherzuordnung pro Kapitel + Validierung
-internal/tts/                Kokoro-Client, Ausspracheliste
-internal/audio/              ffmpeg-Pipeline, Pausen, loudnorm, M4A/M4B
-internal/jobs/               Queue, Worker-Pools, Lookahead-Policy, SSE-Events
-internal/api/                oapi-codegen-Handler
-internal/auth/               OIDC, Sessions
-internal/feed/               Podcast-RSS
-internal/prompts/            eingebettete Prompt-Templates (versioniert)
-web/                         React-App (eigenes package.json)
+internal/store/              GORM models, repositories, gormigrate migrations,
+                             dialect-specific bits (job claiming) behind interfaces
+internal/epub/               OPF/NCX/nav parser, XHTML → paragraphs, chapter split
+internal/segment/            quote state machine, sentence chunking
+internal/llm/                OpenAI-compatible client, providers, rate limiter, usage
+internal/analysis/           character analysis batches, merge, POV
+internal/casting/            voice catalogue, recipe assignment, pools
+internal/attribution/        per-chapter speaker attribution + validation
+internal/tts/                Kokoro client, pronunciation lexicon
+internal/audio/              ffmpeg pipeline, pauses, loudnorm, M4A/M4B
+internal/jobs/               queue, worker pools, lookahead policy, SSE events
+internal/api/                oapi-codegen handlers
+internal/auth/               OIDC, sessions
+internal/feed/               podcast RSS
+internal/prompts/            embedded, versioned prompt templates
+web/                         React app (own package.json)
 api/openapi.yaml
 charts/audiobook-generator/
 ```
 
-### API (Auszug)
+### API (excerpt)
 
 ```
-POST   /api/books                         EPUB hochladen (multipart, Limit konfigurierbar)
-GET    /api/books | /api/books/{id}       Liste / Details inkl. Pipeline-Status
-POST   /api/books/{id}/analysis           Figurenanalyse starten/fortsetzen
-GET    /api/books/{id}/chapters           paginiert, Filter (Status, Band, Figur)
-PATCH  /api/chapters/{id}                 Titel, ausschließen
+POST   /api/books                         upload EPUB (multipart, configurable limit)
+GET    /api/books | /api/books/{id}       list / details incl. pipeline status
+POST   /api/books/{id}/analysis           start/resume character analysis
+GET    /api/books/{id}/chapters           paginated, filters (status, volume, character)
+PATCH  /api/chapters/{id}                 title, exclude
 POST   /api/chapters/{id}/merge|split
 GET    /api/chapters/{id}/segments
-PATCH  /api/segments/{id}                 Sprecher/Emotion/Text korrigieren
-POST   /api/chapters/render               Bereich/Auswahl einreihen
-GET    /api/books/{id}/characters         paginiert, sortierbar, Suche
-PATCH  /api/characters/{id}               Profil, Tier, Stimme
+PATCH  /api/segments/{id}                 fix speaker/emotion/text
+POST   /api/chapters/render               enqueue a range/selection
+GET    /api/books/{id}/characters         paginated, sortable, search
+PATCH  /api/characters/{id}               profile, tier, voice
 POST   /api/characters/merge | /{id}/split
-GET    /api/voices/catalog                Kokoro-Grundstimmen
-POST   /api/voices/preview                Rezept + Text → Audio (gecacht)
+GET    /api/voices/catalog                Kokoro base voices
+POST   /api/voices/preview                recipe + text → audio (cached)
 GET    /api/books/{id}/lexicon  (+ CRUD)
 GET    /api/jobs  · POST /api/jobs/{id}/retry|cancel · POST /api/queue/pause
 GET    /api/llm/usage
-GET    /api/events                        SSE: Job- und Fortschritts-Events
-GET    /api/chapters/{id}/audio           Range-Requests für den Player
-PUT    /api/books/{id}/progress           Hörposition
-GET    /feed/{token}/{bookId}.xml         Podcast-RSS (Token statt Session)
+GET    /api/events                        SSE: job and progress events
+GET    /api/chapters/{id}/audio           range requests for the player
+PUT    /api/books/{id}/progress           listening position
+GET    /feed/{token}/{bookId}.xml         podcast RSS (token instead of session)
 GET    /api/export/{bookId} · POST /api/import
 GET    /healthz · /readyz · /metrics
 ```
@@ -351,180 +367,200 @@ GET    /healthz · /readyz · /metrics
 
 ## 6. Frontend (React)
 
-| Bereich | Wahl |
+| Area | Choice |
 |---|---|
 | Build | **Vite** + React + TypeScript (strict) |
-| Routing / Daten | **TanStack Router** + **TanStack Query** |
-| API-Client | **openapi-typescript** + **openapi-fetch** (Typen aus `api/openapi.yaml`) |
-| Tabellen | **TanStack Table** + **TanStack Virtual** (1000+ Kapitel, 1000+ Figuren) |
-| UI-Bibliothek | **Mantine** (Slider, Tabellen, Notifications, Modals out of the box; hell/dunkel) |
-| Tests | Vitest + Testing Library; Playwright für einen E2E-Smoke-Test |
-| Lint/Format | ESLint + Prettier |
+| Routing / data | **TanStack Router** + **TanStack Query** |
+| API client | **openapi-typescript** + **openapi-fetch** (types from `api/openapi.yaml`) |
+| Tables | Mantine tables + **TanStack Virtual** (1000+ chapters, 1000+ characters) |
+| UI library | **Mantine** (sliders, tables, notifications, modals; light/dark) |
+| Tests | Vitest + Testing Library; Playwright for an E2E smoke test |
+| Lint/format | ESLint + Prettier |
 
-### Seiten
+### Pages
 
 ```
-┌ Bibliothek ───────────────────────────────────────────────────────────────┐
-│ [EPUB hochladen]                                                          │
-│ ▣ The Wandering Inn   Import ✔  Analyse 63 % (121/190)  Besetzung –       │
-│                       LLM heute: 312/1000 Req.          ▶ weiterhören     │
+┌ Library ──────────────────────────────────────────────────────────────────┐
+│ [Upload EPUB]                                                             │
+│ ▣ The Wandering Inn   Import ✔  Analysis 63 % (121/190)  Casting –        │
+│                       LLM today: 312/1000 req.           ▶ continue        │
 └───────────────────────────────────────────────────────────────────────────┘
-┌ Buch ▸ Kapitel ───────────────────────────────────────────────────────────┐
-│ Filter: [Status ▾] [Band ▾] [Figur: Erin ▾]   Lookahead: [10] Kapitel     │
-│ ▾ Band 1                                                                  │
-│   1.00  Chapter 1.00          6.120 W  Skript ✔  Audio ✔ 41:12  ▶         │
-│   1.01  Chapter 1.01          5.870 W  Skript ✔  Audio ⏳ 63 %   ✕         │
-│   1.02  Interlude             7.010 W  Skript –  Audio –        [▸ rendern]│
-│ ☐ Auswahl: 20 Kapitel → [einreihen] [ausschließen]                        │
+┌ Book ▸ Chapters ──────────────────────────────────────────────────────────┐
+│ Filter: [Status ▾] [Volume ▾] [Character: Erin ▾]   Lookahead: [10]       │
+│ ▾ Volume 1                                                                │
+│   1.00  Chapter 1.00          6,120 w  Script ✔  Audio ✔ 41:12  ▶         │
+│   1.01  Chapter 1.01          5,870 w  Script ✔  Audio ⏳ 63 %   ✕         │
+│   1.02  Interlude             7,010 w  Script –  Audio –        [▸ render] │
+│ ☐ Selection: 20 chapters → [enqueue] [exclude]                            │
 └───────────────────────────────────────────────────────────────────────────┘
-┌ Buch ▸ Figuren ───────────────────────────────────────────────────────────┐
-│ Suche [      ]  Tier [alle ▾]                                             │
-│ Name     Aliase                Zeilen  Kap.  Stimme                   Test│
-│ Erin     the Innkeeper          8.204   812  bf_emma(.8)+af_bella(.2)   ▶ │
-│ Ryoka    the Runner             3.112   402  af_nicole · 1.05×          ▶ │
+┌ Book ▸ Characters ────────────────────────────────────────────────────────┐
+│ Search [      ]  Tier [all ▾]                                             │
+│ Name     Aliases               Lines   Ch.   Voice                   Test │
+│ Erin     the Innkeeper          8,204   812  bf_emma(.8)+af_bella(.2)   ▶ │
+│ Ryoka    the Runner             3,112   402  af_nicole · 1.05×          ▶ │
 │ Guard #  —                         41    12  Pool (m, adult)            ▶ │
-│ [zusammenführen] [aufteilen] [als Hauptfigur]                             │
+│ [merge] [split] [promote to main]                                         │
 └───────────────────────────────────────────────────────────────────────────┘
-┌ Stimm-Editor (Erin) ──────────────────────────────────────────────────────┐
-│ bf_emma     ███████████░░░  0.8      Tempo  ◀━━━━●━━━▶ 1.00              │
-│ af_bella    ███░░░░░░░░░░░  0.2      [+ Grundstimme]                     │
-│ Probetext: (zufälliges echtes Zitat von Erin)  [↻]   ▶ Hörprobe          │
+┌ Voice editor (Erin) ──────────────────────────────────────────────────────┐
+│ bf_emma     ███████████░░░  0.8      Speed  ◀━━━━●━━━▶ 1.00              │
+│ af_bella    ███░░░░░░░░░░░  0.2      [+ base voice]                      │
+│ Sample: (random real quote by Erin)  [↻]   ▶ preview                     │
 └───────────────────────────────────────────────────────────────────────────┘
-┌ Kapitel-Editor (1.01) ────────────────────────────────────────────────────┐
-│ ▶ Kapitel  [neu rendern]                                                  │
-│ 🟦 Erzähler  The door creaked open …                                      │
+┌ Chapter editor (1.01) ────────────────────────────────────────────────────┐
+│ ▶ chapter  [re-render]                                                    │
+│ 🟦 Narrator  The door creaked open …                                      │
 │ 🟥 Erin      “Welcome to the inn!”        [Erin ▾] [neutral ▾] ⚠ 0.55      │
 │ 🟩 Pisces    “Hardly a welcome.”          [Pisces ▾] [dry ▾]               │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-Weitere Seiten: **Player** (Kapitelliste, Fortschritt, Tempo, Sleep-Timer,
-Media Session), **Aussprache** (Lexikon mit Hörprobe), **Stimmkatalog**
-(alle Kokoro-Stimmen anhören), **Jobs** (Queue, Fehler, Retry),
-**Einstellungen** (Provider, Limits, Kontingente, Erzählerstimme, Lookahead).
+Further pages: **Player** (chapter list, progress, speed, sleep timer,
+Media Session), **Pronunciation** (lexicon with preview), **Voice catalogue**
+(listen to all Kokoro voices), **Jobs** (queue, errors, retry),
+**Settings** (providers, limits, quotas, narrator voice, lookahead).
 
 ---
 
-## 7. Helm-Chart
+## 7. Helm chart
 
-`charts/audiobook-generator/` — das Chart bringt alles mit; abschaltbar ist
-nur, was man extern ersetzen will.
+`charts/audiobook-generator/` — the chart brings everything; only what you
+want to replace externally can be switched off.
 
-| Ressource | Bedingung |
+| Resource | Condition |
 |---|---|
-| Deployment `app` (1 Replica, `Recreate`) | immer |
-| Service, ServiceAccount | immer |
-| PVC `data` (SQLite + Audio, Default 50Gi) | `persistence.enabled` (sonst `existingClaim`) |
-| ConfigMap (Provider-Liste, Limits, Lookahead, Pausen) | immer |
-| Secret (LLM-Keys, OIDC-Client-Secret, Session-Key, Feed-Token-Secret) | wenn kein `existingSecret` gesetzt |
-| Deployment + Service `kokoro` | `tts.kokoro.enabled` (Default `true`), sonst `tts.externalUrl` |
-| Ingress | `ingress.enabled` (className, hosts, tls, annotations frei) |
-| Litestream-Sidecar + Config | `backup.litestream.enabled` (S3-Endpoint, Bucket, `existingSecret`) |
+| Deployment `app` (1 replica, `Recreate`) | always |
+| Service, ServiceAccount | always |
+| PVC `data` (audio, EPUBs, SQLite file; default 50Gi) | `persistence.enabled` (otherwise `existingClaim`) |
+| ConfigMap (provider list, limits, lookahead, pauses) | always |
+| Secret (LLM keys, OIDC client secret, session key, feed token secret, DB password) | unless `existingSecret` is set |
+| Deployment + Service `kokoro` | `tts.kokoro.enabled` (default `true`), otherwise `tts.externalUrl` |
+| CNPG `Cluster` | `database.type=postgres` + `database.postgres.mode=cnpg` (needs the CNPG operator) |
+| — (DSN/host from values or `existingSecret`) | `database.type=postgres` + `database.postgres.mode=external` |
+| Litestream sidecar + config | `database.type=sqlite` + `backup.litestream.enabled` (S3 endpoint, bucket, `existingSecret`) |
+| Ingress | `ingress.enabled` (className, hosts, tls, free annotations) |
 | ServiceMonitor | `metrics.serviceMonitor.enabled` |
-| NetworkPolicy | `networkPolicy.enabled` (kokoro nur von app erreichbar) |
+| NetworkPolicy | `networkPolicy.enabled` (kokoro reachable only from app) |
 
-Weitere Werte: `resources` getrennt für app und kokoro, `priorityClassName`,
-`nodeSelector`/`tolerations`/`affinity`, `podSecurityContext`
-(non-root, `readOnlyRootFilesystem`, `seccompProfile: RuntimeDefault`,
-`/tmp` als emptyDir mit `sizeLimit`), Image-Tags gepinnt
-(Kokoro-FastAPI-Version explizit), `values.schema.json` zur Validierung.
+```yaml
+# values.yaml excerpt
+database:
+  type: sqlite            # sqlite | postgres
+  postgres:
+    mode: external        # external | cnpg
+    host: ""
+    port: 5432
+    database: audiobook
+    user: audiobook
+    existingSecret: ""    # key: password
+    cnpg:
+      instances: 1
+      storage: { size: 5Gi, storageClass: "" }
+```
 
-Probes: `startupProbe` großzügig (Migrationen), `readinessProbe` auf
-`/readyz` (DB offen, Kokoro erreichbar), `livenessProbe` auf `/healthz`
-(unabhängig von laufenden Jobs, damit lange Renderings keinen Neustart
-auslösen). Kokoro: großzügige Startup-Probe (Modell-Load).
+Further values: `resources` separately for app and kokoro,
+`priorityClassName`, `nodeSelector`/`tolerations`/`affinity`,
+`podSecurityContext` (non-root, `readOnlyRootFilesystem`, `seccompProfile:
+RuntimeDefault`, `/tmp` as an emptyDir with `sizeLimit`), pinned image tags
+(explicit Kokoro-FastAPI version), `values.schema.json` for validation.
 
-Auslieferung: Chart als **OCI-Artefakt** nach
-`oci://ghcr.io/yoadey/charts/audiobook-generator`, Image nach
-`ghcr.io/yoadey/audiobook-generator`, beide versioniert per Git-Tag.
-Damit kann das Cluster-Repo (`fluxcd-talos-cluster`) es später per
-`HelmRelease` + OCI-Source einbinden; Renovate übernimmt die Updates.
+Probes: generous `startupProbe` (migrations), `readinessProbe` on `/readyz`
+(database reachable, Kokoro reachable), `livenessProbe` on `/healthz`
+(independent of running jobs, so long renders never trigger a restart).
+Kokoro: generous startup probe (model load).
+
+Delivery: chart as an **OCI artifact** at
+`oci://ghcr.io/yoadey/charts/audiobook-generator`, image at
+`ghcr.io/yoadey/audiobook-generator`, both versioned by Git tag. The cluster
+repo (`fluxcd-talos-cluster`) can then consume it through a `HelmRelease`
+with an OCI source; Renovate handles updates.
 
 ---
 
-## 8. Container-Image
+## 8. Container image
 
-- Multi-Stage-Build: Node (Vite-Build) → Go (Build mit eingebettetem
-  `web/dist`, `CGO_ENABLED=0`) → Laufzeit-Image mit **ffmpeg**
-  (`debian:stable-slim` + ffmpeg oder ein schlankes statisches ffmpeg),
-  non-root User.
-- Zielplattform `linux/amd64` (Homelab); `arm64` optional.
-- Das Kokoro-Image wird **nicht** selbst gebaut, sondern das offizielle
-  Kokoro-FastAPI-CPU-Image gepinnt verwendet.
+- Multi-stage build: Node (Vite build) → Go (build with embedded
+  `web/dist`, `CGO_ENABLED=0` — possible because the SQLite driver is pure
+  Go) → runtime image with **ffmpeg** (`debian:stable-slim` + ffmpeg or a
+  slim static ffmpeg), non-root user.
+- Target platform `linux/amd64` (homelab); `arm64` optional.
+- The Kokoro image is **not** built here; the official Kokoro-FastAPI CPU
+  image is used, pinned.
 
 ---
 
 ## 9. CI/CD (GitHub Actions)
 
-| Workflow | Inhalt |
+| Workflow | Contents |
 |---|---|
-| `ci.yaml` (PR + main) | `go vet`, golangci-lint, `go test -race`; sqlc/oapi-codegen-Drift-Check (generierter Code aktuell?); Frontend lint, typecheck, Vitest, Build; `helm lint`, **helm-unittest**, `kubeconform` auf gerenderte Manifeste; Docker-Build (ohne Push) |
-| `e2e.yaml` (PR, optional nightly) | kind-Cluster, Chart installieren (mit Fake-LLM), Mini-EPUB hochladen, ein Kapitel rendern, Audio-Datei prüfen |
-| `release.yaml` (Tag `v*`) | Image + Chart nach ghcr.io pushen, GitHub Release |
-| Renovate | Go-Module, npm, Actions, Kokoro-Image-Tag im Chart |
+| `ci.yaml` (PR + main) | `go vet`, golangci-lint, `go test -race` with a **matrix over SQLite and PostgreSQL** (Postgres as a service container); oapi-codegen drift check; frontend lint, typecheck, Vitest, build; `helm lint`, **helm-unittest**, `kubeconform` on rendered manifests (both database modes); Docker build (no push) |
+| `e2e.yaml` (PR, optionally nightly) | kind cluster, install the chart (with a fake LLM), upload a mini EPUB, render one chapter, check the audio file |
+| `release.yaml` (tag `v*`) | push image + chart to ghcr.io, GitHub release |
+| Renovate | Go modules, npm, Actions, the Kokoro image tag in the chart |
 
 ---
 
-## 10. Teststrategie & Qualitätsmessung
+## 10. Testing and quality measurement
 
-- **Fixtures**: gemeinfreie EPUBs (Project Gutenberg, z. B. *Pride and
-  Prejudice* — dialoglastig) + synthetische Problemfälle (alles in einer
-  XHTML-Datei, verschachtelte TOC, britische Anführungszeichen,
-  mehrabsätzige Zitate).
-- **Golden-Tests** für Kapitel-Split und Segmentierung.
-- **LLM-Schicht** mit aufgezeichneten Antworten (Fake-Provider) testen;
-  Rate-Limiter/Fallback mit simulierten 429ern.
-- **Qualitätsmessung der Sprecherzuordnung**: Auswertungsskript gegen ein
-  annotiertes Korpus (z. B. *Project Dialogism Novel Corpus*, gemeinfreie
-  Romane mit annotierten Sprechern) — um Prompts und Provider objektiv zu
-  vergleichen, bevor Kontingent am echten Buch verbraucht wird.
-- **Benchmark** Kokoro auf den Cluster-Nodes (Echtzeitfaktor) als
-  Prometheus-Metrik.
+- **Fixtures**: public-domain EPUBs (Project Gutenberg, e.g. *Pride and
+  Prejudice* — dialogue-heavy) + synthetic edge cases (everything in one
+  XHTML file, nested TOC, British quotes, multi-paragraph quotes).
+- **Golden tests** for chapter splitting and segmentation.
+- **Store tests** run against SQLite and PostgreSQL.
+- **LLM layer** tested with recorded responses (fake provider); rate limiter
+  and fallback with simulated 429s.
+- **Attribution quality**: an evaluation script against an annotated corpus
+  (e.g. the *Project Dialogism Novel Corpus*, public-domain novels with
+  annotated speakers) — to compare prompts and providers objectively before
+  spending quota on the real book.
+- **Benchmark** Kokoro on the cluster nodes (real-time factor) as a
+  Prometheus metric.
 
 ---
 
-## 11. Meilensteine
+## 11. Milestones
 
-Jeder Meilenstein endet mit einem installierbaren Chart-Stand.
+Every milestone ends with an installable chart.
 
-| # | Inhalt | Ergebnis |
+| # | Contents | Outcome |
 |---|---|---|
-| **M0** | Repo-Grundgerüst: Go-Modul, OpenAPI + Codegen, React-Skelett, embed, Dockerfile, Chart-Skelett (app + kokoro + PVC), CI | `helm install` startet App + Kokoro, leere UI |
-| **M1** | EPUB-Import, Kapitel-Split, Segmentierung, Bibliothek + Kapitelliste + Textansicht | Echtes 12-MB-EPUB korrekt in Bände/Kapitel zerlegt |
-| **M2** | Kokoro-Anbindung, Jobs/Queue, Render mit **einer Erzählerstimme**, eingebauter Player, Lookahead | **Schon nutzbares Hörbuch** (einstimmig); Echtzeitfaktor gemessen |
-| **M3** | LLM-Schicht: Provider, Rate-Limiter, Kontingente, strukturierte Ausgabe, Einstellungsseite | Provider-Test-Button, Kontingentanzeige |
-| **M4** | Figurenanalyse + Merge + Figuren-UI (Liste, Details, zusammenführen/aufteilen) | Vollständige Figurenbibel des Buchs |
-| **M5** | Besetzung + Stimmkatalog + Stimm-Editor + Hörproben | Jede Hauptfigur hat ein Rezept |
-| **M6** | Sprecherzuordnung + mehrstimmiges Rendern + Kapitel-Editor | **Mehrstimmiges Hörbuch** |
-| **M7** | Ausspracheliste, Podcast-RSS, OIDC, Metriken/ServiceMonitor, Litestream, Export/Import, M4B pro Band | Feature-komplett v1.0 |
-| **M8** (optional) | Segment-Cache, Emotionen/Gedanken, POV-Erzählstimme, Audiobookshelf-Export, lokaler LLM-Fallback | Verfeinerungen |
+| **M0** | Repo skeleton: Go module, GORM store with both dialects + gormigrate, OpenAPI + codegen, React/Mantine skeleton, embed, Dockerfile, chart skeleton (app + kokoro + PVC + database modes), CI | `helm install` starts app + Kokoro, empty UI, works with SQLite and Postgres |
+| **M1** | EPUB import, chapter split, segmentation, library + chapter list + text view | The real 12 MB EPUB correctly split into volumes/chapters |
+| **M2** | Kokoro integration, jobs/queue, rendering with **one narrator voice**, built-in player, lookahead | **A usable (single-voice) audiobook**; real-time factor measured |
+| **M3** | LLM layer: providers, rate limiter, quotas, structured output, settings page | provider test button, quota display |
+| **M4** | Character analysis + merge + character UI (list, details, merge/split) | complete character bible of the book |
+| **M5** | Casting + voice catalogue + voice editor + previews | every main character has a recipe |
+| **M6** | Speaker attribution + multi-voice rendering + chapter editor | **A multi-voice audiobook** |
+| **M7** | Pronunciation lexicon, podcast RSS, OIDC, metrics/ServiceMonitor, Litestream, export/import, M4B per volume | feature-complete v1.0 |
+| **M8** (optional) | segment cache, emotions/thoughts, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
 
-Die Einbindung ins Cluster-Repo (`HelmRelease`, Zitadel-Client per
-Terraform, Secrets per SOPS, Garage-Bucket für Litestream) passiert separat
-dort, sobald M2 steht.
+Integration into the cluster repo (`HelmRelease`, Zitadel client via
+Terraform, secrets via SOPS, Garage bucket for Litestream or a CNPG
+database) happens separately there once M2 is done.
 
 ---
 
-## 12. Risiken
+## 12. Risks
 
-| Risiko | Gegenmaßnahme |
+| Risk | Mitigation |
 |---|---|
-| Free-Tier-Limits ändern sich / Modelle verschwinden | Provider-Liste + Limits nur Konfiguration, Fallback-Kette, persistente Jobs |
-| Free-Tier nutzt Eingaben zum Training | Bewusste Entscheidung, in Doku/UI benannt; lokaler Fallback möglich |
-| Qualität der Sprecherzuordnung bei Web-Serial-Stil | Messung gegen annotiertes Korpus, Konfidenz-Markierung, schneller manueller Editor |
-| Kokoro auf CPU langsamer als erwartet | M2 misst früh; Kokoro-Replicas skalieren; Lookahead puffert |
-| Nur ~25 englische Grundstimmen | Gewichtete Mischung + Tempo; Pool für Nebenfiguren; Mindestabstand im Code |
-| Pathologische EPUBs (eine Riesendatei, kaputte TOC) | Streaming-Parser, mehrere Fallbacks, manuelle Kapitel-Korrektur |
-| SQLite-Datenverlust | PVC + Litestream nach S3 + JSON-Export der Analyse |
-| Urheberrecht | Nur private Nutzung eigener DRM-freier Bücher, LAN-only, keine öffentliche Bereitstellung |
+| Free-tier limits change / models disappear | provider list + limits are configuration only, fallback chain, persistent jobs |
+| Free tiers use inputs for training | conscious decision, stated in docs/UI; local fallback possible |
+| Attribution quality on web-serial prose | measured against an annotated corpus, confidence flags, a fast manual editor |
+| Kokoro on CPU slower than expected | M2 measures early; Kokoro replicas scale; lookahead buffers |
+| Only ~25 English base voices | weighted mixing + speed; pool for minor characters; minimum distance enforced in code |
+| Pathological EPUBs (one giant file, broken TOC) | streaming parser, several fallbacks, manual chapter correction |
+| Two database dialects drift apart | no raw SQL outside a tiny dialect interface, CI matrix over both |
+| Data loss | PVC + Litestream (SQLite) or the database's own backup (Postgres) + JSON export of the analysis |
+| Copyright | private use of your own DRM-free books only, LAN only, no public hosting |
 
 ---
 
-## 13. Offene Entscheidungen
+## 13. Decisions
 
-1. **SQLite + Litestream** (Empfehlung) oder Postgres (extern/CNPG)?
-2. **Eingebauter Player + RSS** (Empfehlung) — oder doch Audiobookshelf als
-   Pflicht-Player?
-3. UI-Bibliothek **Mantine** (Empfehlung) oder shadcn/ui + Tailwind?
-4. Sprache von Code-Doku/README: Englisch (wie das Cluster-Repo)?
-5. Git-Workflow: Feature-Branches + PRs gegen `main`, Releases per Tag?
+| # | Decision |
+|---|---|
+| 1 | Persistence via **GORM**, supporting **SQLite** (default, self-contained) and **PostgreSQL** (external or CNPG) |
+| 2 | **Built-in player + podcast RSS**; Audiobookshelf only as an optional later export |
+| 3 | UI library: **Mantine** |
+| 4 | Code, docs and README in **English** |
+| 5 | Feature branches + PRs against `main`; releases via Git tags |
