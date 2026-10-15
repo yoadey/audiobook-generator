@@ -88,6 +88,29 @@ paths:
           $ref: "#/components/responses/Error"
         default:
           $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateBook
+      summary: Change the narrator voice, speed or lookahead
+      tags: [books]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BookUpdate"
+      responses:
+        "200":
+          description: The updated book
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
     delete:
       operationId: deleteBook
       summary: Delete a book with all its data and files
@@ -302,6 +325,207 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /books/{bookId}/render:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    post:
+      operationId: renderBookChapters
+      summary: Queue the next chapters without audio for rendering
+      tags: [audio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenderRequest"
+      responses:
+        "202":
+          description: Number of chapters queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenderResult"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/progress:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getProgress
+      summary: The listening position
+      tags: [audio]
+      responses:
+        "200":
+          description: The position (chapterId is absent when nothing was played yet)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Progress"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: saveProgress
+      summary: Store the listening position (keeps the lookahead window rendered)
+      tags: [audio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProgressUpdate"
+      responses:
+        "200":
+          description: The stored position
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Progress"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/render:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      operationId: renderChapter
+      summary: Queue a chapter for rendering (again)
+      tags: [audio]
+      parameters:
+        - name: force
+          in: query
+          required: false
+          description: Render even if the audio is current
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "202":
+          description: The chapter with its new audio state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/audio:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    get:
+      operationId: getChapterAudio
+      summary: The chapter's audio (AAC in MP4); supports HTTP range requests
+      tags: [audio]
+      responses:
+        "200":
+          description: Audio file
+          content:
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /voices:
+    get:
+      operationId: listVoices
+      summary: Base voices offered by the TTS server
+      tags: [audio]
+      responses:
+        "200":
+          description: Voices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Voice"
+        "502":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /voices/preview:
+    post:
+      operationId: previewVoice
+      summary: Speak a sample text with a voice
+      tags: [audio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoicePreview"
+      responses:
+        "200":
+          description: MP3 audio
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /jobs/{jobId}/retry:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      operationId: retryJob
+      summary: Queue a failed or canceled job again
+      tags: [jobs]
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /jobs/{jobId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      operationId: cancelJob
+      summary: Cancel a queued job
+      tags: [jobs]
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
   parameters:
     BookId:
@@ -313,6 +537,13 @@ components:
         format: int64
     ChapterId:
       name: chapterId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    JobId:
+      name: jobId
       in: path
       required: true
       schema:
@@ -398,7 +629,20 @@ components:
     Book:
       type: object
       required:
-        [id, title, author, language, status, progress, wordCount, chapterCount, hasCover, createdAt, updatedAt]
+        - id
+        - title
+        - author
+        - language
+        - status
+        - progress
+        - wordCount
+        - chapterCount
+        - hasCover
+        - narratorVoice
+        - narratorSpeed
+        - lookahead
+        - createdAt
+        - updatedAt
       properties:
         id:
           type: integer
@@ -424,12 +668,34 @@ components:
           type: integer
         hasCover:
           type: boolean
+        narratorVoice:
+          type: string
+          description: Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)"
+        narratorSpeed:
+          type: number
+        lookahead:
+          type: integer
+          description: Chapters after the listening position that are kept rendered
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
+    BookUpdate:
+      type: object
+      properties:
+        narratorVoice:
+          type: string
+          maxLength: 200
+        narratorSpeed:
+          type: number
+          minimum: 0.5
+          maximum: 2
+        lookahead:
+          type: integer
+          minimum: 0
+          maximum: 50
     BookPage:
       type: object
       required: [items, total]
@@ -462,9 +728,12 @@ components:
     ChapterStatus:
       type: string
       enum: [imported]
+    AudioStatus:
+      type: string
+      enum: [none, queued, rendering, ready, failed]
     Chapter:
       type: object
-      required: [id, bookId, idx, title, wordCount, quoteCount, excluded, status]
+      required: [id, bookId, idx, title, wordCount, quoteCount, excluded, status, audioStatus, audioStale]
       properties:
         id:
           type: integer
@@ -489,6 +758,16 @@ components:
           description: Front/back matter that is not narrated
         status:
           $ref: "#/components/schemas/ChapterStatus"
+        audioStatus:
+          $ref: "#/components/schemas/AudioStatus"
+        audioDurationMs:
+          type: integer
+          format: int64
+        audioError:
+          type: string
+        audioStale:
+          type: boolean
+          description: The audio was rendered with another narrator voice or speed
     ChapterPage:
       type: object
       required: [items, total]
@@ -628,3 +907,77 @@ components:
         total:
           type: integer
           format: int64
+
+    RenderRequest:
+      type: object
+      required: [count]
+      properties:
+        fromChapterId:
+          type: integer
+          format: int64
+          description: First chapter to consider (default the listening position)
+        count:
+          type: integer
+          minimum: 1
+          maximum: 500
+    RenderResult:
+      type: object
+      required: [queued]
+      properties:
+        queued:
+          type: integer
+
+    Progress:
+      type: object
+      required: [positionMs]
+      properties:
+        chapterId:
+          type: integer
+          format: int64
+        positionMs:
+          type: integer
+          format: int64
+        updatedAt:
+          type: string
+          format: date-time
+    ProgressUpdate:
+      type: object
+      required: [chapterId, positionMs]
+      properties:
+        chapterId:
+          type: integer
+          format: int64
+        positionMs:
+          type: integer
+          format: int64
+          minimum: 0
+
+    Voice:
+      type: object
+      required: [id, language, gender]
+      properties:
+        id:
+          type: string
+        language:
+          type: string
+          description: e.g. en-US, en-GB
+        gender:
+          type: string
+          enum: [female, male, unknown]
+        grade:
+          type: string
+          description: Overall quality grade from the Kokoro model card (A best)
+    VoicePreview:
+      type: object
+      required: [voice]
+      properties:
+        voice:
+          type: string
+          maxLength: 200
+        speed:
+          type: number
+          minimum: 0.5
+          maximum: 2
+        text:
+          type: string
+          maxLength: 500

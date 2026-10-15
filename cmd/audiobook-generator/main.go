@@ -16,11 +16,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 
 	"github.com/yoadey/audiobook-generator/internal/api"
+	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
 	"github.com/yoadey/audiobook-generator/internal/config"
 	"github.com/yoadey/audiobook-generator/internal/httpserver"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 	"github.com/yoadey/audiobook-generator/internal/webui"
@@ -56,9 +58,25 @@ func run() error {
 		return err
 	}
 
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+
+	speech := tts.New(cfg.TTS.URL, cfg.TTS.Timeout)
 	runner := jobs.New(st, log)
 	imp := &importer.Importer{Store: st, DataDir: cfg.DataDir, Log: log}
 	runner.Handle(importer.JobType, imp.Handler())
+	renderer := &render.Renderer{
+		Store:        st,
+		TTS:          speech,
+		Encoder:      audio.Encoder{FFmpeg: cfg.FFmpeg, Bitrate: cfg.AudioBitrate},
+		DataDir:      cfg.DataDir,
+		Concurrency:  cfg.TTS.Concurrency,
+		DefaultVoice: cfg.TTS.DefaultVoice,
+		Metrics:      render.NewMetrics(reg),
+		Log:          log,
+	}
+	runner.Handle(render.JobType, renderer.Handler())
+	scheduler := &render.Scheduler{Store: st, Jobs: runner, DefaultVoice: cfg.TTS.DefaultVoice}
 	runnerDone := make(chan struct{})
 	go func() {
 		defer close(runnerDone)
@@ -67,16 +85,15 @@ func run() error {
 		}
 	}()
 
-	reg := prometheus.NewRegistry()
-	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: httpserver.Handler(httpserver.Options{
 			API: api.NewServer(api.Options{
 				Store:          st,
-				TTS:            tts.New(cfg.TTS.URL, cfg.TTS.Timeout),
+				TTS:            speech,
 				Jobs:           runner,
+				Scheduler:      scheduler,
+				DefaultVoice:   cfg.TTS.DefaultVoice,
 				DataDir:        cfg.DataDir,
 				MaxUploadBytes: cfg.MaxUploadMB << 20,
 				Log:            log,

@@ -1,17 +1,18 @@
 import { ActionIcon, Box, Group, Menu, Switch, Text } from '@mantine/core';
-import { IconDots, IconGitMerge } from '@tabler/icons-react';
+import { IconDots, IconGitMerge, IconWaveSine } from '@tabler/icons-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRef } from 'react';
 
-import { type Chapter, mergeChapterWithNext, updateChapter } from '../api/client';
+import { type Chapter, mergeChapterWithNext, renderChapter, updateChapter } from '../api/client';
 import { formatNumber } from '../lib/format';
 import { confirmMerge } from '../lib/confirm';
+import { AudioBadge } from './AudioBadge';
 import { AnchorLink } from './links';
 import { notifyError } from '../lib/notify';
 
 const ROW_HEIGHT = 44;
-const columns = '56px minmax(0, 1fr) 90px 70px 90px 44px';
+const columns = '56px minmax(0, 1fr) 90px 70px 100px 80px 44px';
 
 function useChapterMutations(bookId: number) {
   const queryClient = useQueryClient();
@@ -31,13 +32,18 @@ function useChapterMutations(bookId: number) {
     onSuccess: invalidate,
     onError: (err) => notifyError('Could not merge chapters', err),
   });
-  return { toggle, merge };
+  const render = useMutation({
+    mutationFn: (id: number) => renderChapter(id, true),
+    onSuccess: invalidate,
+    onError: (err) => notifyError('Could not queue rendering', err),
+  });
+  return { toggle, merge, render };
 }
 
 /** Virtualized chapter list: books can have thousands of chapters. */
 export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: Chapter[] }) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const { toggle, merge } = useChapterMutations(bookId);
+  const { toggle, merge, render } = useChapterMutations(bookId);
   // TanStack Virtual returns new functions every render, which the React
   // Compiler cannot memoize; that is expected for this component.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -62,7 +68,7 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
           borderBottom: '1px solid var(--mantine-color-default-border)',
         }}
       >
-        {['#', 'Title', 'Words', 'Quotes', 'Narrate', ''].map((h, i) => (
+        {['#', 'Title', 'Words', 'Quotes', 'Audio', 'Narrate', ''].map((h, i) => (
           <Text key={i} size="xs" fw={600} c="dimmed" ta={i >= 2 && i <= 3 ? 'right' : 'left'}>
             {h}
           </Text>
@@ -115,6 +121,9 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
                   {formatNumber(c.quoteCount)}
                 </Text>
                 <Group>
+                  <AudioBadge chapter={c} />
+                </Group>
+                <Group>
                   <Switch
                     size="xs"
                     checked={!c.excluded}
@@ -131,6 +140,12 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
                     </ActionIcon>
                   </Menu.Target>
                   <Menu.Dropdown>
+                    <Menu.Item
+                      leftSection={<IconWaveSine size={14} />}
+                      onClick={() => render.mutate(c.id)}
+                    >
+                      {c.audioStatus === 'ready' ? 'Render audio again' : 'Render audio'}
+                    </Menu.Item>
                     <Menu.Item
                       leftSection={<IconGitMerge size={14} />}
                       disabled={!next}

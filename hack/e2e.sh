@@ -3,8 +3,8 @@
 # built from this checkout (ghcr.io/yoadey/audiobook-generator:e2e, already
 # loaded into kind) and checks the API and UI.
 #
-# Kokoro is replaced by an unreachable external URL (its image is several
-# GB): the app must still become ready and report the TTS server as down.
+# Kokoro is replaced by hack/fake-tts (its image is several GB), which is
+# enough to render real audio files through ffmpeg in the app image.
 #
 # Usage: hack/e2e.sh [sqlite|postgres]
 set -euo pipefail
@@ -26,11 +26,15 @@ trap diagnostics ERR
 args=(
   --namespace "$ns" --create-namespace --wait --timeout 5m
   --set image.tag=e2e --set image.pullPolicy=Never
-  --set tts.kokoro.enabled=false --set tts.externalUrl=http://tts.invalid:8880
+  --set tts.kokoro.enabled=false --set tts.externalUrl=http://fake-tts:8880
   --set persistence.size=1Gi
 )
+kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n "$ns" create configmap fake-tts --from-file="$root/hack/fake-tts/server.py" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n "$ns" apply -f "$root/hack/e2e-fake-tts.yaml"
+kubectl -n "$ns" rollout status deploy/fake-tts --timeout 3m
 if [[ "$db" == postgres ]]; then
-  kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
   kubectl -n "$ns" apply -f "$root/hack/e2e-postgres.yaml"
   kubectl -n "$ns" rollout status deploy/postgres --timeout 3m
   args+=(
@@ -55,7 +59,7 @@ done
 info="$(curl -fsS localhost:18080/api/system)"
 echo "$info"
 grep -q "\"dialect\":\"$db\"" <<<"$info"
-grep -q '"reachable":false' <<<"$info"
+grep -q '"reachable":true' <<<"$info"
 curl -fsS localhost:18080/api/books | grep -q '"total":0'
 curl -fsS localhost:18080/library | grep -q '<div id="root">'
 
@@ -71,5 +75,20 @@ done
 echo "$book"
 grep -q '"status":"imported"' <<<"$book"
 grep -q '"chapterCount":4' <<<"$book"
-curl -fsS "localhost:18080/api/books/$id/chapters" | grep -q '"title":"Chapter 1"'
+chapters="$(curl -fsS "localhost:18080/api/books/$id/chapters")"
+grep -q '"title":"Chapter 1"' <<<"$chapters"
+
+# Start "listening" at Chapter 1: the lookahead renders it (and more).
+chapter="$(python3 -c 'import json,sys; print(next(c["id"] for c in json.load(sys.stdin)["items"] if c["title"] == "Chapter 1"))' <<<"$chapters")"
+curl -fsS -X PUT -H 'Content-Type: application/json' \
+  -d "{\"chapterId\":$chapter,\"positionMs\":0}" "localhost:18080/api/books/$id/progress"
+for _ in $(seq 1 90); do
+  detail="$(curl -fsS "localhost:18080/api/chapters/$chapter")"
+  grep -qE '"audioStatus":"(ready|failed)"' <<<"$detail" && break
+  sleep 1
+done
+grep -q '"audioStatus":"ready"' <<<"$detail" || { echo "$detail" | head -c 600; exit 1; }
+code="$(curl -sS -o /tmp/chapter.m4a -w '%{http_code}' -r 0-1023 "localhost:18080/api/chapters/$chapter/audio")"
+[[ "$code" == 206 ]]
+[[ "$(wc -c </tmp/chapter.m4a)" -eq 1024 ]]
 echo "e2e ($db) passed"

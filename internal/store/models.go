@@ -29,8 +29,15 @@ type Book struct {
 	WordCount      int64  `gorm:"not null;default:0"`
 	ChapterCount   int    `gorm:"not null;default:0"`
 	// Progress of the running import (0..1).
-	Progress  float64 `gorm:"not null;default:0"`
-	Error     string  `gorm:"not null;default:''"`
+	Progress float64 `gorm:"not null;default:0"`
+	Error    string  `gorm:"not null;default:''"`
+	// NarratorVoice is a Kokoro voice recipe ("af_heart" or a weighted mix);
+	// empty means the configured default.
+	NarratorVoice string  `gorm:"not null;default:''"`
+	NarratorSpeed float64 `gorm:"not null;default:1"`
+	// Lookahead is how many chapters after the listening position are kept
+	// rendered.
+	Lookahead int `gorm:"not null;default:3"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -46,9 +53,21 @@ type Volume struct {
 // ChapterStatus is the processing state of a chapter.
 type ChapterStatus string
 
-// Chapter states (later milestones add attribution and rendering states).
+// Chapter states (later milestones add attribution states).
 const (
 	ChapterImported ChapterStatus = "imported"
+)
+
+// AudioStatus is the rendering state of a chapter's audio.
+type AudioStatus string
+
+// Audio states.
+const (
+	AudioNone      AudioStatus = "none"
+	AudioQueued    AudioStatus = "queued"
+	AudioRendering AudioStatus = "rendering"
+	AudioReady     AudioStatus = "ready"
+	AudioFailed    AudioStatus = "failed"
 )
 
 // Chapter is one chapter of a book; Idx orders chapters within the book.
@@ -62,8 +81,18 @@ type Chapter struct {
 	QuoteCount int    `gorm:"not null;default:0"`
 	Excluded   bool   `gorm:"not null;default:false"`
 	Status     ChapterStatus
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+
+	AudioStatus     AudioStatus `gorm:"not null;default:'none'"`
+	AudioPath       string      `gorm:"not null;default:''"` // relative to the data dir
+	AudioDurationMs int64       `gorm:"not null;default:0"`
+	AudioSize       int64       `gorm:"not null;default:0"`
+	AudioError      string      `gorm:"not null;default:''"`
+	// AudioVoice is the voice key (recipe@speed) the audio was rendered with.
+	AudioVoice     string `gorm:"not null;default:''"`
+	AudioUpdatedAt *time.Time
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ParagraphKind classifies a paragraph.
@@ -140,4 +169,13 @@ type Job struct {
 	UpdatedAt   time.Time
 	StartedAt   *time.Time
 	FinishedAt  *time.Time
+}
+
+// ListenProgress is the playback position in a book.
+type ListenProgress struct {
+	ID         int64 `gorm:"primaryKey"`
+	BookID     int64 `gorm:"not null;uniqueIndex"`
+	ChapterID  int64 `gorm:"not null"`
+	PositionMs int64 `gorm:"not null;default:0"`
+	UpdatedAt  time.Time
 }

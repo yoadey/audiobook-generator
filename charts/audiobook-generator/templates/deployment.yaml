@@ -64,6 +64,12 @@ spec:
               value: {{ include "abg.ttsUrl" . | quote }}
             - name: ABG_TTS_TIMEOUT
               value: {{ .Values.tts.timeout | quote }}
+            - name: ABG_TTS_CONCURRENCY
+              value: {{ .Values.tts.concurrency | quote }}
+            - name: ABG_TTS_DEFAULT_VOICE
+              value: {{ .Values.tts.defaultVoice | quote }}
+            - name: ABG_AUDIO_BITRATE
+              value: {{ .Values.audioBitrate | quote }}
             {{- include "abg.databaseEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

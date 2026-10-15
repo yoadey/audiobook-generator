@@ -43,6 +43,7 @@
     "resources": { "$ref": "#/definitions/object" },
     "tmpSizeLimit": { "$ref": "#/definitions/quantity" },
     "maxUploadMB": { "type": "integer", "minimum": 1 },
+    "audioBitrate": { "type": "string", "pattern": "^[0-9]+k$" },
     "log": {
       "type": "object",
       "additionalProperties": false,
@@ -151,6 +152,8 @@
       "properties": {
         "externalUrl": { "type": "string" },
         "timeout": { "type": "string", "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$" },
+        "concurrency": { "type": "integer", "minimum": 1 },
+        "defaultVoice": { "type": "string", "minLength": 1 },
         "kokoro": {
           "type": "object",
           "additionalProperties": false,

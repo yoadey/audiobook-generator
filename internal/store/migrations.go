@@ -114,6 +114,47 @@ var migrations = []*gormigrate.Migration{
 			return tx.Migrator().DropTable("jobs", "segments", "paragraphs", "chapters", "volumes")
 		},
 	},
+	{
+		ID: "202610150003_audio_and_progress",
+		Migrate: func(tx *gorm.DB) error {
+			type Book struct {
+				NarratorVoice string  `gorm:"not null;default:''"`
+				NarratorSpeed float64 `gorm:"not null;default:1"`
+				Lookahead     int     `gorm:"not null;default:3"`
+			}
+			for _, col := range []string{"NarratorVoice", "NarratorSpeed", "Lookahead"} {
+				if err := tx.Migrator().AddColumn(&Book{}, col); err != nil {
+					return fmt.Errorf("books.%s: %w", col, err)
+				}
+			}
+			type Chapter struct {
+				AudioStatus     string `gorm:"not null;default:'none'"`
+				AudioPath       string `gorm:"not null;default:''"`
+				AudioDurationMs int64  `gorm:"not null;default:0"`
+				AudioSize       int64  `gorm:"not null;default:0"`
+				AudioError      string `gorm:"not null;default:''"`
+				AudioVoice      string `gorm:"not null;default:''"`
+				AudioUpdatedAt  *time.Time
+			}
+			for _, col := range []string{"AudioStatus", "AudioPath", "AudioDurationMs", "AudioSize",
+				"AudioError", "AudioVoice", "AudioUpdatedAt"} {
+				if err := tx.Migrator().AddColumn(&Chapter{}, col); err != nil {
+					return fmt.Errorf("chapters.%s: %w", col, err)
+				}
+			}
+			type ListenProgress struct {
+				ID         int64 `gorm:"primaryKey"`
+				BookID     int64 `gorm:"not null;uniqueIndex"`
+				ChapterID  int64 `gorm:"not null"`
+				PositionMs int64 `gorm:"not null;default:0"`
+				UpdatedAt  time.Time
+			}
+			return tx.Migrator().CreateTable(&ListenProgress{})
+		},
+		Rollback: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable("listen_progresses")
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

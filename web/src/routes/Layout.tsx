@@ -9,11 +9,12 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconBooks, IconMoon, IconServer, IconSun } from '@tabler/icons-react';
+import { IconBooks, IconListCheck, IconMoon, IconServer, IconSun } from '@tabler/icons-react';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 
 const navItems = [
   { to: '/library', label: 'Library', icon: IconBooks },
+  { to: '/jobs', label: 'Jobs', icon: IconListCheck },
   { to: '/system', label: 'System', icon: IconServer },
 ] as const;
 

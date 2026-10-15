@@ -41,6 +41,9 @@ const book = {
   wordCount: 122000,
   chapterCount: 2,
   hasCover: false,
+  narratorVoice: 'af_heart',
+  narratorSpeed: 1,
+  lookahead: 3,
   createdAt: '2026-10-15T00:00:00Z',
   updatedAt: '2026-10-15T00:00:00Z',
 };
@@ -56,6 +59,9 @@ const chapters = [
     quoteCount: 14,
     excluded: false,
     status: 'imported',
+    audioStatus: 'ready',
+    audioDurationMs: 245000,
+    audioStale: false,
   },
   {
     id: 11,
@@ -67,6 +73,8 @@ const chapters = [
     quoteCount: 0,
     excluded: true,
     status: 'imported',
+    audioStatus: 'none',
+    audioStale: false,
   },
 ];
 
@@ -114,6 +122,10 @@ describe('App', () => {
 
   it('shows a book with its chapters', async () => {
     stubApi({
+      '/api/voices': [
+        { id: 'af_heart', language: 'en-US', gender: 'female', grade: 'A' },
+        { id: 'bm_george', language: 'en-GB', gender: 'male' },
+      ],
       '/api/books/1': book,
       '/api/books/1/volumes': [
         { id: 5, idx: 0, title: 'Volume One', chapterCount: 2, wordCount: 1240 },
@@ -128,6 +140,85 @@ describe('App', () => {
     expect(within(rows[0]!).getByRole('switch')).toBeChecked();
     expect(within(rows[1]!).getByRole('switch')).not.toBeChecked();
     expect(screen.getByText(/narrated: 1 chapters/)).toBeInTheDocument();
+    expect(within(rows[0]!).getByText('4:05')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /listen/i })).toHaveAttribute(
+      'href',
+      '/books/1/listen',
+    );
+    expect(screen.getByText('Narrator')).toBeInTheDocument();
+  });
+
+  it('plays the chapter of the saved position', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/chapters': {
+        items: [
+          chapters[0],
+          {
+            ...chapters[0],
+            id: 12,
+            idx: 2,
+            title: 'Chapter 2',
+            audioStatus: 'none',
+            audioDurationMs: undefined,
+          },
+        ],
+        total: 2,
+      },
+      'GET /api/books/1/progress': { chapterId: 12, positionMs: 5000 },
+      'PUT /api/books/1/progress': { chapterId: 12, positionMs: 5000 },
+    });
+    renderAt('/books/1/listen');
+    expect(await screen.findByRole('heading', { name: 'Chapter 2' })).toBeInTheDocument();
+    expect(screen.getByText('Chapter 2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('This chapter has no audio yet.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Render now' })).toBeInTheDocument();
+    // Entering the chapter stores the position (which queues the lookahead).
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PUT')).toBe(
+        true,
+      ),
+    );
+  });
+
+  it('plays ready audio', async () => {
+    stubApi({
+      '/api/books/1': book,
+      '/api/books/1/chapters': { items: chapters, total: 2 },
+      'GET /api/books/1/progress': { positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+    });
+    const { container } = renderAt('/books/1/listen');
+    expect(await screen.findByRole('heading', { name: 'Chapter 1' })).toBeInTheDocument();
+    const audio = container.querySelector('audio');
+    expect(audio).toHaveAttribute('src', expect.stringContaining('/api/chapters/10/audio'));
+    expect(screen.getByRole('button', { name: 'Play' })).toBeEnabled();
+  });
+
+  it('lists jobs', async () => {
+    stubApi({
+      '/api/jobs': {
+        items: [
+          {
+            id: 7,
+            type: 'render_chapter',
+            status: 'failed',
+            bookId: 1,
+            chapterId: 10,
+            attempts: 3,
+            maxAttempts: 3,
+            progress: 0.4,
+            error: 'tts: 503',
+            createdAt: '2026-10-15T00:00:00Z',
+            updatedAt: '2026-10-15T00:00:00Z',
+          },
+        ],
+        total: 1,
+      },
+    });
+    renderAt('/jobs');
+    expect(await screen.findByText('render_chapter')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry job 7' })).toBeInTheDocument();
   });
 
   it('shows chapter text with quotes highlighted', async () => {

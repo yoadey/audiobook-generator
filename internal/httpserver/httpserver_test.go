@@ -32,6 +32,8 @@ func (f fakeTTS) Voices(context.Context) ([]tts.Voice, error) {
 	return []tts.Voice{{ID: "af_heart"}, {ID: "bm_george"}}, nil
 }
 
+func (fakeTTS) Synthesize(context.Context, tts.Speech) ([]byte, error) { return nil, nil }
+
 type pinger struct{ err error }
 
 func (p pinger) Ping(context.Context) error { return p.err }

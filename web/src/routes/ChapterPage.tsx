@@ -22,20 +22,24 @@ import {
   IconCheck,
   IconGitMerge,
   IconScissors,
+  IconWaveSine,
 } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 
 import {
+  audioUrl,
   bookQuery,
   type ChapterDetail,
   chapterQuery,
   mergeChapterWithNext,
   type Paragraph,
+  renderChapter,
   splitChapter,
   updateChapter,
 } from '../api/client';
+import { AudioBadge } from '../components/AudioBadge';
 import { AnchorLink } from '../components/links';
 import { confirmMerge } from '../lib/confirm';
 import { formatListeningTime, formatNumber } from '../lib/format';
@@ -171,6 +175,11 @@ export function ChapterPage() {
     onSuccess: invalidate,
     onError: (err) => notifyError('Could not merge chapters', err),
   });
+  const render = useMutation({
+    mutationFn: () => renderChapter(chapterId, true),
+    onSuccess: invalidate,
+    onError: (err) => notifyError('Could not queue rendering', err),
+  });
   const split = useMutation({
     mutationFn: ({ paragraphId, title }: { paragraphId: number; title: string }) =>
       splitChapter(chapterId, paragraphId, title),
@@ -267,6 +276,29 @@ export function ChapterPage() {
             </ActionIcon>
           </ActionIcon.Group>
         </Group>
+      </Group>
+
+      <Group gap="sm">
+        <AudioBadge chapter={chapter} />
+        {chapter.audioStatus === 'ready' && (
+          <audio
+            key={`${chapter.id}:${chapter.audioDurationMs}`}
+            controls
+            preload="none"
+            src={audioUrl(chapter.id)}
+            style={{ height: 32, flex: 1 }}
+          />
+        )}
+        <Button
+          size="xs"
+          variant="default"
+          leftSection={<IconWaveSine size={14} />}
+          loading={render.isPending}
+          disabled={chapter.audioStatus === 'queued' || chapter.audioStatus === 'rendering'}
+          onClick={() => render.mutate()}
+        >
+          {chapter.audioStatus === 'ready' ? 'Render again' : 'Render audio'}
+        </Button>
       </Group>
 
       <Stack gap="sm" mt="md">

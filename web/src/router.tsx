@@ -8,8 +8,10 @@ import {
 
 import { BookPage } from './routes/BookPage';
 import { ChapterPage } from './routes/ChapterPage';
+import { JobsPage } from './routes/JobsPage';
 import { Layout } from './routes/Layout';
 import { LibraryPage } from './routes/LibraryPage';
+import { ListenPage } from './routes/ListenPage';
 import { NotFound } from './routes/NotFound';
 import { SystemPage } from './routes/SystemPage';
 
@@ -49,6 +51,18 @@ const chapterRoute = createRoute({
   component: ChapterPage,
 });
 
+const listenRoute = createRoute({
+  getParentRoute: () => bookRoute,
+  path: '/listen',
+  component: ListenPage,
+});
+
+const jobsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/jobs',
+  component: JobsPage,
+});
+
 const systemRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/system',
@@ -58,7 +72,8 @@ const systemRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   libraryRoute,
-  bookRoute.addChildren([bookIndexRoute, chapterRoute]),
+  bookRoute.addChildren([bookIndexRoute, chapterRoute, listenRoute]),
+  jobsRoute,
   systemRoute,
 ]);
 

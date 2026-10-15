@@ -114,11 +114,19 @@ database:
         storageClass: ""
       resources: {}
 
+# AAC bitrate of the rendered chapter files (mono speech: 48k-64k is plenty).
+audioBitrate: 64k
+
 tts:
   # Used when tts.kokoro.enabled is false, e.g. http://kokoro.tts:8880
   externalUrl: ""
   # Timeout for a single synthesis request.
   timeout: 5m
+  # Parallel synthesis requests while rendering a chapter; about
+  # 1-2 per Kokoro replica.
+  concurrency: 2
+  # Narrator of books without an own voice (see the voice list in the UI).
+  defaultVoice: af_heart
   kokoro:
     enabled: true
     image:

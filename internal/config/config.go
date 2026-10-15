@@ -33,6 +33,11 @@ type Config struct {
 	LogLevel  string `env:"LOG_LEVEL" envDefault:"info"`
 	LogFormat string `env:"LOG_FORMAT" envDefault:"json"`
 
+	// FFmpeg is the ffmpeg binary used to encode chapter audio.
+	FFmpeg string `env:"FFMPEG" envDefault:"ffmpeg"`
+	// AudioBitrate of the AAC chapter files.
+	AudioBitrate string `env:"AUDIO_BITRATE" envDefault:"64k"`
+
 	DB  Database `envPrefix:"DB_"`
 	TTS TTS      `envPrefix:"TTS_"`
 }
@@ -59,6 +64,11 @@ type Database struct {
 type TTS struct {
 	URL     string        `env:"URL" envDefault:"http://localhost:8880"`
 	Timeout time.Duration `env:"TIMEOUT" envDefault:"5m"`
+	// Concurrency is the number of parallel synthesis requests (roughly
+	// Kokoro replicas × 1-2).
+	Concurrency int `env:"CONCURRENCY" envDefault:"2"`
+	// DefaultVoice narrates books that have no voice set.
+	DefaultVoice string `env:"DEFAULT_VOICE" envDefault:"af_heart"`
 }
 
 // Load reads the configuration from the environment and validates it.
@@ -90,6 +100,12 @@ func (c Config) Validate() error {
 	}
 	if _, err := url.ParseRequestURI(c.TTS.URL); err != nil {
 		errs = append(errs, fmt.Errorf("ABG_TTS_URL: %w", err))
+	}
+	if c.TTS.Concurrency < 1 {
+		errs = append(errs, fmt.Errorf("ABG_TTS_CONCURRENCY must be at least 1, got %d", c.TTS.Concurrency))
+	}
+	if c.TTS.DefaultVoice == "" {
+		errs = append(errs, errors.New("ABG_TTS_DEFAULT_VOICE must not be empty"))
 	}
 	if c.MaxUploadMB < 1 {
 		errs = append(errs, fmt.Errorf("ABG_MAX_UPLOAD_MB must be at least 1, got %d", c.MaxUploadMB))

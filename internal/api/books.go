@@ -12,23 +12,28 @@ import (
 	"strings"
 
 	"github.com/yoadey/audiobook-generator/internal/importer"
+	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
-func toBook(b *store.Book) Book {
+func (s *Server) toBook(b *store.Book) Book {
+	voice, speed := render.NarratorVoice(b, s.DefaultVoice)
 	return Book{
-		Id:           b.ID,
-		Title:        b.Title,
-		Author:       b.Author,
-		Language:     b.Language,
-		Status:       BookStatus(b.Status),
-		Progress:     float32(b.Progress),
-		Error:        nonEmpty(b.Error),
-		WordCount:    b.WordCount,
-		ChapterCount: b.ChapterCount,
-		HasCover:     b.CoverPath != "",
-		CreatedAt:    b.CreatedAt,
-		UpdatedAt:    b.UpdatedAt,
+		NarratorVoice: voice,
+		NarratorSpeed: float32(speed),
+		Lookahead:     b.Lookahead,
+		Id:            b.ID,
+		Title:         b.Title,
+		Author:        b.Author,
+		Language:      b.Language,
+		Status:        BookStatus(b.Status),
+		Progress:      float32(b.Progress),
+		Error:         nonEmpty(b.Error),
+		WordCount:     b.WordCount,
+		ChapterCount:  b.ChapterCount,
+		HasCover:      b.CoverPath != "",
+		CreatedAt:     b.CreatedAt,
+		UpdatedAt:     b.UpdatedAt,
 	}
 }
 
@@ -41,7 +46,7 @@ func (s *Server) ListBooks(ctx context.Context, req ListBooksRequestObject) (Lis
 	}
 	out := BookPage{Items: make([]Book, 0, len(books)), Total: total}
 	for i := range books {
-		out.Items = append(out.Items, toBook(&books[i]))
+		out.Items = append(out.Items, s.toBook(&books[i]))
 	}
 	return ListBooks200JSONResponse(out), nil
 }
@@ -54,7 +59,7 @@ func (s *Server) GetBook(ctx context.Context, req GetBookRequestObject) (GetBook
 	} else if err != nil {
 		return nil, err
 	}
-	return GetBook200JSONResponse(toBook(b)), nil
+	return GetBook200JSONResponse(s.toBook(b)), nil
 }
 
 // UploadBook stores an uploaded EPUB and queues its import.
@@ -124,7 +129,10 @@ func (s *Server) UploadBook(ctx context.Context, req UploadBookRequestObject) (U
 	if title == "" {
 		title = "Untitled"
 	}
-	b := &store.Book{Title: title, Author: eb.Author, Language: eb.Language, Status: store.BookImporting}
+	b := &store.Book{
+		Title: title, Author: eb.Author, Language: eb.Language, Status: store.BookImporting,
+		NarratorSpeed: 1, Lookahead: 3,
+	}
 	if err := s.Store.CreateBook(ctx, b); err != nil {
 		return nil, err
 	}
@@ -143,7 +151,7 @@ func (s *Server) UploadBook(ctx context.Context, req UploadBookRequestObject) (U
 		return nil, err
 	}
 	s.Log.InfoContext(ctx, "book uploaded", "book", b.ID, "title", b.Title)
-	return UploadBook202JSONResponse(toBook(b)), nil
+	return UploadBook202JSONResponse(s.toBook(b)), nil
 }
 
 // DeleteBook removes a book, its data and its files.

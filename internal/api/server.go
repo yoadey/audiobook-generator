@@ -8,14 +8,16 @@ import (
 	"time"
 
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
+	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 )
 
-// TTS is the speech server the API reports on.
+// TTS is the speech server.
 type TTS interface {
 	BaseURL() string
 	Voices(ctx context.Context) ([]tts.Voice, error)
+	Synthesize(ctx context.Context, s tts.Speech) ([]byte, error)
 }
 
 // Enqueuer schedules background jobs.
@@ -28,6 +30,8 @@ type Options struct {
 	Store          *store.Store
 	TTS            TTS
 	Jobs           Enqueuer
+	Scheduler      *render.Scheduler
+	DefaultVoice   string
 	DataDir        string
 	MaxUploadBytes int64
 	Log            *slog.Logger
@@ -47,7 +51,7 @@ func NewServer(o Options) *Server {
 
 // Register mounts the API under /api on mux.
 func (s *Server) Register(mux *http.ServeMux) {
-	strict := NewStrictHandlerWithOptions(s, nil, StrictHTTPServerOptions{
+	strict := NewStrictHandlerWithOptions(s, []StrictMiddlewareFunc{withRequest}, StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, err.Error())
 		},
@@ -106,6 +110,21 @@ func (s *Server) GetSystemInfo(ctx context.Context, _ GetSystemInfoRequestObject
 		info.Tts.VoiceCount = &n
 	}
 	return GetSystemInfo200JSONResponse(info), nil
+}
+
+type requestKey struct{}
+
+// withRequest makes the *http.Request available to handlers that need it
+// (range requests for audio).
+func withRequest(f StrictHandlerFunc, _ string) StrictHandlerFunc {
+	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, req any) (any, error) {
+		return f(context.WithValue(ctx, requestKey{}, r), w, r, req)
+	}
+}
+
+func requestFrom(ctx context.Context) *http.Request {
+	r, _ := ctx.Value(requestKey{}).(*http.Request)
+	return r
 }
 
 func errMsg(msg string) Error { return Error{Message: msg} }

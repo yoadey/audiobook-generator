@@ -132,3 +132,33 @@ func (s *Store) GetJob(ctx context.Context, id int64) (*Job, error) {
 	}
 	return &j, nil
 }
+
+// CancelJob cancels a queued job; running jobs cannot be canceled.
+func (s *Store) CancelJob(ctx context.Context, id int64) error {
+	res := s.db.WithContext(ctx).Model(&Job{}).Where("id = ? AND status = ?", id, JobQueued).
+		Updates(map[string]any{"status": JobCanceled, "finished_at": time.Now().UTC()})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrInvalid
+	}
+	return nil
+}
+
+// RetryFailedJob queues a failed or canceled job again with fresh attempts.
+func (s *Store) RetryFailedJob(ctx context.Context, id int64) error {
+	res := s.db.WithContext(ctx).Model(&Job{}).
+		Where("id = ? AND status IN ?", id, []JobStatus{JobFailed, JobCanceled}).
+		Updates(map[string]any{
+			"status": JobQueued, "attempts": 0, "error": "", "not_before": time.Now().UTC(),
+			"finished_at": nil, "progress": 0,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrInvalid
+	}
+	return nil
+}

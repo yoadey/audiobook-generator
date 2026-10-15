@@ -5,7 +5,7 @@ IMAGE ?= ghcr.io/yoadey/audiobook-generator:dev
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
-.PHONY: all generate build run test lint web web-test chart-test image clean
+.PHONY: all generate build run fake-tts test lint web web-test chart-test image clean
 
 all: generate lint test web chart-test
 
@@ -21,6 +21,10 @@ build:
 ## run: run the backend locally with SQLite in ./tmp-data (frontend: `cd web && npm run dev`)
 run:
 	ABG_DATA_DIR=$(CURDIR)/tmp-data ABG_LOG_FORMAT=text go run ./cmd/audiobook-generator
+
+## fake-tts: a stand-in for Kokoro on :8880 (quiet tones) for local runs
+fake-tts:
+	python3 hack/fake-tts/server.py
 
 ## test: Go tests (PostgreSQL too when ABG_TEST_POSTGRES_DSN is set)
 test:

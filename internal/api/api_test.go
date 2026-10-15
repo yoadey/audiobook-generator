@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strconv"
 	"testing"
 	"time"
@@ -17,9 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yoadey/audiobook-generator/internal/api"
+	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/epub/epubtest"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/store/storetest"
 	"github.com/yoadey/audiobook-generator/internal/tts"
@@ -27,8 +30,16 @@ import (
 
 type fakeTTS struct{}
 
-func (fakeTTS) BaseURL() string                             { return "http://kokoro:8880" }
-func (fakeTTS) Voices(context.Context) ([]tts.Voice, error) { return nil, nil }
+func (fakeTTS) BaseURL() string { return "http://kokoro:8880" }
+func (fakeTTS) Voices(context.Context) ([]tts.Voice, error) {
+	return []tts.Voice{{ID: "af_heart", OverallGrade: "A"}, {ID: "bm_george"}, {ID: "jf_alpha"}}, nil
+}
+func (fakeTTS) Synthesize(_ context.Context, s tts.Speech) ([]byte, error) {
+	if s.Format == "mp3" {
+		return []byte("ID3fake"), nil
+	}
+	return make([]byte, 4800), nil
+}
 
 type client struct {
 	t   *testing.T
@@ -82,13 +93,20 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	runner := jobs.New(s, log)
 	runner.PollInterval = 20 * time.Millisecond
 	runner.Handle(importer.JobType, (&importer.Importer{Store: s, DataDir: dir, Log: log}).Handler())
+	ffmpeg, _ := exec.LookPath("ffmpeg")
+	runner.Handle(render.JobType, (&render.Renderer{
+		Store: s, TTS: fakeTTS{}, Encoder: audio.Encoder{FFmpeg: ffmpeg}, DataDir: dir,
+		Concurrency: 2, DefaultVoice: "af_heart", Log: log,
+	}).Handler())
+	scheduler := &render.Scheduler{Store: s, Jobs: runner, DefaultVoice: "af_heart"}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = runner.Run(ctx); close(done) }()
 
 	mux := http.NewServeMux()
 	api.NewServer(api.Options{
-		Store: s, TTS: fakeTTS{}, Jobs: runner, DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
+		Store: s, TTS: fakeTTS{}, Jobs: runner, Scheduler: scheduler, DefaultVoice: "af_heart",
+		DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
 	}).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(func() {
@@ -232,3 +250,111 @@ func TestImportFailureMarksBook(t *testing.T) {
 		assert.Contains(t, *b.Error, "no readable text")
 	})
 }
+
+func waitAudio(t *testing.T, c client, chapterID int64, want api.AudioStatus) api.ChapterDetail {
+	t.Helper()
+	var d api.ChapterDetail
+	require.Eventually(t, func() bool {
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/chapters/"+itoa(chapterID), nil, &d))
+		return d.AudioStatus == want
+	}, 20*time.Second, 20*time.Millisecond, "chapter %d never reached %s", chapterID, want)
+	return d
+}
+
+func TestAudioFlow(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		c := newAPI(t, s, 10<<20)
+		data, err := epubtest.Sample()
+		require.NoError(t, err)
+		var created api.Book
+		require.Equal(t, http.StatusAccepted, c.upload("sample.epub", data, &created))
+		b := waitImported(t, c, created.Id)
+		assert.Equal(t, "af_heart", b.NarratorVoice)
+		assert.InDelta(t, 1.0, b.NarratorSpeed, 0.001)
+		assert.Equal(t, 3, b.Lookahead)
+		id := itoa(b.Id)
+
+		// Voices and previews.
+		var voices []api.Voice
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/voices", nil, &voices))
+		require.Len(t, voices, 3)
+		assert.Equal(t, api.Voice{Id: "af_heart", Language: "en-US", Gender: api.VoiceGenderFemale, Grade: ptr("A")}, voices[0])
+		assert.Equal(t, "en-GB", voices[1].Language)
+		assert.Equal(t, api.VoiceGenderMale, voices[1].Gender)
+		assert.Equal(t, http.StatusOK, c.json(http.MethodPost, "/api/voices/preview", map[string]any{"voice": "bm_george"}, nil))
+		assert.Equal(t, http.StatusBadRequest, c.json(http.MethodPost, "/api/voices/preview", map[string]any{"voice": "x; rm -rf"}, nil))
+
+		// Narrator settings.
+		assert.Equal(t, http.StatusBadRequest, c.json(http.MethodPatch, "/api/books/"+id, map[string]any{"narratorVoice": "nope"}, nil))
+		assert.Equal(t, http.StatusBadRequest, c.json(http.MethodPatch, "/api/books/"+id, map[string]any{"narratorSpeed": 3}, nil))
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/books/"+id,
+			map[string]any{"narratorVoice": "bf_emma(2)+af_bella(1)", "narratorSpeed": 1.1, "lookahead": 1}, &b))
+		assert.Equal(t, "bf_emma(2)+af_bella(1)", b.NarratorVoice)
+		assert.Equal(t, 1, b.Lookahead)
+
+		var chapters api.ChapterPage
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/books/"+id+"/chapters", nil, &chapters))
+		ch1, ch2 := chapters.Items[1], chapters.Items[2]
+		assert.Equal(t, api.AudioStatusNone, ch1.AudioStatus)
+		assert.Equal(t, http.StatusNotFound, c.do(http.MethodGet, "/api/chapters/"+itoa(ch1.Id)+"/audio", nil, "", nil))
+
+		// Render one chapter explicitly.
+		var queued api.Chapter
+		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, "/api/chapters/"+itoa(ch1.Id)+"/render", nil, &queued))
+		assert.Contains(t, []api.AudioStatus{api.AudioStatusQueued, api.AudioStatusRendering, api.AudioStatusReady}, queued.AudioStatus)
+		d := waitAudio(t, c, ch1.Id, api.AudioStatusReady)
+		require.NotNil(t, d.AudioDurationMs)
+		assert.Positive(t, *d.AudioDurationMs)
+		assert.False(t, d.AudioStale)
+
+		// The audio supports range requests.
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, c.url+"/api/chapters/"+itoa(ch1.Id)+"/audio", nil)
+		req.Header.Set("Range", "bytes=0-99")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusPartialContent, resp.StatusCode)
+		assert.Equal(t, "audio/mp4", resp.Header.Get("Content-Type"))
+		assert.Len(t, body, 100)
+
+		// A narrator change makes the audio stale.
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/books/"+id, map[string]any{"narratorVoice": "bm_george"}, nil))
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/chapters/"+itoa(ch1.Id), nil, &d))
+		assert.True(t, d.AudioStale)
+
+		// Listening to chapter 2 keeps the lookahead window (1) rendered.
+		var p api.Progress
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/books/"+id+"/progress", nil, &p))
+		assert.Nil(t, p.ChapterId)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPut, "/api/books/"+id+"/progress",
+			map[string]any{"chapterId": ch2.Id, "positionMs": 1234}, &p))
+		assert.EqualValues(t, 1234, p.PositionMs)
+		waitAudio(t, c, ch2.Id, api.AudioStatusReady)
+		assert.Equal(t, http.StatusBadRequest, c.json(http.MethodPut, "/api/books/"+id+"/progress",
+			map[string]any{"chapterId": 999999, "positionMs": 0}, nil))
+
+		// Bulk render from a chapter.
+		var res api.RenderResult
+		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, "/api/books/"+id+"/render",
+			map[string]any{"fromChapterId": ch1.Id, "count": 10}, &res))
+		assert.Equal(t, 2, res.Queued, "stale chapter 1 and chapter 3; chapter 2 is current")
+
+		var jobsPage api.JobPage
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/jobs?bookId="+id, nil, &jobsPage))
+		assert.GreaterOrEqual(t, jobsPage.Total, int64(4))
+		assert.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/jobs/"+itoa(jobsPage.Items[len(jobsPage.Items)-1].Id)+"/retry", nil, nil),
+			"a finished import cannot be retried")
+
+		// Merging drops the audio of both chapters.
+		waitAudio(t, c, ch1.Id, api.AudioStatusReady)
+		var merged api.Chapter
+		require.Equal(t, http.StatusOK, c.json(http.MethodPost, "/api/chapters/"+itoa(ch1.Id)+"/merge-next", nil, &merged))
+		assert.Equal(t, api.AudioStatusNone, merged.AudioStatus)
+	})
+}
+
+func ptr[T any](v T) *T { return &v }

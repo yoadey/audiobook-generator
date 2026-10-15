@@ -111,6 +111,9 @@ func (r *Runner) Enqueue(ctx context.Context, j *store.Job) error {
 	return nil
 }
 
+// Wake makes idle workers of a queue look for work now.
+func (r *Runner) Wake(queue string) { r.notify(queue) }
+
 func (r *Runner) notify(queue string) {
 	r.mu.Lock()
 	ch := r.wake[queue]

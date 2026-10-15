@@ -3,13 +3,17 @@ package api
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
-func toChapter(c *store.Chapter) Chapter {
-	return Chapter{
+// toChapter converts a chapter; b (the chapter's book) decides whether the
+// audio is stale.
+func (s *Server) toChapter(b *store.Book, c *store.Chapter) Chapter {
+	out := Chapter{
 		Id:         c.ID,
 		BookId:     c.BookID,
 		VolumeId:   c.VolumeID,
@@ -19,6 +23,52 @@ func toChapter(c *store.Chapter) Chapter {
 		QuoteCount: c.QuoteCount,
 		Excluded:   c.Excluded,
 		Status:     ChapterStatus(c.Status),
+
+		AudioStatus: AudioStatus(c.AudioStatus),
+		AudioError:  nonEmpty(c.AudioError),
+		AudioStale:  b != nil && s.Scheduler != nil && s.Scheduler.Stale(b, c),
+	}
+	if c.AudioStatus == store.AudioReady {
+		out.AudioDurationMs = &c.AudioDurationMs
+	}
+	if out.AudioStatus == "" {
+		out.AudioStatus = AudioStatusNone
+	}
+	return out
+}
+
+// chapterBook loads a chapter and its book.
+func (s *Server) chapterBook(ctx context.Context, chapterID int64) (*store.Chapter, *store.Book, error) {
+	c, err := s.Store.GetChapter(ctx, chapterID)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := s.Store.GetBook(ctx, c.BookID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, b, nil
+}
+
+// dropAudio forgets and deletes the audio of chapters whose text changed.
+func (s *Server) dropAudio(ctx context.Context, chapterIDs ...int64) {
+	paths, err := s.Store.ClearChapterAudio(ctx, chapterIDs...)
+	if err != nil {
+		s.Log.WarnContext(ctx, "clear chapter audio", "err", err)
+		return
+	}
+	for _, p := range paths {
+		s.removeFile(ctx, p)
+	}
+}
+
+// removeFile deletes a file below the data dir (no-op for "").
+func (s *Server) removeFile(ctx context.Context, rel string) {
+	if rel == "" {
+		return
+	}
+	if err := os.Remove(filepath.Join(s.DataDir, rel)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.Log.WarnContext(ctx, "remove file", "path", rel, "err", err)
 	}
 }
 
@@ -44,7 +94,8 @@ func (s *Server) ListVolumes(ctx context.Context, req ListVolumesRequestObject) 
 
 // ListChapters returns a book's chapters.
 func (s *Server) ListChapters(ctx context.Context, req ListChaptersRequestObject) (ListChaptersResponseObject, error) {
-	if _, err := s.Store.GetBook(ctx, req.BookId); isNotFound(err) {
+	b, err := s.Store.GetBook(ctx, req.BookId)
+	if isNotFound(err) {
 		return ListChapters404JSONResponse{ErrorJSONResponse(errMsg("book not found"))}, nil
 	} else if err != nil {
 		return nil, err
@@ -56,14 +107,14 @@ func (s *Server) ListChapters(ctx context.Context, req ListChaptersRequestObject
 	}
 	out := ChapterPage{Items: make([]Chapter, 0, len(cs)), Total: total}
 	for i := range cs {
-		out.Items = append(out.Items, toChapter(&cs[i]))
+		out.Items = append(out.Items, s.toChapter(b, &cs[i]))
 	}
 	return ListChapters200JSONResponse(out), nil
 }
 
 // GetChapter returns a chapter with its text.
 func (s *Server) GetChapter(ctx context.Context, req GetChapterRequestObject) (GetChapterResponseObject, error) {
-	c, err := s.Store.GetChapter(ctx, req.ChapterId)
+	c, b, err := s.chapterBook(ctx, req.ChapterId)
 	if isNotFound(err) {
 		return GetChapter404JSONResponse{ErrorJSONResponse(errMsg("chapter not found"))}, nil
 	} else if err != nil {
@@ -84,10 +135,12 @@ func (s *Server) GetChapter(ctx context.Context, req GetChapterRequestObject) (G
 			Id: sg.ID, Idx: sg.Idx, Kind: SegmentKind(sg.Kind), QuoteRef: sg.QuoteRef, Text: sg.Text,
 		})
 	}
-	ch := toChapter(c)
+	ch := s.toChapter(b, c)
 	out := ChapterDetail{
 		Id: ch.Id, BookId: ch.BookId, VolumeId: ch.VolumeId, Idx: ch.Idx, Title: ch.Title,
 		WordCount: ch.WordCount, QuoteCount: ch.QuoteCount, Excluded: ch.Excluded, Status: ch.Status,
+		AudioStatus: ch.AudioStatus, AudioDurationMs: ch.AudioDurationMs, AudioError: ch.AudioError,
+		AudioStale: ch.AudioStale,
 		Paragraphs: make([]Paragraph, 0, len(paras)),
 	}
 	if prev != 0 {
@@ -124,11 +177,20 @@ func (s *Server) UpdateChapter(ctx context.Context, req UpdateChapterRequestObje
 	} else if err != nil {
 		return nil, err
 	}
-	return UpdateChapter200JSONResponse(toChapter(c)), nil
+	return UpdateChapter200JSONResponse(s.toChapter(nil, c)), nil
 }
 
 // MergeChapterWithNext appends the following chapter.
 func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithNextRequestObject) (MergeChapterWithNextResponseObject, error) {
+	// The next chapter disappears with the merge: remember its audio file.
+	var nextAudio string
+	if cur, err := s.Store.GetChapter(ctx, req.ChapterId); err == nil {
+		if _, nextID, err := s.Store.AdjacentChapters(ctx, cur); err == nil && nextID != 0 {
+			if next, err := s.Store.GetChapter(ctx, nextID); err == nil {
+				nextAudio = next.AudioPath
+			}
+		}
+	}
 	c, err := s.Store.MergeChapterWithNext(ctx, req.ChapterId)
 	switch {
 	case isNotFound(err):
@@ -138,7 +200,13 @@ func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithN
 	case err != nil:
 		return nil, err
 	}
-	return MergeChapterWithNext200JSONResponse(toChapter(c)), nil
+	s.dropAudio(ctx, c.ID)
+	s.removeFile(ctx, nextAudio)
+	c, err = s.Store.GetChapter(ctx, c.ID)
+	if err != nil {
+		return nil, err
+	}
+	return MergeChapterWithNext200JSONResponse(s.toChapter(nil, c)), nil
 }
 
 // SplitChapter starts a new chapter at a paragraph.
@@ -156,5 +224,6 @@ func (s *Server) SplitChapter(ctx context.Context, req SplitChapterRequestObject
 	case err != nil:
 		return nil, err
 	}
-	return SplitChapter200JSONResponse(toChapter(c)), nil
+	s.dropAudio(ctx, req.ChapterId)
+	return SplitChapter200JSONResponse(s.toChapter(nil, c)), nil
 }

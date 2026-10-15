@@ -56,7 +56,8 @@ export interface paths {
     delete: operations['deleteBook'];
     options?: never;
     head?: never;
-    patch?: never;
+    /** Change the narrator voice, speed or lookahead */
+    patch: operations['updateBook'];
     trace?: never;
   };
   '/books/{bookId}/cover': {
@@ -191,6 +192,155 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/books/{bookId}/render': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Queue the next chapters without audio for rendering */
+    post: operations['renderBookChapters'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/progress': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** The listening position */
+    get: operations['getProgress'];
+    /** Store the listening position (keeps the lookahead window rendered) */
+    put: operations['saveProgress'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/chapters/{chapterId}/render': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Queue a chapter for rendering (again) */
+    post: operations['renderChapter'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/chapters/{chapterId}/audio': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    /** The chapter's audio (AAC in MP4); supports HTTP range requests */
+    get: operations['getChapterAudio'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/voices': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Base voices offered by the TTS server */
+    get: operations['listVoices'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/voices/preview': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Speak a sample text with a voice */
+    post: operations['previewVoice'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/jobs/{jobId}/retry': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        jobId: components['parameters']['JobId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Queue a failed or canceled job again */
+    post: operations['retryJob'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/jobs/{jobId}/cancel': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        jobId: components['parameters']['JobId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Cancel a queued job */
+    post: operations['cancelJob'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -237,10 +387,20 @@ export interface components {
       wordCount: number;
       chapterCount: number;
       hasCover: boolean;
+      /** @description Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)" */
+      narratorVoice: string;
+      narratorSpeed: number;
+      /** @description Chapters after the listening position that are kept rendered */
+      lookahead: number;
       /** Format: date-time */
       createdAt: string;
       /** Format: date-time */
       updatedAt: string;
+    };
+    BookUpdate: {
+      narratorVoice?: string;
+      narratorSpeed?: number;
+      lookahead?: number;
     };
     BookPage: {
       items: components['schemas']['Book'][];
@@ -258,6 +418,8 @@ export interface components {
     };
     /** @enum {string} */
     ChapterStatus: 'imported';
+    /** @enum {string} */
+    AudioStatus: 'none' | 'queued' | 'rendering' | 'ready' | 'failed';
     Chapter: {
       /** Format: int64 */
       id: number;
@@ -273,6 +435,12 @@ export interface components {
       /** @description Front/back matter that is not narrated */
       excluded: boolean;
       status: components['schemas']['ChapterStatus'];
+      audioStatus: components['schemas']['AudioStatus'];
+      /** Format: int64 */
+      audioDurationMs?: number;
+      audioError?: string;
+      /** @description The audio was rendered with another narrator voice or speed */
+      audioStale: boolean;
     };
     ChapterPage: {
       items: components['schemas']['Chapter'][];
@@ -348,6 +516,45 @@ export interface components {
       /** Format: int64 */
       total: number;
     };
+    RenderRequest: {
+      /**
+       * Format: int64
+       * @description First chapter to consider (default the listening position)
+       */
+      fromChapterId?: number;
+      count: number;
+    };
+    RenderResult: {
+      queued: number;
+    };
+    Progress: {
+      /** Format: int64 */
+      chapterId?: number;
+      /** Format: int64 */
+      positionMs: number;
+      /** Format: date-time */
+      updatedAt?: string;
+    };
+    ProgressUpdate: {
+      /** Format: int64 */
+      chapterId: number;
+      /** Format: int64 */
+      positionMs: number;
+    };
+    Voice: {
+      id: string;
+      /** @description e.g. en-US, en-GB */
+      language: string;
+      /** @enum {string} */
+      gender: 'female' | 'male' | 'unknown';
+      /** @description Overall quality grade from the Kokoro model card (A best) */
+      grade?: string;
+    };
+    VoicePreview: {
+      voice: string;
+      speed?: number;
+      text?: string;
+    };
   };
   responses: {
     /** @description Error */
@@ -363,6 +570,7 @@ export interface components {
   parameters: {
     BookId: number;
     ChapterId: number;
+    JobId: number;
     Offset: number;
     Limit: number;
   };
@@ -489,6 +697,35 @@ export interface operations {
         };
         content?: never;
       };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  updateBook: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['BookUpdate'];
+      };
+    };
+    responses: {
+      /** @description The updated book */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Book'];
+        };
+      };
+      400: components['responses']['Error'];
       404: components['responses']['Error'];
       default: components['responses']['Error'];
     };
@@ -700,6 +937,237 @@ export interface operations {
           'application/json': components['schemas']['JobPage'];
         };
       };
+      default: components['responses']['Error'];
+    };
+  };
+  renderBookChapters: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RenderRequest'];
+      };
+    };
+    responses: {
+      /** @description Number of chapters queued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RenderResult'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getProgress: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The position (chapterId is absent when nothing was played yet) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Progress'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  saveProgress: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ProgressUpdate'];
+      };
+    };
+    responses: {
+      /** @description The stored position */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Progress'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  renderChapter: {
+    parameters: {
+      query?: {
+        /** @description Render even if the audio is current */
+        force?: boolean;
+      };
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The chapter with its new audio state */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Chapter'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getChapterAudio: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Audio file */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'audio/mp4': string;
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listVoices: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Voices */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Voice'][];
+        };
+      };
+      502: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  previewVoice: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['VoicePreview'];
+      };
+    };
+    responses: {
+      /** @description MP3 audio */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'audio/mpeg': string;
+        };
+      };
+      400: components['responses']['Error'];
+      502: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  retryJob: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        jobId: components['parameters']['JobId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The job */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Job'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  cancelJob: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        jobId: components['parameters']['JobId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The job */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Job'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };

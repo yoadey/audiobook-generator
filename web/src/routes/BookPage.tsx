@@ -14,17 +14,24 @@ import {
   Title,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
-import { IconSearch, IconTrash } from '@tabler/icons-react';
+import { IconHeadphones, IconSearch, IconTrash, IconWaveSine } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
-import { bookQuery, chaptersQuery, deleteBook, volumesQuery } from '../api/client';
+import {
+  bookQuery,
+  chaptersQuery,
+  deleteBook,
+  renderBookChapters,
+  volumesQuery,
+} from '../api/client';
 import { ChapterTable } from '../components/ChapterTable';
-import { AnchorLink } from '../components/links';
+import { AnchorLink, ButtonLink } from '../components/links';
+import { NarratorSettings } from '../components/NarratorSettings';
 import { StatusBadge } from '../components/StatusBadge';
 import { formatListeningTime, formatNumber } from '../lib/format';
-import { notifyError } from '../lib/notify';
+import { notifyError, notifySuccess } from '../lib/notify';
 
 type Filter = 'all' | 'narrated' | 'excluded';
 
@@ -51,6 +58,15 @@ export function BookPage() {
         (q === '' || c.title.toLowerCase().includes(q)),
     );
   }, [chapters.data, volume, filter, search]);
+
+  const renderNext = useMutation({
+    mutationFn: () => renderBookChapters(bookId, 10),
+    onSuccess: (r) => {
+      notifySuccess(r.queued ? `${r.queued} chapters queued for rendering` : 'Nothing to render');
+      return queryClient.invalidateQueries({ queryKey: ['books', bookId] });
+    },
+    onError: (err) => notifyError('Could not queue rendering', err),
+  });
 
   const remove = useMutation({
     mutationFn: () => deleteBook(bookId),
@@ -103,27 +119,48 @@ export function BookPage() {
             </Text>
           )}
         </Stack>
-        <Button
-          variant="subtle"
-          color="red"
-          leftSection={<IconTrash size={16} />}
-          disabled={b.status === 'importing'}
-          onClick={() =>
-            modals.openConfirmModal({
-              title: 'Delete book',
-              children: (
-                <Text size="sm">
-                  Delete “{b.title}” with all chapters and generated audio? This cannot be undone.
-                </Text>
-              ),
-              labels: { confirm: 'Delete', cancel: 'Cancel' },
-              confirmProps: { color: 'red' },
-              onConfirm: () => remove.mutate(),
-            })
-          }
-        >
-          Delete
-        </Button>
+        <Group>
+          {imported && b.status !== 'failed' && (
+            <>
+              <ButtonLink
+                to="/books/$bookId/listen"
+                params={{ bookId: String(bookId) }}
+                leftSection={<IconHeadphones size={16} />}
+              >
+                Listen
+              </ButtonLink>
+              <Button
+                variant="default"
+                leftSection={<IconWaveSine size={16} />}
+                loading={renderNext.isPending}
+                onClick={() => renderNext.mutate()}
+              >
+                Render next 10
+              </Button>
+            </>
+          )}
+          <Button
+            variant="subtle"
+            color="red"
+            leftSection={<IconTrash size={16} />}
+            disabled={b.status === 'importing'}
+            onClick={() =>
+              modals.openConfirmModal({
+                title: 'Delete book',
+                children: (
+                  <Text size="sm">
+                    Delete “{b.title}” with all chapters and generated audio? This cannot be undone.
+                  </Text>
+                ),
+                labels: { confirm: 'Delete', cancel: 'Cancel' },
+                confirmProps: { color: 'red' },
+                onConfirm: () => remove.mutate(),
+              })
+            }
+          >
+            Delete
+          </Button>
+        </Group>
       </Group>
 
       {b.status === 'importing' && (
@@ -140,6 +177,7 @@ export function BookPage() {
 
       {imported && b.status !== 'failed' && (
         <>
+          <NarratorSettings key={`${b.narratorVoice}:${b.narratorSpeed}:${b.lookahead}`} book={b} />
           <Group>
             <TextInput
               placeholder="Search chapters"

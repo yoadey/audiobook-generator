@@ -27,6 +27,7 @@ Read `docs/PLAN.md` first — it is the agreed design and milestone plan.
 ## Commands
 
 ```sh
+make fake-tts      # stand-in for Kokoro on :8880 (no GPU/model needed)
 make run           # backend on :8080, SQLite in ./tmp-data
 make generate      # after editing api/openapi.yaml (Go server + TS client)
 make test          # Go tests; set ABG_TEST_POSTGRES_DSN to also test PostgreSQL

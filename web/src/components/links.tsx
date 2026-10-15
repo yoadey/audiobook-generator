@@ -1,4 +1,11 @@
-import { Anchor, type AnchorProps, Card, type CardProps } from '@mantine/core';
+import {
+  Anchor,
+  type AnchorProps,
+  Button,
+  type ButtonProps,
+  Card,
+  type CardProps,
+} from '@mantine/core';
 import { createLink } from '@tanstack/react-router';
 import { forwardRef } from 'react';
 
@@ -15,5 +22,11 @@ const CardBase = forwardRef<HTMLAnchorElement, CardProps & React.ComponentPropsW
 );
 CardBase.displayName = 'CardBase';
 
+const ButtonBase = forwardRef<HTMLAnchorElement, ButtonProps & React.ComponentPropsWithoutRef<'a'>>(
+  (props, ref) => <Button ref={ref} component="a" {...props} />,
+);
+ButtonBase.displayName = 'ButtonBase';
+
 export const AnchorLink = createLink(AnchorBase);
+export const ButtonLink = createLink(ButtonBase);
 export const CardLink = createLink(CardBase);
