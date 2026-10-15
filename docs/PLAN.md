@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-15 · Status: **agreed design, implementation not started**
+Last updated: 2026-10-15 · Status: **M0 (skeleton) implemented**, M1 next
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -84,7 +84,7 @@ configuration.
 
 | | SQLite (default) | PostgreSQL |
 |---|---|---|
-| Driver | `github.com/glebarez/sqlite` (GORM driver on `modernc.org/sqlite`, pure Go, **no CGO**) | `gorm.io/driver/postgres` (pgx) |
+| Driver | `github.com/ncruces/go-sqlite3/gormlite` (SQLite compiled to Go via wasm2go, pure Go, **no CGO**, actively maintained; `glebarez/sqlite` has had no release since 2024) | `gorm.io/driver/postgres` (pgx) |
 | Where | file on the data PVC, WAL mode | external server or a CNPG `Cluster` rendered by the chart |
 | Backup | optional **Litestream** sidecar → S3 (e.g. Garage) | the database's own backup (e.g. CNPG barman) |
 | Use case | self-contained, zero dependencies | clusters that already run Postgres operators and backups |
@@ -300,8 +300,8 @@ key plus `(chapter_id, idx)`.
 |---|---|
 | Language | Go (current stable, ≥ 1.25) |
 | HTTP | `net/http` (ServeMux patterns) + **oapi-codegen** (strict server) |
-| API contract | **OpenAPI 3.1** in `api/openapi.yaml` as the single source of truth |
-| Persistence | **GORM**; `github.com/glebarez/sqlite` + `gorm.io/driver/postgres`; migrations with **gormigrate** |
+| API contract | **OpenAPI 3.0.3** in `api/openapi.yaml` as the single source of truth (3.0 because oapi-codegen's 3.1 support is incomplete) |
+| Persistence | **GORM**; `github.com/ncruces/go-sqlite3/gormlite` + `gorm.io/driver/postgres`; migrations with **gormigrate** |
 | OIDC | `github.com/coreos/go-oidc/v3` + `golang.org/x/oauth2`, session cookie; can be disabled |
 | Logging / metrics | `log/slog` (JSON), Prometheus `/metrics` (jobs, quotas, render time, real-time factor) |
 | Configuration | environment variables + optional YAML file (provider list, limits) |
@@ -369,7 +369,7 @@ GET    /healthz · /readyz · /metrics
 
 | Area | Choice |
 |---|---|
-| Build | **Vite** + React + TypeScript (strict) |
+| Build | **Vite** + React + TypeScript 5 (strict; openapi-typescript does not support TS 6+ yet) |
 | Routing / data | **TanStack Router** + **TanStack Query** |
 | API client | **openapi-typescript** + **openapi-fetch** (types from `api/openapi.yaml`) |
 | Tables | Mantine tables + **TanStack Virtual** (1000+ chapters, 1000+ characters) |
@@ -464,7 +464,8 @@ RuntimeDefault`, `/tmp` as an emptyDir with `sizeLimit`), pinned image tags
 (explicit Kokoro-FastAPI version), `values.schema.json` for validation.
 
 Probes: generous `startupProbe` (migrations), `readinessProbe` on `/readyz`
-(database reachable, Kokoro reachable), `livenessProbe` on `/healthz`
+(database reachable only — the UI must stay usable while Kokoro restarts or
+loads its model; Kokoro's state is shown in the UI instead), `livenessProbe` on `/healthz`
 (independent of running jobs, so long renders never trigger a restart).
 Kokoro: generous startup probe (model load).
 

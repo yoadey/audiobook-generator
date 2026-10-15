@@ -24,6 +24,17 @@ Read `docs/PLAN.md` first — it is the agreed design and milestone plan.
   Go server and TS client are generated from it
 - Deployment: Helm chart in `charts/audiobook-generator`, image + chart on ghcr.io
 
+## Commands
+
+```sh
+make run           # backend on :8080, SQLite in ./tmp-data
+make generate      # after editing api/openapi.yaml (Go server + TS client)
+make test          # Go tests; set ABG_TEST_POSTGRES_DSN to also test PostgreSQL
+make lint          # golangci-lint
+make web           # frontend: lint, test, build into internal/webui/dist
+make chart-test    # helm lint, helm unittest, kubeconform
+```
+
 ## Working rules
 
 - Code, docs and README in English.
@@ -33,4 +44,8 @@ Read `docs/PLAN.md` first — it is the agreed design and milestone plan.
 - Never let the LLM rewrite book text: segmentation is deterministic code, the
   LLM only returns compact labels (see `docs/PLAN.md` §3).
 - Every long-running step is a persistent, resumable job.
-- Pin all image and chart versions.
+- Pin all image and chart versions (Renovate bumps them).
+- Generated files are committed: `internal/api/api.gen.go`,
+  `web/src/api/schema.d.ts`. CI fails when they are stale.
+- Schema changes are new gormigrate migrations in
+  `internal/store/migrations.go`; never edit a released one.

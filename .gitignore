@@ -1,0 +1,11 @@
+node_modules/
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
+/bin/
+/dist/
+*.db
+*.db-shm
+*.db-wal
+coverage/
+.env
+/tmp-data/

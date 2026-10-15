@@ -1,0 +1,25 @@
+audiobook-generator {{ .Chart.AppVersion }} is installed.
+
+{{- if .Values.ingress.enabled }}
+
+Open the web UI:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+
+Open the web UI:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "abg.fullname" . }} 8080:{{ .Values.service.port }}
+  then browse to http://localhost:8080
+{{- end }}
+
+Database: {{ .Values.database.type }}{{ if eq .Values.database.type "postgres" }} ({{ .Values.database.postgres.mode }}){{ end }}
+TTS:      {{ include "abg.ttsUrl" . }}
+{{- if .Values.tts.kokoro.enabled }}
+          The Kokoro pod needs a few minutes to load its model on first start.
+{{- end }}
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence is disabled. Uploaded books, rendered audio{{ if eq .Values.database.type "sqlite" }} and the
+SQLite database{{ end }} are lost whenever the pod restarts.
+{{- end }}

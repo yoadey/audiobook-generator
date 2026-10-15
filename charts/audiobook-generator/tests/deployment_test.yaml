@@ -1,0 +1,152 @@
+suite: app deployment
+templates:
+  - templates/deployment.yaml
+  - templates/secret.yaml
+release:
+  name: abg
+tests:
+  - it: defaults to SQLite on the data volume and the bundled Kokoro
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/yoadey/audiobook-generator:0.1.0
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_TYPE
+            value: sqlite
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_URL
+            value: http://abg-audiobook-generator-kokoro:8880
+      - equal:
+          path: spec.template.spec.volumes[0].persistentVolumeClaim.claimName
+          value: abg-audiobook-generator-data
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - notExists:
+          path: spec.template.metadata.annotations
+
+  - it: uses an existing claim
+    template: templates/deployment.yaml
+    set:
+      persistence.existingClaim: my-claim
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].persistentVolumeClaim.claimName
+          value: my-claim
+
+  - it: falls back to emptyDir without persistence
+    template: templates/deployment.yaml
+    set:
+      persistence.enabled: false
+    asserts:
+      - exists:
+          path: spec.template.spec.volumes[0].emptyDir
+
+  - it: connects to an external Postgres with a chart-managed password
+    set:
+      database.type: postgres
+      database.postgres.host: db.example
+      database.postgres.password: s3cr3t
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_HOST
+            value: db.example
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: abg-audiobook-generator
+                key: postgres-password
+      - template: templates/deployment.yaml
+        exists:
+          path: spec.template.metadata.annotations["checksum/secret"]
+      - template: templates/secret.yaml
+        equal:
+          path: data["postgres-password"]
+          value: czNjcjN0
+
+  - it: reads the Postgres password from an existing secret
+    set:
+      database.type: postgres
+      database.postgres.host: db.example
+      database.postgres.password: ignored
+      database.postgres.existingSecret: db-creds
+      database.postgres.existingSecretPasswordKey: pw
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: db-creds
+                key: pw
+      - template: templates/secret.yaml
+        hasDocuments:
+          count: 0
+
+  - it: wires the CNPG cluster's app secret
+    template: templates/deployment.yaml
+    set:
+      database.type: postgres
+      database.postgres.mode: cnpg
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_HOST
+            value: abg-audiobook-generator-db-rw
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: abg-audiobook-generator-db-app
+                key: password
+
+  - it: uses an external TTS server
+    template: templates/deployment.yaml
+    set:
+      tts.kokoro.enabled: false
+      tts.externalUrl: http://tts.example:8880
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_URL
+            value: http://tts.example:8880
+
+  - it: rejects a missing external TTS URL
+    template: templates/deployment.yaml
+    set:
+      tts.kokoro.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: tts.externalUrl is required when tts.kokoro.enabled=false
+
+  - it: rejects external Postgres without a host
+    template: templates/deployment.yaml
+    set:
+      database.type: postgres
+    asserts:
+      - failedTemplate:
+          errorMessage: database.postgres.host is required when database.postgres.mode=external

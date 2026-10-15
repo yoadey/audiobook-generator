@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/HEAD/configuration-schema.json
+package: api
+output: api.gen.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+  embedded-spec: false
+compatibility:
+  # BookStatusImported instead of Imported: keeps enum constants unique as the
+  # API grows.
+  always-prefix-enum-values: true
