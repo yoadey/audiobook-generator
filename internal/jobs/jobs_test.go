@@ -3,6 +3,7 @@ package jobs_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"testing"
@@ -110,6 +111,51 @@ func TestPermanentErrorSkipsRetries(t *testing.T) {
 		require.NoError(t, r.Enqueue(context.Background(), j))
 		got := waitStatus(t, s, j.ID, store.JobFailed)
 		assert.Equal(t, 1, got.Attempts)
+	})
+}
+
+func TestDeferDoesNotCountAttempts(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		var calls atomic.Int32
+		r.Handle("quota", jobs.Handler{Queue: "q", Run: func(context.Context, *store.Job, func(float64)) error {
+			// Deferred twice (into the past, so it is due again at once),
+			// then it succeeds: none of the deferrals uses up an attempt.
+			if calls.Add(1) <= 2 {
+				return fmt.Errorf("analyze: %w", jobs.Defer(time.Now().Add(-time.Second), "all providers out of quota"))
+			}
+			return nil
+		}})
+		start(t, r)
+
+		j := &store.Job{Type: "quota", MaxAttempts: 1}
+		require.NoError(t, r.Enqueue(context.Background(), j))
+		got := waitStatus(t, s, j.ID, store.JobDone)
+		assert.Equal(t, 1, got.Attempts)
+		assert.EqualValues(t, 3, calls.Load())
+	})
+}
+
+func TestDeferKeepsJobQueuedUntilDue(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		until := time.Now().Add(time.Hour).UTC()
+		r.Handle("quota", jobs.Handler{Queue: "q", Run: func(context.Context, *store.Job, func(float64)) error {
+			return jobs.Defer(until, "quota exhausted")
+		}})
+		start(t, r)
+
+		j := &store.Job{Type: "quota"}
+		require.NoError(t, r.Enqueue(context.Background(), j))
+		require.Eventually(t, func() bool {
+			got, err := s.GetJob(context.Background(), j.ID)
+			require.NoError(t, err)
+			return got.Status == store.JobQueued && got.Error == "quota exhausted"
+		}, 10*time.Second, 10*time.Millisecond)
+		got, err := s.GetJob(context.Background(), j.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 0, got.Attempts)
+		assert.WithinDuration(t, until, got.NotBefore, time.Second)
 	})
 }
 

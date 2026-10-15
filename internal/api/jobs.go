@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"time"
 
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
@@ -20,6 +21,7 @@ func toJob(j *store.Job) Job {
 		CreatedAt:   j.CreatedAt,
 		UpdatedAt:   j.UpdatedAt,
 		StartedAt:   j.StartedAt,
+		NotBefore:   notBefore(j),
 		FinishedAt:  j.FinishedAt,
 	}
 }
@@ -42,4 +44,14 @@ func (s *Server) ListJobs(ctx context.Context, req ListJobsRequestObject) (ListJ
 		out.Items = append(out.Items, toJob(&js[i]))
 	}
 	return ListJobs200JSONResponse(out), nil
+}
+
+// notBefore reports the start time of queued jobs that wait (backoff or
+// deferred), nil otherwise.
+func notBefore(j *store.Job) *time.Time {
+	if j.Status != store.JobQueued || !j.NotBefore.After(time.Now()) {
+		return nil
+	}
+	t := j.NotBefore
+	return &t
 }

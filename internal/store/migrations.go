@@ -155,6 +155,48 @@ var migrations = []*gormigrate.Migration{
 			return tx.Migrator().DropTable("listen_progresses")
 		},
 	},
+	{
+		ID: "202610160001_llm_providers",
+		Migrate: func(tx *gorm.DB) error {
+			type LLMProvider struct {
+				ID               int64  `gorm:"primaryKey"`
+				Name             string `gorm:"not null;uniqueIndex"`
+				Source           string `gorm:"not null;default:'ui'"`
+				Position         int    `gorm:"not null;default:0"`
+				Enabled          bool   `gorm:"not null;default:true"`
+				BaseURL          string `gorm:"not null"`
+				Model            string `gorm:"not null"`
+				APIKey           string `gorm:"not null;default:''"`
+				APIKeyEnv        string `gorm:"not null;default:''"`
+				StructuredOutput string `gorm:"not null;default:'json_schema'"`
+				ExtraParams      string `gorm:"not null;default:''"`
+				RPM              int    `gorm:"not null;default:0"`
+				TPM              int    `gorm:"not null;default:0"`
+				RPD              int    `gorm:"not null;default:0"`
+				TPD              int    `gorm:"not null;default:0"`
+				MaxOutputTokens  int    `gorm:"not null;default:0"`
+				TimeoutSeconds   int    `gorm:"not null;default:300"`
+				QuotaTimezone    string `gorm:"not null;default:'UTC'"`
+				CreatedAt        time.Time
+				UpdatedAt        time.Time
+			}
+			type LLMUsage struct {
+				ID           int64  `gorm:"primaryKey"`
+				ProviderID   int64  `gorm:"not null;uniqueIndex:idx_llm_usages_provider_day,priority:1"`
+				Day          string `gorm:"not null;uniqueIndex:idx_llm_usages_provider_day,priority:2"`
+				Requests     int64  `gorm:"not null;default:0"`
+				InputTokens  int64  `gorm:"not null;default:0"`
+				OutputTokens int64  `gorm:"not null;default:0"`
+				Errors       int64  `gorm:"not null;default:0"`
+				RateLimited  int64  `gorm:"not null;default:0"`
+				UpdatedAt    time.Time
+			}
+			return tx.Migrator().CreateTable(&LLMProvider{}, &LLMUsage{})
+		},
+		Rollback: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable("llm_usages", "llm_providers")
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

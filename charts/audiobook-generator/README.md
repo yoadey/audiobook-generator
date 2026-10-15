@@ -47,5 +47,22 @@ database:
         size: 5Gi
 ```
 
+## LLM providers
+
+```yaml
+llm:
+  providers:
+    - name: gemini
+      baseUrl: https://generativelanguage.googleapis.com/v1beta/openai/
+      model: gemini-2.5-flash
+      apiKeySecret: { name: audiobook-llm-keys, key: gemini }   # existing Secret
+      limits: { rpm: 10, tpm: 250000, rpd: 250 }
+      quotaTimezone: America/Los_Angeles
+```
+
+Providers from the values are shown read-only in the UI (Settings), where
+more can be added. Each `apiKeySecret` becomes an environment variable of
+the app; the provider list itself is passed as JSON (`ABG_LLM_PROVIDERS`).
+
 All values are documented in [`values.yaml`](values.yaml) and validated by
 [`values.schema.json`](values.schema.json).

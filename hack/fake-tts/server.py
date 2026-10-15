@@ -1,18 +1,27 @@
-"""Minimal stand-in for Kokoro-FastAPI used by the e2e test and local runs.
+"""Minimal stand-in for Kokoro-FastAPI and an LLM provider, used by the e2e
+test and local runs.
 
-Implements GET /health, GET /v1/audio/voices (v0.9 response shape) and
+Kokoro: GET /health, GET /v1/audio/voices (v0.9 response shape) and
 POST /v1/audio/speech. Speech is a quiet 220 Hz tone whose length grows with
 the text (20 ms per character), as 24 kHz 16-bit mono PCM; any other
 response_format gets a WAV file.
+
+LLM (OpenAI-compatible): GET /v1/models and POST /v1/chat/completions, which
+answers the app's provider test prompt correctly and anything else with
+"{}". When FAKE_LLM_KEY is set, requests must carry it as bearer token.
 """
 
 import json
 import math
+import os
+import re
 import struct
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RATE = 24000
 VOICES = ["af_heart", "af_bella", "am_michael", "bf_emma", "bm_george"]
+LLM_KEY = os.environ.get("FAKE_LLM_KEY", "")
+MODELS = ["fake-small", "fake-large"]
 
 
 def tone(seconds: float) -> bytes:
@@ -30,6 +39,17 @@ def wav(pcm: bytes) -> bytes:
     return header + pcm
 
 
+def chat_answer(req: dict) -> str:
+    """Solves the provider test prompt ("Add A and B ... word: W")."""
+    for m in req.get("messages", []):
+        text = m.get("content") or ""
+        add = re.search(r"Add (\d+) and (\d+)", text)
+        word = re.search(r"exactly this word: (\w+)", text)
+        if add and word:
+            return json.dumps({"sum": int(add[1]) + int(add[2]), "echo": word[1]})
+    return "{}"
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, status: int, body: bytes, content_type: str) -> None:
         self.send_response(status)
@@ -38,8 +58,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _authorized(self) -> bool:
+        if LLM_KEY and self.headers.get("Authorization") != f"Bearer {LLM_KEY}":
+            self._send(401, b'{"error":{"message":"invalid API key"}}', "application/json")
+            return False
+        return True
+
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/health":
+        if self.path == "/v1/models":
+            if self._authorized():
+                body = json.dumps({"object": "list", "data": [{"id": m, "object": "model"} for m in MODELS]})
+                self._send(200, body.encode(), "application/json")
+        elif self.path == "/health":
             self._send(200, b'{"status":"healthy"}', "application/json")
         elif self.path.startswith("/v1/audio/voices"):
             voices = [{"id": v, "name": v, "overall_grade": "B"} for v in VOICES]
@@ -49,6 +79,22 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/v1/chat/completions":
+            if not self._authorized():
+                return
+            req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            content = chat_answer(req)
+            body = {
+                "id": "chatcmpl-fake",
+                "object": "chat.completion",
+                "model": req.get("model", ""),
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant", "content": content}}],
+                "usage": {"prompt_tokens": 50, "completion_tokens": len(content) // 4,
+                          "total_tokens": 50 + len(content) // 4},
+            }
+            self._send(200, json.dumps(body).encode(), "application/json")
+            return
         if self.path != "/v1/audio/speech":
             self._send(404, b"not found", "text/plain")
             return

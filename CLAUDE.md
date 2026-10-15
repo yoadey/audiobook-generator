@@ -27,7 +27,7 @@ Read `docs/PLAN.md` first — it is the agreed design and milestone plan.
 ## Commands
 
 ```sh
-make fake-tts      # stand-in for Kokoro on :8880 (no GPU/model needed)
+make fake-tts      # stand-in for Kokoro and an LLM on :8880 (no GPU/model/key needed)
 make run           # backend on :8080, SQLite in ./tmp-data
 make generate      # after editing api/openapi.yaml (Go server + TS client)
 make test          # Go tests; set ABG_TEST_POSTGRES_DSN to also test PostgreSQL
@@ -44,7 +44,11 @@ make chart-test    # helm lint, helm unittest, kubeconform
   raw SQL outside the small dialect interface, tests run against both.
 - Never let the LLM rewrite book text: segmentation is deterministic code, the
   LLM only returns compact labels (see `docs/PLAN.md` §3).
-- Every long-running step is a persistent, resumable job.
+- Every long-running step is a persistent, resumable job. LLM calls go
+  through `llm.Pool`; its quota errors defer jobs (`jobs.Deferrer`) instead
+  of failing them.
+- Prompts are embedded under `internal/llm/prompts/<name>/v<N>/`; never edit
+  a version whose results may be stored — add a new version.
 - Pin all image and chart versions (Renovate bumps them).
 - Generated files are committed: `internal/api/api.gen.go`,
   `web/src/api/schema.d.ts`. CI fails when they are stale.

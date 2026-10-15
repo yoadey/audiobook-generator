@@ -117,6 +117,12 @@ export function JobsPage() {
                 <Table.Td w={140}>
                   {j.status === 'running' ? (
                     <Progress value={j.progress * 100} animated size="sm" />
+                  ) : j.notBefore ? (
+                    <Tooltip label={j.error} disabled={!j.error} multiline w={360}>
+                      <Text size="xs" c="dimmed">
+                        waits until {when(j.notBefore)}
+                      </Text>
+                    </Tooltip>
                   ) : (
                     <Text size="xs" c="dimmed">
                       {j.status === 'done' ? '100%' : ''}

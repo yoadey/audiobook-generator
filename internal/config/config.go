@@ -40,6 +40,17 @@ type Config struct {
 
 	DB  Database `envPrefix:"DB_"`
 	TTS TTS      `envPrefix:"TTS_"`
+	LLM LLM      `envPrefix:"LLM_"`
+}
+
+// LLM configures the LLM layer. Providers can also be managed in the UI.
+type LLM struct {
+	// Providers is a JSON array of provider definitions (the Helm chart
+	// renders it from llm.providers); see llm.ProviderConfig.
+	Providers string `env:"PROVIDERS"`
+	// MaxWait is how long a request waits for a provider's per-minute
+	// window before falling back to the next provider.
+	MaxWait time.Duration `env:"MAX_WAIT" envDefault:"70s"`
 }
 
 // Database selects and configures the GORM dialect.
@@ -106,6 +117,9 @@ func (c Config) Validate() error {
 	}
 	if c.TTS.DefaultVoice == "" {
 		errs = append(errs, errors.New("ABG_TTS_DEFAULT_VOICE must not be empty"))
+	}
+	if c.LLM.MaxWait < 0 {
+		errs = append(errs, fmt.Errorf("ABG_LLM_MAX_WAIT must not be negative, got %s", c.LLM.MaxWait))
 	}
 	if c.MaxUploadMB < 1 {
 		errs = append(errs, fmt.Errorf("ABG_MAX_UPLOAD_MB must be at least 1, got %d", c.MaxUploadMB))

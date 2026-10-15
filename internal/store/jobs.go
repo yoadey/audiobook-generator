@@ -78,6 +78,15 @@ func (s *Store) ReleaseJob(ctx context.Context, id int64) error {
 	}).Error
 }
 
+// DeferJob returns a job to the queue until at without counting the
+// attempt (e.g. while every LLM provider is out of quota).
+func (s *Store) DeferJob(ctx context.Context, id int64, msg string, at time.Time) error {
+	return s.db.WithContext(ctx).Model(&Job{ID: id}).Updates(map[string]any{
+		"status": JobQueued, "error": msg, "not_before": at,
+		"attempts": gorm.Expr("CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END"),
+	}).Error
+}
+
 // FailJob marks a job permanently failed.
 func (s *Store) FailJob(ctx context.Context, id int64, msg string) error {
 	now := time.Now().UTC()

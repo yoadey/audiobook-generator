@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
+	"github.com/yoadey/audiobook-generator/internal/llm"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
@@ -31,6 +32,7 @@ type Options struct {
 	TTS            TTS
 	Jobs           Enqueuer
 	Scheduler      *render.Scheduler
+	LLM            *llm.Pool
 	DefaultVoice   string
 	DataDir        string
 	MaxUploadBytes int64

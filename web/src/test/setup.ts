@@ -39,3 +39,9 @@ Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
   configurable: true,
   get: () => 1000,
 });
+
+// Autosizing textareas listen for web fonts loading.
+Object.defineProperty(document, 'fonts', {
+  configurable: true,
+  value: { addEventListener: () => {}, removeEventListener: () => {}, ready: Promise.resolve() },
+});

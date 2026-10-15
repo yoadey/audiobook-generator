@@ -12,6 +12,7 @@ modes=(
   "--set database.type=postgres --set database.postgres.mode=cnpg"
   "--set tts.kokoro.enabled=false --set tts.externalUrl=http://tts:8880 --set persistence.enabled=false"
   "--set ingress.enabled=true --set metrics.serviceMonitor.enabled=true --set networkPolicy.enabled=true"
+  "--set llm.providers[0].name=g --set llm.providers[0].baseUrl=https://llm --set llm.providers[0].model=m --set llm.providers[0].apiKeySecret.name=s --set llm.providers[0].apiKeySecret.key=k"
 )
 
 for mode in "${modes[@]}"; do

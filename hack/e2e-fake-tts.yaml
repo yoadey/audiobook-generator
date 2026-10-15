@@ -16,6 +16,9 @@ spec:
         - name: fake-tts
           image: python:3.13.16-alpine3.24
           command: [python, /app/server.py]
+          env:
+            - name: FAKE_LLM_KEY
+              value: e2e-llm-key
           ports:
             - containerPort: 8880
           readinessProbe:

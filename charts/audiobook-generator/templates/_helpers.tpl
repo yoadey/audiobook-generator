@@ -104,6 +104,13 @@ true
 {{- fail "database.postgres.host is required when database.postgres.mode=external" }}
 {{- end }}
 {{- end }}
+{{- $names := dict }}
+{{- range $i, $p := .Values.llm.providers }}
+{{- if hasKey $names $p.name }}
+{{- fail (printf "llm.providers: duplicate name %q" $p.name) }}
+{{- end }}
+{{- $_ := set $names $p.name true }}
+{{- end }}
 {{- if and (not .Values.tts.kokoro.enabled) (not .Values.tts.externalUrl) }}
 {{- fail "tts.externalUrl is required when tts.kokoro.enabled=false" }}
 {{- end }}
@@ -155,6 +162,34 @@ true
     secretKeyRef:
       name: {{ include "abg.secretName" . }}
       key: postgres-password
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* LLM environment variables: the provider list as JSON (keys replaced by
+the names of variables that read them from Secrets). */}}
+{{- define "abg.llmEnv" -}}
+- name: ABG_LLM_MAX_WAIT
+  value: {{ .Values.llm.maxWait | quote }}
+{{- with .Values.llm.providers }}
+{{- $providers := list }}
+{{- range $i, $p := . }}
+{{- $q := omit $p "apiKeySecret" }}
+{{- if $p.apiKeySecret }}
+{{- $_ := set $q "apiKeyEnv" (printf "ABG_LLM_PROVIDER_%d_API_KEY" $i) }}
+{{- end }}
+{{- $providers = append $providers $q }}
+{{- end }}
+- name: ABG_LLM_PROVIDERS
+  value: {{ toJson $providers | quote }}
+{{- range $i, $p := . }}
+{{- with $p.apiKeySecret }}
+- name: {{ printf "ABG_LLM_PROVIDER_%d_API_KEY" $i }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ .name }}
+      key: {{ .key }}
 {{- end }}
 {{- end }}
 {{- end }}

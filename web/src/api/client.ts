@@ -11,6 +11,11 @@ export type Chapter = components['schemas']['Chapter'];
 export type ChapterDetail = components['schemas']['ChapterDetail'];
 export type ChapterUpdate = components['schemas']['ChapterUpdate'];
 export type Job = components['schemas']['Job'];
+export type LLMProvider = components['schemas']['LLMProvider'];
+export type LLMProviderInput = components['schemas']['LLMProviderInput'];
+export type LLMProviderUpdate = components['schemas']['LLMProviderUpdate'];
+export type LLMModelsRequest = components['schemas']['LLMModelsRequest'];
+export type LLMTestResult = components['schemas']['LLMTestResult'];
 export type Paragraph = components['schemas']['Paragraph'];
 export type Progress = components['schemas']['Progress'];
 export type Segment = components['schemas']['Segment'];
@@ -113,6 +118,12 @@ export const jobsQuery = (status?: Job['status'][]) =>
     refetchInterval: 3000,
   });
 
+export const llmProvidersQuery = queryOptions({
+  queryKey: ['llm', 'providers'],
+  queryFn: () => unwrap(api.GET('/llm/providers')),
+  refetchInterval: 10_000,
+});
+
 export const audioUrl = (chapterId: number) => `${baseUrl}/chapters/${chapterId}/audio`;
 
 export const coverUrl = (bookId: number) => `${baseUrl}/books/${bookId}/cover`;
@@ -201,3 +212,17 @@ export async function previewVoice(voice: string, speed: number, text?: string):
   }
   return URL.createObjectURL(await response.blob());
 }
+
+export const createLLMProvider = (body: LLMProviderInput) =>
+  unwrap(api.POST('/llm/providers', { body }));
+
+export const updateLLMProvider = (providerId: number, body: LLMProviderUpdate) =>
+  unwrap(api.PATCH('/llm/providers/{providerId}', { params: { path: { providerId } }, body }));
+
+export const deleteLLMProvider = (providerId: number) =>
+  unwrap(api.DELETE('/llm/providers/{providerId}', { params: { path: { providerId } } }));
+
+export const testLLMProvider = (providerId: number) =>
+  unwrap(api.POST('/llm/providers/{providerId}/test', { params: { path: { providerId } } }));
+
+export const listLLMModels = (body: LLMModelsRequest) => unwrap(api.POST('/llm/models', { body }));

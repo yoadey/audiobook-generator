@@ -5,7 +5,7 @@ info:
     HTTP API of the audiobook-generator service. This file is the single source
     of truth: the Go server (internal/api) and the TypeScript client
     (web/src/api) are generated from it.
-  version: 0.2.0
+  version: 0.3.0
 servers:
   - url: /api
 paths:
@@ -526,6 +526,137 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /llm/providers:
+    get:
+      operationId: listLLMProviders
+      summary: LLM providers in the order they are tried, with quota usage
+      tags: [llm]
+      responses:
+        "200":
+          description: Providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LLMProvider"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createLLMProvider
+      summary: Add an LLM provider
+      tags: [llm]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LLMProviderInput"
+      responses:
+        "201":
+          description: The provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMProvider"
+        "400":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /llm/providers/{providerId}:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    patch:
+      operationId: updateLLMProvider
+      summary: Change an LLM provider (providers from the Helm values are read-only)
+      tags: [llm]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LLMProviderUpdate"
+      responses:
+        "200":
+          description: The provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMProvider"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteLLMProvider
+      summary: Remove an LLM provider and its usage history
+      tags: [llm]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /llm/providers/{providerId}/test:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    post:
+      operationId: testLLMProvider
+      summary: Send a small structured-output request to the provider and check the answer
+      description: Counts against the provider's limits like any other request.
+      tags: [llm]
+      responses:
+        "200":
+          description: Test outcome (also when the provider failed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMTestResult"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /llm/models:
+    post:
+      operationId: listLLMModels
+      summary: Models offered by an OpenAI-compatible server (GET /models)
+      tags: [llm]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LLMModelsRequest"
+      responses:
+        "200":
+          description: Model IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
   parameters:
     BookId:
@@ -544,6 +675,13 @@ components:
         format: int64
     JobId:
       name: jobId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ProviderId:
+      name: providerId
       in: path
       required: true
       schema:
@@ -890,6 +1028,10 @@ components:
         updatedAt:
           type: string
           format: date-time
+        notBefore:
+          type: string
+          format: date-time
+          description: Queued jobs do not start before this time (retry backoff, exhausted LLM quota)
         startedAt:
           type: string
           format: date-time
@@ -981,3 +1123,240 @@ components:
         text:
           type: string
           maxLength: 500
+
+    LLMLimits:
+      type: object
+      description: Provider limits; 0 means no limit. Daily limits reset at midnight in quotaTimezone.
+      properties:
+        rpm:
+          type: integer
+          minimum: 0
+          description: Requests per minute
+        tpm:
+          type: integer
+          minimum: 0
+          description: Tokens per minute
+        rpd:
+          type: integer
+          minimum: 0
+          description: Requests per day
+        tpd:
+          type: integer
+          minimum: 0
+          description: Tokens per day
+    LLMStructuredOutput:
+      type: string
+      enum: [json_schema, json_object, prompt]
+      description: >-
+        json_schema sends the schema as response_format; json_object asks for
+        any JSON object and puts the schema into the prompt; prompt only puts
+        the schema into the prompt. Answers are validated in every mode.
+    LLMProviderState:
+      type: string
+      enum: [ready, waiting, exhausted, disabled, no_key]
+    LLMUsageDay:
+      type: object
+      required: [day, requests, inputTokens, outputTokens, errors, rateLimited]
+      properties:
+        day:
+          type: string
+          format: date
+        requests:
+          type: integer
+          format: int64
+        inputTokens:
+          type: integer
+          format: int64
+        outputTokens:
+          type: integer
+          format: int64
+        errors:
+          type: integer
+          format: int64
+        rateLimited:
+          type: integer
+          format: int64
+    LLMProviderStatus:
+      type: object
+      required: [state, today, minuteRequests, minuteTokens, quotaResetAt]
+      properties:
+        state:
+          $ref: "#/components/schemas/LLMProviderState"
+        reason:
+          type: string
+          description: Why the provider is not ready
+        availableAt:
+          type: string
+          format: date-time
+        today:
+          $ref: "#/components/schemas/LLMUsageDay"
+        minuteRequests:
+          type: integer
+        minuteTokens:
+          type: integer
+        quotaResetAt:
+          type: string
+          format: date-time
+        lastError:
+          type: string
+        lastErrorAt:
+          type: string
+          format: date-time
+    LLMProvider:
+      type: object
+      required: [id, name, source, position, enabled, baseUrl, model, hasApiKey, structuredOutput,
+        limits, maxOutputTokens, timeoutSeconds, quotaTimezone, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        source:
+          type: string
+          enum: [ui, config]
+          description: config providers come from the Helm values and are read-only
+        position:
+          type: integer
+        enabled:
+          type: boolean
+        baseUrl:
+          type: string
+        model:
+          type: string
+        hasApiKey:
+          type: boolean
+          description: The key itself is never returned
+        apiKeyEnv:
+          type: string
+          description: Environment variable holding the key (config providers)
+        structuredOutput:
+          $ref: "#/components/schemas/LLMStructuredOutput"
+        extraParams:
+          type: string
+          description: JSON object merged into every request body
+        limits:
+          $ref: "#/components/schemas/LLMLimits"
+        maxOutputTokens:
+          type: integer
+        timeoutSeconds:
+          type: integer
+        quotaTimezone:
+          type: string
+        status:
+          $ref: "#/components/schemas/LLMProviderStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    LLMProviderInput:
+      type: object
+      required: [name, baseUrl, model]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        baseUrl:
+          type: string
+          maxLength: 500
+          example: https://generativelanguage.googleapis.com/v1beta/openai/
+        model:
+          type: string
+          maxLength: 200
+        apiKey:
+          type: string
+          maxLength: 1000
+        enabled:
+          type: boolean
+        position:
+          type: integer
+          description: Defaults to after the last provider
+        structuredOutput:
+          $ref: "#/components/schemas/LLMStructuredOutput"
+        extraParams:
+          type: string
+          maxLength: 4000
+        limits:
+          $ref: "#/components/schemas/LLMLimits"
+        maxOutputTokens:
+          type: integer
+          minimum: 0
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+        quotaTimezone:
+          type: string
+          maxLength: 64
+    LLMProviderUpdate:
+      type: object
+      description: Only the given fields change; an empty apiKey removes the key.
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        baseUrl:
+          type: string
+          maxLength: 500
+        model:
+          type: string
+          maxLength: 200
+        apiKey:
+          type: string
+          maxLength: 1000
+        enabled:
+          type: boolean
+        position:
+          type: integer
+        structuredOutput:
+          $ref: "#/components/schemas/LLMStructuredOutput"
+        extraParams:
+          type: string
+          maxLength: 4000
+        limits:
+          $ref: "#/components/schemas/LLMLimits"
+        maxOutputTokens:
+          type: integer
+          minimum: 0
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+        quotaTimezone:
+          type: string
+          maxLength: 64
+    LLMTestResult:
+      type: object
+      required: [ok, message]
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        model:
+          type: string
+          description: Model that answered, as reported by the provider
+        latencyMs:
+          type: integer
+          format: int64
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+    LLMModelsRequest:
+      type: object
+      description: >-
+        Either an existing provider (its stored key is used unless apiKey is
+        given) or a base URL for a provider that is not saved yet.
+      properties:
+        providerId:
+          type: integer
+          format: int64
+        baseUrl:
+          type: string
+          maxLength: 500
+        apiKey:
+          type: string
+          maxLength: 1000

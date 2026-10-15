@@ -28,9 +28,18 @@ args=(
   --set image.tag=e2e --set image.pullPolicy=Never
   --set tts.kokoro.enabled=false --set tts.externalUrl=http://fake-tts:8880
   --set persistence.size=1Gi
+  # An LLM provider from the values, served by the fake (its key from a Secret).
+  --set 'llm.providers[0].name=fake'
+  --set 'llm.providers[0].baseUrl=http://fake-tts:8880/v1/'
+  --set 'llm.providers[0].model=fake-small'
+  --set 'llm.providers[0].apiKeySecret.name=llm-keys'
+  --set 'llm.providers[0].apiKeySecret.key=fake'
+  --set 'llm.providers[0].limits.rpd=100'
 )
 kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n "$ns" create configmap fake-tts --from-file="$root/hack/fake-tts/server.py" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n "$ns" create secret generic llm-keys --from-literal=fake=e2e-llm-key \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n "$ns" apply -f "$root/hack/e2e-fake-tts.yaml"
 kubectl -n "$ns" rollout status deploy/fake-tts --timeout 3m
@@ -91,4 +100,16 @@ grep -q '"audioStatus":"ready"' <<<"$detail" || { echo "$detail" | head -c 600; 
 code="$(curl -sS -o /tmp/chapter.m4a -w '%{http_code}' -r 0-1023 "localhost:18080/api/chapters/$chapter/audio")"
 [[ "$code" == 206 ]]
 [[ "$(wc -c </tmp/chapter.m4a)" -eq 1024 ]]
+
+# The configured LLM provider answers the structured-output test, with the
+# key from the Secret (the fake rejects anything else).
+providers="$(curl -fsS localhost:18080/api/llm/providers)"
+echo "$providers"
+grep -q '"source":"config"' <<<"$providers"
+provider="$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])' <<<"$providers")"
+result="$(curl -fsS -X POST "localhost:18080/api/llm/providers/$provider/test")"
+echo "$result"
+grep -q '"ok":true' <<<"$result"
+providers="$(curl -fsS localhost:18080/api/llm/providers)"
+grep -q '"requests":1' <<<"$providers"
 echo "e2e ($db) passed"

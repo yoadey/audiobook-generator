@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-15 · Status: **M0–M2 implemented** (usable single-voice audiobook), M3 next
+Last updated: 2026-10-15 · Status: **M0–M3 implemented** (usable single-voice audiobook, LLM layer), M4 next
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -260,6 +260,34 @@ an optional later feature (M8), not a requirement.
 - Documented caveat: free tiers often may use inputs for training; limits
   change frequently ⇒ everything is configuration, nothing hard-coded.
 
+As implemented in M3 (`internal/llm`):
+
+- Providers live in the database. Those from the Helm values
+  (`llm.providers`, passed as `ABG_LLM_PROVIDERS` JSON, keys from Secrets
+  via `apiKeyEnv`) are synced on start-up and read-only in the UI; more can
+  be added in the UI (key stored in the database, never returned by the
+  API). Order: `position`, then creation.
+- Limits: RPM/TPM as a sliding 60 s window in memory, RPD/TPD as persistent
+  daily counters (`llm_usages`) that reset at midnight in the provider's
+  `quotaTimezone` (Gemini: Pacific time). A provider whose minute window
+  frees up within `llm.maxWait` (70 s) is waited for, otherwise the next
+  one is used.
+- Errors: `429` → cooldown from `Retry-After`/Google's `retryDelay`, else
+  exponential (15 s … 15 min); a 429 naming a per-day quota → cooldown
+  until the reset; `401/403/404` → 5 min cooldown (misconfiguration);
+  `400/413/422` → only this request skips the provider; network/`5xx` →
+  30 s cooldown.
+- When no provider can take a request, jobs are **deferred** (back to the
+  queue until the earliest provider is available, without using up an
+  attempt); likewise while no provider is configured.
+- Structured output per provider: `json_schema` (response_format),
+  `json_object` or `prompt` (schema in the system prompt). Answers are
+  always validated against the schema (santhosh-tekuri/jsonschema), with
+  one repair request quoting the validation errors; Markdown fences and
+  `<think>` blocks are stripped.
+- The provider test sends a small prompt (add two random numbers, echo a
+  word) and checks connectivity, key, structured output and content.
+
 ---
 
 ## 4. Data model (sketch, GORM models)
@@ -304,7 +332,7 @@ key plus `(chapter_id, idx)`.
 | Persistence | **GORM**; `github.com/ncruces/go-sqlite3/gormlite` + `gorm.io/driver/postgres`; migrations with **gormigrate** |
 | OIDC | `github.com/coreos/go-oidc/v3` + `golang.org/x/oauth2`, session cookie; can be disabled |
 | Logging / metrics | `log/slog` (JSON), Prometheus `/metrics` (jobs, quotas, render time, real-time factor) |
-| Configuration | environment variables + optional YAML file (provider list, limits) |
+| Configuration | environment variables (`ABG_*`); the provider list as JSON in `ABG_LLM_PROVIDERS` |
 | Audio | `ffmpeg`/`ffprobe` as subprocesses (shipped in the image) |
 | Frontend delivery | `embed.FS`, SPA fallback to `index.html` |
 | Tests | `testing` + testify, golden files, fake LLM and fake TTS servers (httptest); store tests against **both** SQLite and PostgreSQL (testcontainers / CI service container) |
@@ -319,7 +347,8 @@ internal/store/              GORM models, repositories, gormigrate migrations,
                              dialect-specific bits (job claiming) behind interfaces
 internal/epub/               OPF/NCX/nav parser, XHTML → paragraphs, chapter split
 internal/segment/            quote state machine, sentence chunking
-internal/llm/                OpenAI-compatible client, providers, rate limiter, usage
+internal/llm/                OpenAI-compatible client, providers, rate limiter, usage,
+                             embedded versioned prompts (internal/llm/prompts)
 internal/analysis/           character analysis batches, merge, POV
 internal/casting/            voice catalogue, recipe assignment, pools
 internal/attribution/        per-chapter speaker attribution + validation
@@ -329,7 +358,6 @@ internal/jobs/               queue, worker pools, lookahead policy, SSE events
 internal/api/                oapi-codegen handlers
 internal/auth/               OIDC, sessions
 internal/feed/               podcast RSS
-internal/prompts/            embedded, versioned prompt templates
 web/                         React app (own package.json)
 api/openapi.yaml
 charts/audiobook-generator/
@@ -354,7 +382,7 @@ GET    /api/voices/catalog                Kokoro base voices
 POST   /api/voices/preview                recipe + text → audio (cached)
 GET    /api/books/{id}/lexicon  (+ CRUD)
 GET    /api/jobs  · POST /api/jobs/{id}/retry|cancel · POST /api/queue/pause
-GET    /api/llm/usage
+GET    /api/llm/providers (+ CRUD, /{id}/test) · POST /api/llm/models
 GET    /api/events                        SSE: job and progress events
 GET    /api/chapters/{id}/audio           range requests for the player
 PUT    /api/books/{id}/progress           listening position
@@ -431,8 +459,8 @@ want to replace externally can be switched off.
 | Deployment `app` (1 replica, `Recreate`) | always |
 | Service, ServiceAccount | always |
 | PVC `data` (audio, EPUBs, SQLite file; default 50Gi) | `persistence.enabled` (otherwise `existingClaim`) |
-| ConfigMap (provider list, limits, lookahead, pauses) | always |
-| Secret (LLM keys, OIDC client secret, session key, feed token secret, DB password) | unless `existingSecret` is set |
+| LLM providers (`llm.providers`, keys via `apiKeySecret` from existing Secrets) | as environment of the app |
+| Secret (OIDC client secret, session key, feed token secret, DB password) | unless `existingSecret` is set |
 | Deployment + Service `kokoro` | `tts.kokoro.enabled` (default `true`), otherwise `tts.externalUrl` |
 | CNPG `Cluster` | `database.type=postgres` + `database.postgres.mode=cnpg` (needs the CNPG operator) |
 | — (DSN/host from values or `existingSecret`) | `database.type=postgres` + `database.postgres.mode=external` |

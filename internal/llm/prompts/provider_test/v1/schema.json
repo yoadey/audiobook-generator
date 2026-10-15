@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "sum": { "type": "integer" },
+    "echo": { "type": "string" }
+  },
+  "required": ["sum", "echo"],
+  "additionalProperties": false
+}

@@ -160,3 +160,62 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: database.postgres.host is required when database.postgres.mode=external
+
+  - it: passes LLM providers as JSON with keys from secrets
+    template: templates/deployment.yaml
+    set:
+      llm.providers:
+        - name: gemini
+          baseUrl: https://generativelanguage.googleapis.com/v1beta/openai/
+          model: gemini-flash
+          apiKeySecret: { name: llm-keys, key: gemini }
+          limits: { rpm: 10, tpm: 250000, rpd: 250 }
+          quotaTimezone: America/Los_Angeles
+          extraParams: { reasoning_effort: low }
+        - name: local
+          baseUrl: http://ollama:11434/v1/
+          model: qwen3
+          structuredOutput: json_object
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_PROVIDERS
+            value: '[{"apiKeyEnv":"ABG_LLM_PROVIDER_0_API_KEY","baseUrl":"https://generativelanguage.googleapis.com/v1beta/openai/","extraParams":{"reasoning_effort":"low"},"limits":{"rpd":250,"rpm":10,"tpm":250000},"model":"gemini-flash","name":"gemini","quotaTimezone":"America/Los_Angeles"},{"baseUrl":"http://ollama:11434/v1/","model":"qwen3","name":"local","structuredOutput":"json_object"}]'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_PROVIDER_0_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: llm-keys
+                key: gemini
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_PROVIDER_1_API_KEY
+          any: true
+
+  - it: has no provider list by default
+    template: templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_MAX_WAIT
+            value: 70s
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_PROVIDERS
+          any: true
+
+  - it: rejects duplicate provider names
+    template: templates/deployment.yaml
+    set:
+      llm.providers:
+        - { name: a, baseUrl: "http://x", model: m }
+        - { name: a, baseUrl: "http://y", model: m }
+    asserts:
+      - failedTemplate:
+          errorMessage: 'llm.providers: duplicate name "a"'

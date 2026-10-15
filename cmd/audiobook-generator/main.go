@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // quota time zones of LLM providers, without the OS database
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -22,6 +23,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/httpserver"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/llm"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
@@ -49,6 +51,11 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	llmProviders, err := llm.ParseProviderConfig(cfg.LLM.Providers)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+
 	st, err := store.Open(cfg.DB)
 	if err != nil {
 		return err
@@ -58,8 +65,15 @@ func run() error {
 		return err
 	}
 
+	if err := st.SyncConfigLLMProviders(ctx, llmProviders); err != nil {
+		return fmt.Errorf("sync LLM providers: %w", err)
+	}
+
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+
+	llmPool := llm.NewPool(st, llm.NewMetrics(reg), log)
+	llmPool.MaxWait = cfg.LLM.MaxWait
 
 	speech := tts.New(cfg.TTS.URL, cfg.TTS.Timeout)
 	runner := jobs.New(st, log)
@@ -93,6 +107,7 @@ func run() error {
 				TTS:            speech,
 				Jobs:           runner,
 				Scheduler:      scheduler,
+				LLM:            llmPool,
 				DefaultVoice:   cfg.TTS.DefaultVoice,
 				DataDir:        cfg.DataDir,
 				MaxUploadBytes: cfg.MaxUploadMB << 20,

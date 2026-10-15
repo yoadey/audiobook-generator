@@ -160,6 +160,32 @@ tts:
       limits:
         memory: 4Gi
 
+llm:
+  # How long a request waits for a provider's per-minute window before it
+  # falls back to the next provider.
+  maxWait: 70s
+  # OpenAI-compatible providers for character analysis and speaker
+  # attribution, tried in this order. More can be added in the UI (Settings);
+  # providers listed here appear there read-only. Book text is sent to them:
+  # free tiers may use it for training.
+  providers: []
+  # - name: gemini
+  #   baseUrl: https://generativelanguage.googleapis.com/v1beta/openai/
+  #   model: gemini-2.5-flash           # see "Load models" in the UI
+  #   apiKeySecret:                      # an existing Secret
+  #     name: audiobook-llm-keys
+  #     key: gemini
+  #   # Limits of your plan (0 or unset: none). Daily limits reset at
+  #   # midnight in quotaTimezone (Gemini: Pacific time).
+  #   limits: { rpm: 10, tpm: 250000, rpd: 250, tpd: 0 }
+  #   quotaTimezone: America/Los_Angeles
+  #   # json_schema | json_object | prompt (when the provider rejects schemas)
+  #   structuredOutput: json_schema
+  #   maxOutputTokens: 0                 # 0: server default
+  #   timeoutSeconds: 300
+  #   extraParams: { reasoning_effort: low }   # merged into every request
+  #   enabled: true
+
 metrics:
   serviceMonitor:
     enabled: false

@@ -43,6 +43,28 @@ func Permanent(err error) error {
 	return PermanentError{err}
 }
 
+// Deferrer is implemented by errors that mean "not now, try again at
+// DeferUntil" — e.g. every LLM provider is out of quota until midnight.
+// The job goes back to the queue without counting the attempt.
+type Deferrer interface {
+	error
+	DeferUntil() time.Time
+}
+
+// DeferError is a ready-made Deferrer.
+type DeferError struct {
+	Until  time.Time
+	Reason string
+}
+
+func (e DeferError) Error() string { return e.Reason }
+
+// DeferUntil implements Deferrer.
+func (e DeferError) DeferUntil() time.Time { return e.Until }
+
+// Defer returns an error that puts the job back into the queue until t.
+func Defer(t time.Time, reason string) error { return DeferError{Until: t, Reason: reason} }
+
 // Runner owns the worker pools.
 type Runner struct {
 	st  *store.Store
@@ -211,6 +233,15 @@ func (r *Runner) execute(ctx context.Context, j *store.Job) {
 		}
 		log.Info("job interrupted by shutdown")
 	default:
+		var deferred Deferrer
+		if errors.As(err, &deferred) {
+			at := deferred.DeferUntil().UTC()
+			log.Info("job deferred", "reason", err, "until", at)
+			if derr := r.st.DeferJob(bg, j.ID, err.Error(), at); derr != nil {
+				log.Error("defer job", "err", derr)
+			}
+			return
+		}
 		var perm PermanentError
 		if errors.As(err, &perm) || j.Attempts >= j.MaxAttempts {
 			log.Error("job failed", "err", err)

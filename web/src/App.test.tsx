@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { createMemoryHistory } from '@tanstack/react-router';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { App } from './App';
@@ -77,6 +77,62 @@ const chapters = [
     audioStale: false,
   },
 ];
+
+const status = {
+  state: 'ready',
+  today: {
+    day: '2026-10-15',
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    errors: 0,
+    rateLimited: 0,
+  },
+  minuteRequests: 0,
+  minuteTokens: 0,
+  quotaResetAt: '2099-01-01T00:00:00Z',
+};
+
+const helmProvider = {
+  id: 1,
+  name: 'gemini',
+  source: 'config',
+  position: 0,
+  enabled: true,
+  baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+  model: 'gemini-flash',
+  hasApiKey: true,
+  apiKeyEnv: 'ABG_LLM_PROVIDER_0_API_KEY',
+  structuredOutput: 'json_schema',
+  limits: { rpm: 10, tpm: 250000, rpd: 250, tpd: 0 },
+  maxOutputTokens: 0,
+  timeoutSeconds: 300,
+  quotaTimezone: 'America/Los_Angeles',
+  createdAt: '2026-10-15T00:00:00Z',
+  updatedAt: '2026-10-15T00:00:00Z',
+  status: {
+    ...status,
+    state: 'exhausted',
+    reason: 'daily limit of 250 requests reached',
+    availableAt: '2099-01-01T00:00:00Z',
+    today: { ...status.today, requests: 250, inputTokens: 900000, outputTokens: 40000 },
+  },
+};
+
+const uiProvider = {
+  ...helmProvider,
+  id: 2,
+  name: 'local',
+  source: 'ui',
+  position: 1,
+  baseUrl: 'http://ollama:11434/v1/',
+  model: 'qwen3:8b',
+  hasApiKey: false,
+  apiKeyEnv: undefined,
+  limits: { rpm: 0, tpm: 0, rpd: 0, tpd: 0 },
+  quotaTimezone: 'UTC',
+  status: { ...status, lastError: 'HTTP 503: overloaded', lastErrorAt: '2026-10-15T10:00:00Z' },
+};
 
 describe('App', () => {
   it('redirects to the library and shows the empty state', async () => {
@@ -274,6 +330,121 @@ describe('App', () => {
     expect(await screen.findByText('postgres')).toBeInTheDocument();
     expect(screen.getByText('unreachable')).toBeInTheDocument();
     expect(screen.getByText('connection refused')).toBeInTheDocument();
+  });
+
+  it('shows LLM providers with their quotas', async () => {
+    stubApi({ '/api/llm/providers': [helmProvider, uiProvider] });
+    renderAt('/settings');
+    const helm = await screen.findByTestId('provider-gemini');
+    expect(within(helm).getByText('quota exhausted')).toBeInTheDocument();
+    expect(within(helm).getByText('Helm values')).toBeInTheDocument();
+    expect(within(helm).getByText(/daily limit of 250 requests reached/)).toBeInTheDocument();
+    expect(within(helm).getByText('250 / 250')).toBeInTheDocument();
+    expect(within(helm).queryByRole('button', { name: /Edit/ })).not.toBeInTheDocument();
+    expect(within(helm).getByRole('switch', { name: 'Enabled' })).toBeDisabled();
+
+    const local = screen.getByTestId('provider-local');
+    expect(within(local).getByText('ready')).toBeInTheDocument();
+    expect(within(local).getAllByText('no limit')).toHaveLength(4);
+    expect(within(local).getByText(/Last error: HTTP 503/)).toBeInTheDocument();
+    expect(within(local).getByRole('button', { name: 'Move local up' })).toBeDisabled();
+    expect(screen.getByText(/Book text is sent to these providers/)).toBeInTheDocument();
+  });
+
+  it('tests a provider', async () => {
+    stubApi({
+      '/api/llm/providers': [uiProvider],
+      'POST /api/llm/providers/2/test': {
+        ok: true,
+        message: 'structured output works',
+        model: 'qwen3:8b',
+        latencyMs: 1234,
+        inputTokens: 80,
+        outputTokens: 12,
+      },
+    });
+    renderAt('/settings');
+    fireEvent.click(await screen.findByRole('button', { name: 'Test' }));
+    expect(await screen.findByText('Test passed')).toBeInTheDocument();
+    expect(screen.getByText('structured output works')).toBeInTheDocument();
+    expect(screen.getByText(/1,234 ms/)).toBeInTheDocument();
+  });
+
+  it('adds a provider from a preset', async () => {
+    const fetch = stubApi({
+      'GET /api/llm/providers': [],
+      'POST /api/llm/providers': { ...uiProvider, id: 3, name: 'groq' },
+    });
+    renderAt('/settings');
+    expect(await screen.findByText(/No providers yet/)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]!);
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText(/^Base URL/), {
+      target: { value: 'https://api.groq.com/openai/v1/' },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: 'groq' } });
+    fireEvent.change(within(dialog).getByLabelText(/^Model/), { target: { value: 'llama-x' } });
+    fireEvent.change(within(dialog).getByLabelText(/^API key/), { target: { value: 'gsk_1' } });
+    fireEvent.change(within(dialog).getByLabelText('Requests / day'), {
+      target: { value: '1000' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add provider' }));
+
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'POST')).toBe(
+        true,
+      ),
+    );
+    const post = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'POST')!;
+    const body = (await (post[0] as Request).json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      name: 'groq',
+      baseUrl: 'https://api.groq.com/openai/v1/',
+      model: 'llama-x',
+      apiKey: 'gsk_1',
+      structuredOutput: 'json_schema',
+      limits: { rpm: 0, tpm: 0, rpd: 1000, tpd: 0 },
+    });
+  });
+
+  it('asks for the key again when the base URL changes', async () => {
+    stubApi({ '/api/llm/providers': [{ ...uiProvider, hasApiKey: true }] });
+    renderAt('/settings');
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit local' }));
+    const dialog = await screen.findByRole('dialog');
+    const save = within(dialog).getByRole('button', { name: 'Save' });
+    expect(save).toBeEnabled();
+    fireEvent.change(within(dialog).getByLabelText(/^Base URL/), {
+      target: { value: 'http://elsewhere:11434/v1/' },
+    });
+    expect(within(dialog).getByText(/Enter the key again/)).toBeInTheDocument();
+    expect(save).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText(/^API key/), { target: { value: 'new' } });
+    expect(save).toBeEnabled();
+  });
+
+  it('shows when a deferred job runs again', async () => {
+    stubApi({
+      '/api/jobs': {
+        items: [
+          {
+            id: 8,
+            type: 'analyze_batch',
+            status: 'queued',
+            attempts: 0,
+            maxAttempts: 3,
+            progress: 0,
+            error: 'all LLM providers are busy',
+            notBefore: '2099-01-01T00:00:00Z',
+            createdAt: '2026-10-15T00:00:00Z',
+            updatedAt: '2026-10-15T00:00:00Z',
+          },
+        ],
+        total: 1,
+      },
+    });
+    renderAt('/jobs');
+    expect(await screen.findByText(/waits until/)).toBeInTheDocument();
   });
 
   it('shows API errors', async () => {

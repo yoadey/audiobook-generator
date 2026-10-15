@@ -179,3 +179,67 @@ type ListenProgress struct {
 	PositionMs int64 `gorm:"not null;default:0"`
 	UpdatedAt  time.Time
 }
+
+// Structured-output modes of an LLM provider.
+const (
+	// StructuredJSONSchema sends the JSON schema as response_format.
+	StructuredJSONSchema = "json_schema"
+	// StructuredJSONObject asks for any JSON object; the schema goes into
+	// the prompt.
+	StructuredJSONObject = "json_object"
+	// StructuredPrompt sends no response_format at all.
+	StructuredPrompt = "prompt"
+)
+
+// Sources of an LLM provider definition.
+const (
+	ProviderSourceUI     = "ui"
+	ProviderSourceConfig = "config"
+)
+
+// LLMProvider is an OpenAI-compatible chat completions endpoint. Providers
+// are tried in Position order; limits of 0 mean "no limit".
+type LLMProvider struct {
+	ID       int64  `gorm:"primaryKey"`
+	Name     string `gorm:"not null;uniqueIndex"`
+	Source   string `gorm:"not null;default:'ui'"`
+	Position int    `gorm:"not null;default:0"`
+	// No GORM default here: it would turn an explicit false into true on
+	// insert (the column default lives in the migration).
+	Enabled bool   `gorm:"not null"`
+	BaseURL string `gorm:"not null"`
+	Model   string `gorm:"not null"`
+	// APIKey is stored for providers created in the UI; providers from the
+	// Helm values name an environment variable instead (APIKeyEnv).
+	APIKey           string `gorm:"not null;default:''"`
+	APIKeyEnv        string `gorm:"not null;default:''"`
+	StructuredOutput string `gorm:"not null;default:'json_schema'"`
+	// ExtraParams is a JSON object merged into every request body
+	// (e.g. {"reasoning_effort": "low"}).
+	ExtraParams     string `gorm:"not null;default:''"`
+	RPM             int    `gorm:"not null;default:0"`
+	TPM             int    `gorm:"not null;default:0"`
+	RPD             int    `gorm:"not null;default:0"`
+	TPD             int    `gorm:"not null;default:0"`
+	MaxOutputTokens int    `gorm:"not null;default:0"`
+	TimeoutSeconds  int    `gorm:"not null;default:300"`
+	// QuotaTimezone is where the provider's daily quota resets at midnight.
+	QuotaTimezone string `gorm:"not null;default:'UTC'"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// LLMUsage counts the requests and tokens of a provider on one day (in
+// the provider's quota time zone).
+type LLMUsage struct {
+	ID           int64  `gorm:"primaryKey"`
+	ProviderID   int64  `gorm:"not null;uniqueIndex:idx_llm_usages_provider_day,priority:1"`
+	Day          string `gorm:"not null;uniqueIndex:idx_llm_usages_provider_day,priority:2"` // YYYY-MM-DD
+	Requests     int64  `gorm:"not null;default:0"`
+	InputTokens  int64  `gorm:"not null;default:0"`
+	OutputTokens int64  `gorm:"not null;default:0"`
+	// Errors counts failed requests, RateLimited the 429 answers among them.
+	Errors      int64 `gorm:"not null;default:0"`
+	RateLimited int64 `gorm:"not null;default:0"`
+	UpdatedAt   time.Time
+}

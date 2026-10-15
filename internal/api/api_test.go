@@ -22,6 +22,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/epub/epubtest"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/llm"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/store/storetest"
@@ -106,7 +107,7 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	mux := http.NewServeMux()
 	api.NewServer(api.Options{
 		Store: s, TTS: fakeTTS{}, Jobs: runner, Scheduler: scheduler, DefaultVoice: "af_heart",
-		DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
+		LLM: llm.NewPool(s, nil, log), DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
 	}).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(func() {

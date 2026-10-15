@@ -13,6 +13,7 @@ import { Layout } from './routes/Layout';
 import { LibraryPage } from './routes/LibraryPage';
 import { ListenPage } from './routes/ListenPage';
 import { NotFound } from './routes/NotFound';
+import { SettingsPage } from './routes/SettingsPage';
 import { SystemPage } from './routes/SystemPage';
 
 const rootRoute = createRootRoute({
@@ -69,11 +70,18 @@ const systemRoute = createRoute({
   component: SystemPage,
 });
 
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   libraryRoute,
   bookRoute.addChildren([bookIndexRoute, chapterRoute, listenRoute]),
   jobsRoute,
+  settingsRoute,
   systemRoute,
 ]);
 

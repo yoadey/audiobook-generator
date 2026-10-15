@@ -341,6 +341,83 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/llm/providers': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** LLM providers in the order they are tried, with quota usage */
+    get: operations['listLLMProviders'];
+    put?: never;
+    /** Add an LLM provider */
+    post: operations['createLLMProvider'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/llm/providers/{providerId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        providerId: components['parameters']['ProviderId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Remove an LLM provider and its usage history */
+    delete: operations['deleteLLMProvider'];
+    options?: never;
+    head?: never;
+    /** Change an LLM provider (providers from the Helm values are read-only) */
+    patch: operations['updateLLMProvider'];
+    trace?: never;
+  };
+  '/llm/providers/{providerId}/test': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        providerId: components['parameters']['ProviderId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Send a small structured-output request to the provider and check the answer
+     * @description Counts against the provider's limits like any other request.
+     */
+    post: operations['testLLMProvider'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/llm/models': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Models offered by an OpenAI-compatible server (GET /models) */
+    post: operations['listLLMModels'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -506,6 +583,11 @@ export interface components {
       createdAt: string;
       /** Format: date-time */
       updatedAt: string;
+      /**
+       * Format: date-time
+       * @description Queued jobs do not start before this time (retry backoff, exhausted LLM quota)
+       */
+      notBefore?: string;
       /** Format: date-time */
       startedAt?: string;
       /** Format: date-time */
@@ -555,6 +637,131 @@ export interface components {
       speed?: number;
       text?: string;
     };
+    /** @description Provider limits; 0 means no limit. Daily limits reset at midnight in quotaTimezone. */
+    LLMLimits: {
+      /** @description Requests per minute */
+      rpm?: number;
+      /** @description Tokens per minute */
+      tpm?: number;
+      /** @description Requests per day */
+      rpd?: number;
+      /** @description Tokens per day */
+      tpd?: number;
+    };
+    /**
+     * @description json_schema sends the schema as response_format; json_object asks for any JSON object and puts the schema into the prompt; prompt only puts the schema into the prompt. Answers are validated in every mode.
+     * @enum {string}
+     */
+    LLMStructuredOutput: 'json_schema' | 'json_object' | 'prompt';
+    /** @enum {string} */
+    LLMProviderState: 'ready' | 'waiting' | 'exhausted' | 'disabled' | 'no_key';
+    LLMUsageDay: {
+      /** Format: date */
+      day: string;
+      /** Format: int64 */
+      requests: number;
+      /** Format: int64 */
+      inputTokens: number;
+      /** Format: int64 */
+      outputTokens: number;
+      /** Format: int64 */
+      errors: number;
+      /** Format: int64 */
+      rateLimited: number;
+    };
+    LLMProviderStatus: {
+      state: components['schemas']['LLMProviderState'];
+      /** @description Why the provider is not ready */
+      reason?: string;
+      /** Format: date-time */
+      availableAt?: string;
+      today: components['schemas']['LLMUsageDay'];
+      minuteRequests: number;
+      minuteTokens: number;
+      /** Format: date-time */
+      quotaResetAt: string;
+      lastError?: string;
+      /** Format: date-time */
+      lastErrorAt?: string;
+    };
+    LLMProvider: {
+      /** Format: int64 */
+      id: number;
+      name: string;
+      /**
+       * @description config providers come from the Helm values and are read-only
+       * @enum {string}
+       */
+      source: 'ui' | 'config';
+      position: number;
+      enabled: boolean;
+      baseUrl: string;
+      model: string;
+      /** @description The key itself is never returned */
+      hasApiKey: boolean;
+      /** @description Environment variable holding the key (config providers) */
+      apiKeyEnv?: string;
+      structuredOutput: components['schemas']['LLMStructuredOutput'];
+      /** @description JSON object merged into every request body */
+      extraParams?: string;
+      limits: components['schemas']['LLMLimits'];
+      maxOutputTokens: number;
+      timeoutSeconds: number;
+      quotaTimezone: string;
+      status: components['schemas']['LLMProviderStatus'];
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    LLMProviderInput: {
+      name: string;
+      /** @example https://generativelanguage.googleapis.com/v1beta/openai/ */
+      baseUrl: string;
+      model: string;
+      apiKey?: string;
+      enabled?: boolean;
+      /** @description Defaults to after the last provider */
+      position?: number;
+      structuredOutput?: components['schemas']['LLMStructuredOutput'];
+      extraParams?: string;
+      limits?: components['schemas']['LLMLimits'];
+      maxOutputTokens?: number;
+      timeoutSeconds?: number;
+      quotaTimezone?: string;
+    };
+    /** @description Only the given fields change; an empty apiKey removes the key. */
+    LLMProviderUpdate: {
+      name?: string;
+      baseUrl?: string;
+      model?: string;
+      apiKey?: string;
+      enabled?: boolean;
+      position?: number;
+      structuredOutput?: components['schemas']['LLMStructuredOutput'];
+      extraParams?: string;
+      limits?: components['schemas']['LLMLimits'];
+      maxOutputTokens?: number;
+      timeoutSeconds?: number;
+      quotaTimezone?: string;
+    };
+    LLMTestResult: {
+      ok: boolean;
+      message: string;
+      /** @description Model that answered, as reported by the provider */
+      model?: string;
+      /** Format: int64 */
+      latencyMs?: number;
+      inputTokens?: number;
+      outputTokens?: number;
+    };
+    /** @description Either an existing provider (its stored key is used unless apiKey is given) or a base URL for a provider that is not saved yet. */
+    LLMModelsRequest: {
+      /** Format: int64 */
+      providerId?: number;
+      baseUrl?: string;
+      apiKey?: string;
+    };
   };
   responses: {
     /** @description Error */
@@ -571,6 +778,7 @@ export interface components {
     BookId: number;
     ChapterId: number;
     JobId: number;
+    ProviderId: number;
     Offset: number;
     Limit: number;
   };
@@ -1168,6 +1376,159 @@ export interface operations {
       };
       404: components['responses']['Error'];
       409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listLLMProviders: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Providers */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LLMProvider'][];
+        };
+      };
+      default: components['responses']['Error'];
+    };
+  };
+  createLLMProvider: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LLMProviderInput'];
+      };
+    };
+    responses: {
+      /** @description The provider */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LLMProvider'];
+        };
+      };
+      400: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  deleteLLMProvider: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        providerId: components['parameters']['ProviderId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  updateLLMProvider: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        providerId: components['parameters']['ProviderId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LLMProviderUpdate'];
+      };
+    };
+    responses: {
+      /** @description The provider */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LLMProvider'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  testLLMProvider: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        providerId: components['parameters']['ProviderId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Test outcome (also when the provider failed) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LLMTestResult'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listLLMModels: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LLMModelsRequest'];
+      };
+    };
+    responses: {
+      /** @description Model IDs */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': string[];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      502: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };
