@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -374,5 +375,93 @@ func TestPauseAndRestart(t *testing.T) {
 		importing := &store.Book{Title: "x", Status: store.BookImporting}
 		require.NoError(t, s.CreateBook(ctx, importing))
 		require.ErrorIs(t, a.Start(ctx, importing, false), store.ErrInvalid)
+	})
+}
+
+func TestAnalysisSplitsBatchesRejectedAsTooLong(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, _ := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		require.NoError(t, a.Start(ctx, b, false))
+		srv.Enqueue(
+			llmtest.Reply{Status: 400, Body: `{"error":{"message":"context_length_exceeded"}}`},
+			answer(t, nil), answer(t, nil),
+		)
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+		st, err := s.AnalysisStats(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 2, st.Total)
+		assert.Equal(t, 2, st.Done)
+	})
+}
+
+func TestResumeWhileTheJobFinishesItsBatch(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, _ := setup(t, s)
+		a, _ := newAnalyzer(t, s)
+		require.NoError(t, a.Start(ctx, b, false))
+		// The job is running its batch when the user pauses …
+		_, err := s.ClaimJob(ctx, analysis.Queue, time.Now().UTC())
+		require.NoError(t, err)
+		b, err = s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		require.NoError(t, a.Pause(ctx, b))
+		b, err = s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AnalysisPaused, b.AnalysisStatus)
+		busy, err := a.Busy(ctx, b)
+		require.NoError(t, err)
+		assert.True(t, busy, "the running batch still writes")
+
+		// … and resumes before it finished: the job just carries on.
+		require.NoError(t, a.Start(ctx, b, false))
+		b, err = s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AnalysisQueued, b.AnalysisStatus)
+		assert.Len(t, a.Jobs.(*enqueuer).jobs, 1, "no second job")
+	})
+}
+
+func TestPauseStopsTheDuplicateCheck(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, _ := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		a.MergeGroup = 1
+		require.NoError(t, a.Start(ctx, b, false))
+		merges := 0
+		srv.Respond = func(r llmtest.Request) llmtest.Reply {
+			if strings.Contains(userMessage(r), "Pairs (") {
+				merges++
+				// The user pauses while the first group is asked.
+				require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"AnalysisStatus": store.AnalysisPaused}))
+				return llmtest.Reply{Content: `{"decisions": [{"pair": "p1", "same": false}]}`}
+			}
+			return answer(t, []char{
+				{Name: "Anna", Gender: "female", Importance: 3, Chapters: []int{1}},
+				{Name: "Anna Smith", Gender: "female", Importance: 2, Chapters: []int{2}},
+				{Name: "Tom", Gender: "male", Importance: 3, Chapters: []int{1}},
+				{Name: "Tom Baker", Gender: "male", Importance: 2, Chapters: []int{2}},
+			})
+		}
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+		assert.Equal(t, 1, merges, "no further merge requests after the pause")
+		got, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AnalysisPaused, got.AnalysisStatus)
+
+		// Resuming asks only about the pair left over.
+		require.NoError(t, a.Start(ctx, got, false))
+		srv.Respond = func(llmtest.Request) llmtest.Reply {
+			merges++
+			return llmtest.Reply{Content: `{"decisions": [{"pair": "p1", "same": false}]}`}
+		}
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+		assert.Equal(t, 2, merges)
+		got, err = s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AnalysisDone, got.AnalysisStatus)
 	})
 }

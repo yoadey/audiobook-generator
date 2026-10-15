@@ -119,10 +119,16 @@ func (b *bible) match(name string, aliases []string) int64 {
 // or alias occur in it), most important first, at most limit.
 func (b *bible) relevant(text string, limit int) []*store.Character {
 	words := map[string]bool{}
-	for _, w := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+	lower := strings.NewReplacer("’", "'", "‘", "'").Replace(strings.ToLower(text))
+	for _, w := range strings.FieldsFunc(lower, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\'' && r != '-'
 	}) {
+		w = strings.Trim(w, "'-")
 		words[w] = true
+		// "Erin's" mentions Erin.
+		if base, ok := strings.CutSuffix(w, "'s"); ok {
+			words[base] = true
+		}
 	}
 	var out []*store.Character
 	for id, norms := range b.names {

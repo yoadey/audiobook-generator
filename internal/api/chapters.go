@@ -223,10 +223,10 @@ func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithN
 			}
 		}
 	}
-	if busy, err := s.analysisBusy(ctx, req.ChapterId); err != nil {
+	if msg, err := s.chapterEditBlocked(ctx, req.ChapterId); err != nil {
 		return nil, err
-	} else if busy {
-		return MergeChapterWithNext409JSONResponse{Message: analysisBusyMsg}, nil
+	} else if msg != "" {
+		return MergeChapterWithNext409JSONResponse{Message: msg}, nil
 	}
 	c, err := s.Store.MergeChapterWithNext(ctx, req.ChapterId)
 	switch {
@@ -255,10 +255,10 @@ func (s *Server) SplitChapter(ctx context.Context, req SplitChapterRequestObject
 	if title == "" {
 		return SplitChapter400JSONResponse{ErrorJSONResponse(errMsg("title must not be empty"))}, nil
 	}
-	if busy, err := s.analysisBusy(ctx, req.ChapterId); err != nil {
+	if msg, err := s.chapterEditBlocked(ctx, req.ChapterId); err != nil {
 		return nil, err
-	} else if busy {
-		return SplitChapter409JSONResponse{Message: analysisBusyMsg}, nil
+	} else if msg != "" {
+		return SplitChapter409JSONResponse{Message: msg}, nil
 	}
 	c, err := s.Store.SplitChapter(ctx, req.ChapterId, req.Body.ParagraphId, title)
 	switch {

@@ -96,13 +96,38 @@ func (a *Analyzer) mergeGroupSize() int {
 // ErrBusy is returned for changes while an analysis is queued or running.
 var ErrBusy = errors.New("the character analysis of this book is in progress")
 
-// Active reports whether an analysis is queued or running.
+// Active reports whether an analysis is queued or running by its status.
 func Active(b *store.Book) bool {
 	switch b.AnalysisStatus {
 	case store.AnalysisQueued, store.AnalysisRunning, store.AnalysisMerging:
 		return true
 	}
 	return false
+}
+
+// Busy reports whether a book's characters and chapters must not change:
+// the analysis is active, or its job is still running (a paused analysis
+// finishes its current batch first).
+func (a *Analyzer) Busy(ctx context.Context, b *store.Book) (bool, error) {
+	if Active(b) {
+		return true, nil
+	}
+	j, err := a.Store.PendingBookJob(ctx, JobType, b.ID)
+	if err != nil {
+		return false, err
+	}
+	return j != nil && j.Status == store.JobRunning, nil
+}
+
+// Unfinished reports whether a started analysis still has batches to do:
+// chapters must not be merged or split then, the pending batches refer to
+// them.
+func (a *Analyzer) Unfinished(ctx context.Context, bookID int64) (bool, error) {
+	st, err := a.Store.AnalysisStats(ctx, bookID)
+	if err != nil {
+		return false, err
+	}
+	return st.Done < st.Total, nil
 }
 
 // Start queues the analysis of a book, or resumes it. With restart, all
@@ -119,7 +144,14 @@ func (a *Analyzer) Start(ctx context.Context, b *store.Book, restart bool) error
 		if restart {
 			return ErrBusy
 		}
-		return nil // already queued or running
+		// A job is still there (e.g. finishing its batch after a pause):
+		// let it carry on instead of stopping.
+		if !Active(b) {
+			return a.Store.UpdateBook(ctx, b.ID, map[string]any{
+				"AnalysisStatus": store.AnalysisQueued, "AnalysisError": "",
+			})
+		}
+		return nil
 	}
 	if restart {
 		if err := a.Store.ResetAnalysis(ctx, b.ID); err != nil {
@@ -254,6 +286,9 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 		}
 	}
 
+	if paused, err := a.paused(ctx, bookID); err != nil || paused {
+		return err
+	}
 	if err := a.Store.UpdateBook(ctx, bookID, map[string]any{"AnalysisStatus": store.AnalysisMerging}); err != nil {
 		return err
 	}
@@ -321,9 +356,13 @@ func (a *Analyzer) analyzeBatch(ctx context.Context, bookID int64, batch *store.
 
 	var res batchResult
 	out, err := a.LLM.CompleteJSON(ctx, req, &res)
-	var tooLarge *llm.TooLargeError
-	var invalid *llm.InvalidOutputError
-	if errors.As(err, &tooLarge) || (errors.As(err, &invalid) && invalid.Truncated) {
+	var (
+		tooLarge *llm.TooLargeError
+		invalid  *llm.InvalidOutputError
+		rejected *llm.RejectedError
+	)
+	if errors.As(err, &tooLarge) || (errors.As(err, &invalid) && invalid.Truncated) ||
+		(errors.As(err, &rejected) && rejected.TooLong()) {
 		first, second, ok, herr := halves(bookID, ps, parts)
 		if herr != nil {
 			return herr

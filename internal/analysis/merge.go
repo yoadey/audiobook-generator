@@ -235,14 +235,18 @@ func (a *Analyzer) mergeDuplicates(ctx context.Context, bookID int64, progress f
 		}
 	}
 
+	isDistinct := func(x, y int64) bool { return distinct[[2]int64{min(x, y), max(x, y)}] }
 	group := a.mergeGroupSize()
 	for start := 0; start < len(pairs); start += group {
+		if paused, err := a.paused(ctx, bookID); err != nil || paused {
+			return err
+		}
 		progress(float64(start) / float64(len(pairs)))
 		var ask []candidate
 		var lines []pairLine
 		for _, p := range pairs[start:min(start+group, len(pairs))] {
 			pa, pb := survivor(p.a), survivor(p.b)
-			if pa == pb {
+			if pa == pb || isDistinct(pa, pb) {
 				continue
 			}
 			ask = append(ask, candidate{pa, pb})
@@ -271,13 +275,14 @@ func (a *Analyzer) mergeDuplicates(ctx context.Context, bookID int64, progress f
 			}
 			p := ask[n-1]
 			pa, pb := survivor(p.a), survivor(p.b)
-			if pa == pb {
+			if pa == pb || isDistinct(pa, pb) {
 				continue
 			}
 			if !d.Same {
 				if err := a.Store.MarkDistinct(ctx, bookID, pa, pb); err != nil {
 					return err
 				}
+				distinct[[2]int64{min(pa, pb), max(pa, pb)}] = true
 				continue
 			}
 			// The better-known character survives.
@@ -293,6 +298,15 @@ func (a *Analyzer) mergeDuplicates(ctx context.Context, bookID int64, progress f
 			byID[keep] = c
 			aliasesOf[keep] = append(aliasesOf[keep], aliasesOf[drop]...)
 			merged[drop] = keep
+			// "drop is not X" now holds for keep (as in the store).
+			for k := range distinct {
+				if k[0] == drop || k[1] == drop {
+					other := k[0] + k[1] - drop
+					if other != keep {
+						distinct[[2]int64{min(keep, other), max(keep, other)}] = true
+					}
+				}
+			}
 			a.Log.Info("merged duplicate characters", "book", bookID, "kept", c.Name, "merged", byID[drop].Name)
 		}
 	}

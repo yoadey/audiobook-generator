@@ -4,23 +4,34 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
-const analysisBusyMsg = "the character analysis of this book is running; pause it first"
+const (
+	analysisBusyMsg    = "the character analysis of this book is running; pause it first (and let the current request finish)"
+	analysisPendingMsg = "the character analysis of this book is not finished; chapters can be merged or split before it starts or once it is done (or after a restart)"
+)
 
-// analysisBusy reports whether the analysis of a chapter's book is active
-// (chapters and characters must not change under it).
-func (s *Server) analysisBusy(ctx context.Context, chapterID int64) (bool, error) {
+// chapterEditBlocked explains why a chapter's book must not be
+// restructured now ("" when it may): chapters must not change under a
+// running analysis, nor while planned batches still refer to them.
+func (s *Server) chapterEditBlocked(ctx context.Context, chapterID int64) (string, error) {
 	_, b, err := s.chapterBook(ctx, chapterID)
 	if isNotFound(err) {
-		return false, nil
+		return "", nil
 	} else if err != nil {
-		return false, err
+		return "", err
 	}
-	return analysis.Active(b), nil
+	if busy, err := s.Analyzer.Busy(ctx, b); err != nil || busy {
+		return analysisBusyMsg, err
+	}
+	if unfinished, err := s.Analyzer.Unfinished(ctx, b.ID); err != nil || unfinished {
+		return analysisPendingMsg, err
+	}
+	return "", nil
 }
 
 // addAnalysisProgress fills in the share of analysed batches.
@@ -79,6 +90,13 @@ func (s *Server) toAnalysis(ctx context.Context, b *store.Book) (Analysis, error
 	if j != nil {
 		job := toJob(j)
 		out.Job = &job
+	} else if analysis.Active(b) {
+		// The job stopped (e.g. it saw a pause just before a resume):
+		// report it as paused, so it can be resumed.
+		if err := s.Store.UpdateBook(ctx, b.ID, map[string]any{"AnalysisStatus": store.AnalysisPaused}); err != nil {
+			return Analysis{}, err
+		}
+		out.Status = AnalysisStatusPaused
 	}
 	return out, nil
 }
@@ -144,6 +162,32 @@ func (s *Server) PauseAnalysis(ctx context.Context, req PauseAnalysisRequestObje
 		return nil, err
 	}
 	return PauseAnalysis200JSONResponse(out), nil
+}
+
+// validateCharacterUpdate checks what the OpenAPI schema promises (the
+// server does not validate requests against it).
+func validateCharacterUpdate(u *CharacterUpdate) string {
+	tooLong := func(s *string, n int) bool { return s != nil && utf8.RuneCountInString(*s) > n }
+	switch {
+	case u.Gender != nil && !u.Gender.Valid():
+		return "gender must be female, male or unknown"
+	case u.AgeGroup != nil && !u.AgeGroup.Valid():
+		return "ageGroup must be child, teen, adult, elderly or unknown"
+	case u.Importance != nil && (*u.Importance < 1 || *u.Importance > 5):
+		return "importance must be between 1 and 5"
+	case tooLong(u.Name, 120), tooLong(u.Role, 120), tooLong(u.SpeechStyle, 200), tooLong(u.Description, 1000):
+		return "a field is too long"
+	case u.Aliases != nil && len(*u.Aliases) > 200:
+		return "too many aliases"
+	}
+	if u.Aliases != nil {
+		for _, a := range *u.Aliases {
+			if utf8.RuneCountInString(a) > 120 {
+				return "an alias is too long"
+			}
+		}
+	}
+	return ""
 }
 
 func toCharacter(c *store.Character, aliases []store.CharacterAlias) Character {
@@ -243,16 +287,24 @@ func (s *Server) characterBook(ctx context.Context, id int64) (*store.Character,
 	if err != nil {
 		return nil, false, err
 	}
-	return c, analysis.Active(b), nil
+	busy, err := s.Analyzer.Busy(ctx, b)
+	return c, busy, err
 }
 
 // UpdateCharacter corrects a character's profile or aliases.
 func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequestObject) (UpdateCharacterResponseObject, error) {
-	c, _, err := s.characterBook(ctx, req.CharacterId)
+	c, busy, err := s.characterBook(ctx, req.CharacterId)
 	if isNotFound(err) {
 		return UpdateCharacter404JSONResponse{Message: "character not found"}, nil
 	} else if err != nil {
 		return nil, err
+	}
+	if busy {
+		// A running batch would overwrite the correction with its snapshot.
+		return UpdateCharacter409JSONResponse{Message: analysisBusyMsg}, nil
+	}
+	if msg := validateCharacterUpdate(req.Body); msg != "" {
+		return UpdateCharacter400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 	}
 	u := req.Body
 	fields := map[string]any{"UserEdited": true}
@@ -325,8 +377,13 @@ func (s *Server) MergeCharacters(ctx context.Context, req MergeCharactersRequest
 	} else if err != nil {
 		return nil, err
 	}
-	if analysis.Active(b) {
+	if busy, err := s.Analyzer.Busy(ctx, b); err != nil {
+		return nil, err
+	} else if busy {
 		return MergeCharacters409JSONResponse{Message: analysisBusyMsg}, nil
+	}
+	if len(req.Body.SourceIds) == 0 || len(req.Body.SourceIds) > 100 {
+		return MergeCharacters400JSONResponse{ErrorJSONResponse(errMsg("sourceIds needs 1 to 100 characters"))}, nil
 	}
 	target, err := s.Store.GetCharacter(ctx, req.Body.TargetId)
 	if isNotFound(err) || (err == nil && target.BookID != b.ID) {
@@ -364,6 +421,9 @@ func (s *Server) SplitCharacter(ctx context.Context, req SplitCharacterRequestOb
 	var aliases []string
 	if req.Body.Aliases != nil {
 		aliases = *req.Body.Aliases
+	}
+	if utf8.RuneCountInString(req.Body.Name) > 120 || len(aliases) > 200 {
+		return SplitCharacter400JSONResponse{ErrorJSONResponse(errMsg("name or aliases too long"))}, nil
 	}
 	created, err := s.Store.SplitCharacter(ctx, c.ID, req.Body.Name, aliases)
 	if errors.Is(err, store.ErrInvalid) {

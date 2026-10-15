@@ -213,9 +213,14 @@ As implemented in M4 (`internal/analysis`):
   Bennet"). Generic words ("Mom", "the guard") never match.
 - Per chapter: narration (first/third person, mixed) and point-of-view
   character.
-- While an analysis is queued or running, chapters cannot be merged or
-  split and characters cannot be merged, split or deleted (409); it can be
-  paused, resumed or restarted (restart discards all results).
+- While an analysis is queued or running (including a paused one whose
+  job still finishes its current request), characters cannot be edited,
+  merged, split or deleted and the book cannot be deleted (409). Chapters
+  cannot be merged or split while planned batches are pending (they refer
+  to the chapters); before the start and once done, they can. An analysis
+  can be paused, resumed or restarted (restart discards all results).
+- Batches that every provider rejects as too long (400/413 with a context
+  hint) are split like cut-off answers.
 
 ### 3.5 Voice casting
 

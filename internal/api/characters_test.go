@@ -159,3 +159,60 @@ func TestCharacterAnalysisAndEditing(t *testing.T) {
 		assert.EqualValues(t, 0, an.CharacterCount)
 	})
 }
+
+func TestAnalysisGuards(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		c := newAPI(t, s, 10<<20)
+		data, err := epubtest.Sample()
+		require.NoError(t, err)
+		var book api.Book
+		require.Equal(t, http.StatusAccepted, c.upload("sample.epub", data, &book))
+		waitImported(t, c, book.Id)
+		id := itoa(book.Id)
+		ids, err := s.ChapterIDs(ctx, book.Id)
+		require.NoError(t, err)
+		ch := itoa(ids[1])
+
+		// A paused analysis with pending batches: chapters stay as planned.
+		require.NoError(t, s.CreateAnalysisBatches(ctx, []store.AnalysisBatch{
+			{BookID: book.Id, FirstChapterIdx: 1, Parts: `[{"chapterId":` + ch + `}]`, Tokens: 10},
+		}))
+		require.NoError(t, s.UpdateBook(ctx, book.Id, map[string]any{"AnalysisStatus": store.AnalysisPaused}))
+		var e api.Error
+		require.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/chapters/"+ch+"/merge-next", nil, &e))
+		assert.Contains(t, e.Message, "not finished")
+
+		// Validation of corrections.
+		char := &store.Character{BookID: book.Id, Name: "Anna"}
+		require.NoError(t, s.CreateCharacter(ctx, char))
+		cid := itoa(char.ID)
+		for _, body := range []map[string]any{
+			{"gender": "x"}, {"ageGroup": "ancient"}, {"importance": 9}, {"importance": 0},
+			{"description": strings.Repeat("x", 1001)}, {"aliases": []string{strings.Repeat("y", 121)}},
+		} {
+			assert.Equal(t, http.StatusBadRequest, c.json(http.MethodPatch, "/api/characters/"+cid, body, nil), body)
+		}
+		require.Equal(t, http.StatusBadRequest, c.json(http.MethodPost, "/api/books/"+id+"/characters/merge",
+			map[string]any{"targetId": char.ID, "sourceIds": []int64{}}, nil))
+
+		// While a job still runs (e.g. finishing a batch after a pause),
+		// nothing may change under it.
+		j := &store.Job{Type: "analyze_book", Queue: "llm", BookID: &book.Id}
+		require.NoError(t, s.EnqueueJob(ctx, j))
+		_, err = s.ClaimJob(ctx, "llm", time.Now().UTC())
+		require.NoError(t, err)
+		require.Equal(t, http.StatusConflict, c.json(http.MethodPatch, "/api/characters/"+cid,
+			map[string]any{"role": "x"}, nil))
+		require.Equal(t, http.StatusConflict, c.json(http.MethodDelete, "/api/books/"+id, nil, nil))
+		require.NoError(t, s.FinishJob(ctx, j.ID))
+
+		// A status left "running" without a job is reported as paused.
+		require.NoError(t, s.UpdateBook(ctx, book.Id, map[string]any{"AnalysisStatus": store.AnalysisRunning}))
+		var an api.Analysis
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/books/"+id+"/analysis", nil, &an))
+		assert.Equal(t, api.AnalysisStatusPaused, an.Status)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/characters/"+cid,
+			map[string]any{"role": "neighbour", "importance": 2}, nil))
+	})
+}

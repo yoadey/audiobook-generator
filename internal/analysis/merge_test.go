@@ -63,6 +63,14 @@ func TestRelevantCharacters(t *testing.T) {
 		ids = append(ids, c.ID)
 	}
 	assert.Equal(t, []int64{1, 2}, ids, "all words of a name or alias must occur; most important first")
+
+	b.add(&store.Character{ID: 4, Name: "O’Brien", Importance: 1})
+	got = b.relevant("Pisces' hat. O'Brien and Pisces's friend.", 10)
+	ids = nil
+	for _, c := range got {
+		ids = append(ids, c.ID)
+	}
+	assert.Equal(t, []int64{3, 4}, ids, "possessives and curly apostrophes match")
 	assert.Len(t, b.relevant("Erin Solstice met Ryoka Griffin", 1), 1)
 
 	assert.EqualValues(t, 3, b.match("pisces", nil))

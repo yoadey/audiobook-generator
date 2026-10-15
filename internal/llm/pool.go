@@ -86,6 +86,34 @@ func (e *ExhaustedError) Error() string {
 // DeferUntil implements jobs.Deferrer.
 func (e *ExhaustedError) DeferUntil() time.Time { return e.RetryAt }
 
+// RejectedError means every provider refused this request (HTTP 400-class
+// answers), e.g. because it exceeds the model's context.
+type RejectedError struct{ Err error }
+
+func (e *RejectedError) Error() string {
+	return "every LLM provider refused the request: " + e.Err.Error()
+}
+func (e *RejectedError) Unwrap() error { return e.Err }
+
+// TooLong reports whether the refusal looks like a size problem (a
+// smaller request may be accepted).
+func (e *RejectedError) TooLong() bool {
+	var he *HTTPError
+	if !errors.As(e.Err, &he) {
+		return false
+	}
+	if he.Status == http.StatusRequestEntityTooLarge {
+		return true
+	}
+	body := strings.ToLower(he.Body)
+	for _, hint := range []string{"context", "too long", "too large", "maximum", "token", "length"} {
+		if strings.Contains(body, hint) {
+			return true
+		}
+	}
+	return false
+}
+
 // TooLargeError means the request exceeds the limits of every provider;
 // waiting cannot help, a smaller request might.
 type TooLargeError struct{ Reasons []string }
@@ -347,7 +375,7 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 				return nil, &ExhaustedError{RetryAt: now.Add(15 * time.Minute), Reasons: reasons}
 			case lastErr != nil:
 				// Every remaining provider refused this request.
-				return nil, lastErr
+				return nil, &RejectedError{Err: lastErr}
 			default:
 				// The request exceeds every provider's limits: waiting
 				// cannot help.
@@ -430,7 +458,7 @@ func (p *Pool) CompleteJSON(ctx context.Context, req Request, out any) (*Result,
 	}
 	if verr := validate(req.Schema, extractJSON(res2.Content), out); verr != nil {
 		p.Metrics.request(res2.Provider, outcomeInvalid)
-		return nil, &InvalidOutputError{Err: verr, Content: res2.Content}
+		return nil, &InvalidOutputError{Err: verr, Content: res2.Content, Truncated: res2.FinishReason == "length"}
 	}
 	return res2, nil
 }

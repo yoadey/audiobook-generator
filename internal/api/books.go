@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -179,7 +178,9 @@ func (s *Server) DeleteBook(ctx context.Context, req DeleteBookRequestObject) (D
 			Body:       errMsg("the book is still being imported; delete it afterwards"),
 		}, nil
 	}
-	if analysis.Active(b) {
+	if busy, err := s.Analyzer.Busy(ctx, b); err != nil {
+		return nil, err
+	} else if busy {
 		return DeleteBookdefaultJSONResponse{StatusCode: http.StatusConflict, Body: errMsg(analysisBusyMsg)}, nil
 	}
 	chapterIDs, err := s.Store.ChapterIDs(ctx, b.ID)

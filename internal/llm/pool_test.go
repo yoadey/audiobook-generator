@@ -469,3 +469,31 @@ func TestRequestTooLargeForEveryProvider(t *testing.T) {
 		assert.Empty(t, srv.Requests())
 	})
 }
+
+func TestRejectionsAndTruncatedRepairs(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		srv := llmtest.New(t)
+		addProvider(t, s, srv, "p", 0, nil)
+		pool, _ := newPool(s)
+
+		srv.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":{"message":"This model's maximum context length is 8192 tokens"}}`})
+		_, err := pool.Complete(ctx, userReq("long"))
+		var rej *llm.RejectedError
+		require.ErrorAs(t, err, &rej)
+		assert.True(t, rej.TooLong())
+
+		srv.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":"invalid schema"}`})
+		_, err = pool.Complete(ctx, userReq("bad"))
+		require.ErrorAs(t, err, &rej)
+		assert.False(t, rej.TooLong())
+
+		req := userReq("2+3")
+		req.Schema = sumSchema
+		srv.Enqueue(llmtest.Reply{Content: `{"sum": "x"}`}, llmtest.Reply{Content: `{"su`, FinishReason: "length"})
+		_, err = pool.CompleteJSON(ctx, req, nil)
+		var inv *llm.InvalidOutputError
+		require.ErrorAs(t, err, &inv)
+		assert.True(t, inv.Truncated, "a cut-off repair answer counts as truncated")
+	})
+}
