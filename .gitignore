@@ -9,3 +9,6 @@ node_modules/
 coverage/
 .env
 /tmp-data/
+
+# Python bytecode (hack/fake-tts)
+__pycache__/
