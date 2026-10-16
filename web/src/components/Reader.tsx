@@ -117,6 +117,7 @@ export function Reader({
       const timed = new Set(cues.map((c) => c.segmentId));
       const order = (text.data?.paragraphs ?? []).flatMap((p) => p.segments.map((s) => s.id));
       const i = order.indexOf(segmentId);
+      if (i < 0) return segmentId;
       const after = order.slice(i).find((id) => timed.has(id));
       return (
         after ??

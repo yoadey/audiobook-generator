@@ -328,7 +328,7 @@ export interface paths {
     };
     /**
      * When each segment is spoken in the chapter's audio (for reading along)
-     * @description With v (an audioVersion), the timings of that render while it is kept. Renders made before timings were recorded get an estimate (exact is false).
+     * @description With v (an audioVersion), the timings of that render while it is kept, else of the current render (version tells which). A current render made before timings were recorded gets an estimate (exact is false); an older one without timings gets the current render's.
      */
     get: operations['getChapterTimings'];
     put?: never;

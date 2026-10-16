@@ -60,6 +60,26 @@ func RemoveAudio(dataDir, audioPath string) error {
 	return errors.Join(errs...)
 }
 
+// RemoveVersions deletes every version of a chapter's audio and its
+// timings (relative audioPath of any version), e.g. when its text changed.
+func RemoveVersions(dataDir, audioPath string) error {
+	chapter, _, ok := strings.Cut(filepath.Base(audioPath), "-")
+	if !ok {
+		return RemoveAudio(dataDir, audioPath) // audio from before versioned files
+	}
+	files, err := filepath.Glob(filepath.Join(dataDir, filepath.Dir(audioPath), chapter+"-*"))
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, f := range files {
+		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // cues lists when each item is spoken, given the PCM length of each piece
 // in bytes, in the layout writePCM produces.
 func cues(items []item, pieceBytes []int64) []Cue {

@@ -95,6 +95,17 @@ func TestLoadTimings(t *testing.T) {
 		assert.False(t, exact)
 		assert.Equal(t, cur, path)
 
+		// All versions of a chapter go at once (not those of chapter 1x).
+		other := render.AudioPath(b.ID, ch.ID*10+1, 1)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, other), []byte("audio"), 0o600))
+		require.NoError(t, render.RemoveVersions(dir, cur))
+		for _, p := range []string{cur, old, older, render.TimingsPath(old)} {
+			assert.NoFileExists(t, filepath.Join(dir, p))
+		}
+		assert.FileExists(t, filepath.Join(dir, other))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, old), []byte("audio"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, render.TimingsPath(old)), []byte("{}"), 0o600))
+
 		require.NoError(t, render.RemoveAudio(dir, old))
 		assert.NoFileExists(t, filepath.Join(dir, old))
 		assert.NoFileExists(t, filepath.Join(dir, render.TimingsPath(old)))

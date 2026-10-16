@@ -72,7 +72,7 @@ func (s *Server) dropAudio(ctx context.Context, chapterIDs ...int64) {
 		return
 	}
 	for _, p := range paths {
-		if err := render.RemoveAudio(s.DataDir, p); err != nil {
+		if err := render.RemoveVersions(s.DataDir, p); err != nil {
 			s.Log.WarnContext(ctx, "remove audio", "path", p, "err", err)
 		}
 	}
@@ -281,7 +281,7 @@ func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithN
 	}
 	s.dropAudio(ctx, c.ID)
 	if nextAudio != "" {
-		if err := render.RemoveAudio(s.DataDir, nextAudio); err != nil {
+		if err := render.RemoveVersions(s.DataDir, nextAudio); err != nil {
 			s.Log.WarnContext(ctx, "remove audio", "path", nextAudio, "err", err)
 		}
 	}

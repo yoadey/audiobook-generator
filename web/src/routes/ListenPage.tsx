@@ -142,6 +142,8 @@ function Player({
   const [pinned, setPinned] = useState<{ id: number; version?: string } | null>(null);
   const [rate, setRate] = useState(() => stored(RATE_KEY, '1'));
   const [tab, setTab] = useState(() => stored(TAB_KEY, 'text'));
+  // The page's first chapter was left: its stored position is outdated.
+  const [leftStart, setLeftStart] = useState(false);
   // Where reading stopped (the stored position, then the reader's).
   const [readSeg, setReadSeg] = useState<{ chapter: number; segment: number } | null>(
     progress.chapterId === startId && progress.segmentId !== undefined
@@ -217,6 +219,11 @@ function Player({
       resumeAt.current = null;
       resumeSegment.current = null;
       autoplay.current = play;
+      // The new chapter's <audio> reports when it plays; the old one's
+      // pause may never arrive once it is gone.
+      setPlaying(false);
+      setReadSeg(null);
+      setLeftStart(true);
       setPosition(0);
       setDuration(0);
       setCurrentId(c.id);
@@ -295,13 +302,18 @@ function Player({
     (segmentId: number) => {
       const a = audio.current;
       if (a) {
-        // With audio: only to where a segment is spoken (never to 0
-        // while the timings load).
+        if (!a.paused) return;
         const start = cuesRef.current ? startOf(cuesRef.current, segmentId) : undefined;
-        if (!a.paused || start === undefined) return;
+        setReadSeg({ chapter: currentId, segment: segmentId });
+        if (start === undefined) {
+          // No timings (yet): keep the position, and move there once
+          // they are known.
+          resumeSegment.current = segmentId;
+          persist(currentId, a.currentTime * 1000, segmentId);
+          return;
+        }
         a.currentTime = start / 1000;
         setPosition(start);
-        setReadSeg({ chapter: currentId, segment: segmentId });
         persist(currentId, start, segmentId);
       } else {
         resumeSegment.current = segmentId;
@@ -517,7 +529,7 @@ function Player({
               startSegment={
                 readSeg?.chapter === current.id
                   ? readSeg.segment
-                  : current.id === startId && cues && progress.positionMs > 0
+                  : !leftStart && current.id === startId && cues && progress.positionMs > 0
                     ? segmentAt(cues, progress.positionMs)
                     : undefined
               }
