@@ -17,6 +17,7 @@ export type ChapterAttribution = components['schemas']['ChapterAttribution'];
 export type ChapterDetail = components['schemas']['ChapterDetail'];
 export type ChapterUpdate = components['schemas']['ChapterUpdate'];
 export type Character = components['schemas']['Character'];
+export type Download = components['schemas']['Download'];
 export type Emotion = components['schemas']['Emotion'];
 export type QuoteUpdate = components['schemas']['QuoteUpdate'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
@@ -151,6 +152,21 @@ export const lexiconQuery = (bookId: number) =>
     queryFn: () => unwrap(api.GET('/books/{bookId}/lexicon', { params: { path: { bookId } } })),
   });
 
+const downloadActive = (d: Download) => d.status === 'queued' || d.status === 'assembling';
+
+export const downloadsQuery = (bookId: number) =>
+  queryOptions({
+    queryKey: ['books', bookId, 'downloads'],
+    queryFn: () => unwrap(api.GET('/books/{bookId}/downloads', { params: { path: { bookId } } })),
+    // Waiting for chapters takes minutes, assembling seconds to minutes.
+    refetchInterval: (q) =>
+      q.state.data?.some((d) => d.status === 'assembling')
+        ? POLL_MS
+        : q.state.data?.some(downloadActive)
+          ? 10_000
+          : false,
+  });
+
 export const progressQuery = (bookId: number) =>
   queryOptions({
     queryKey: ['books', bookId, 'progress'],
@@ -252,6 +268,8 @@ export const characterQuery = (characterId: number) =>
 export const audioUrl = (chapterId: number, version?: string) =>
   `${baseUrl}/chapters/${chapterId}/audio${version ? `?v=${encodeURIComponent(version)}` : ''}`;
 
+export const downloadFileUrl = (bookId: number, volumeId: number) =>
+  `${baseUrl}/books/${bookId}/downloads/${volumeId}/file`;
 export const coverUrl = (bookId: number) => `${baseUrl}/books/${bookId}/cover`;
 
 // --- Mutations ---------------------------------------------------------------
@@ -348,6 +366,11 @@ export async function previewVoice(
   }
   return URL.createObjectURL(await response.blob());
 }
+
+export const assembleDownload = (bookId: number, volumeId: number) =>
+  unwrap(
+    api.POST('/books/{bookId}/downloads/{volumeId}', { params: { path: { bookId, volumeId } } }),
+  );
 
 export const createLexiconEntry = (bookId: number, body: LexiconEntryInput) =>
   unwrap(api.POST('/books/{bookId}/lexicon', { params: { path: { bookId } }, body }));

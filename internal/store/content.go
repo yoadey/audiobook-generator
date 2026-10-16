@@ -37,6 +37,11 @@ func deleteBookContent(tx *gorm.DB, bookID int64) error {
 	if err := tx.Where("book_id = ?", bookID).Delete(&Chapter{}).Error; err != nil {
 		return err
 	}
+	// Assembled files refer to the volumes (their files go with the book
+	// directory or are replaced by the next assembly).
+	if err := tx.Where("book_id = ?", bookID).Delete(&Download{}).Error; err != nil {
+		return err
+	}
 	return tx.Where("book_id = ?", bookID).Delete(&Volume{}).Error
 }
 

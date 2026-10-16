@@ -455,6 +455,26 @@ var migrations = []*gormigrate.Migration{
 			return tx.Migrator().DropTable("lexicon_entries")
 		},
 	},
+	{
+		ID: "202610220001_downloads",
+		Migrate: func(tx *gorm.DB) error {
+			type Download struct {
+				ID         int64  `gorm:"primaryKey"`
+				BookID     int64  `gorm:"not null;uniqueIndex:idx_downloads_book_volume,priority:1"`
+				VolumeID   int64  `gorm:"not null;default:0;uniqueIndex:idx_downloads_book_volume,priority:2"`
+				Status     string `gorm:"not null"`
+				Error      string `gorm:"not null;default:''"`
+				Path       string `gorm:"not null;default:''"`
+				Size       int64  `gorm:"not null;default:0"`
+				DurationMs int64  `gorm:"not null;default:0"`
+				SourceKey  string `gorm:"not null;default:''"`
+				CreatedAt  time.Time
+				UpdatedAt  time.Time
+			}
+			return tx.Migrator().CreateTable(&Download{})
+		},
+		Rollback: func(tx *gorm.DB) error { return tx.Migrator().DropTable("downloads") },
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

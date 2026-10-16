@@ -524,6 +524,68 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /books/{bookId}/downloads:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listDownloads
+      summary: The book's M4B downloads, one per volume (or one for the whole book without volumes)
+      tags: [audio]
+      responses:
+        "200":
+          description: Downloads in reading order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Download"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/downloads/{volumeId}:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+      - $ref: "#/components/parameters/VolumeId"
+    post:
+      operationId: assembleDownload
+      summary: Build the M4B of a volume (missing chapters are rendered first)
+      tags: [audio]
+      responses:
+        "202":
+          description: Queued (or already pending)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Download"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/downloads/{volumeId}/file:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+      - $ref: "#/components/parameters/VolumeId"
+    get:
+      operationId: getDownloadFile
+      summary: The assembled M4B with chapter markers; supports HTTP range requests
+      tags: [audio]
+      responses:
+        "200":
+          description: Audiobook file
+          content:
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /voices:
     get:
       operationId: listVoices
@@ -1140,6 +1202,15 @@ components:
       schema:
         type: integer
         format: int64
+    VolumeId:
+      name: volumeId
+      in: path
+      required: true
+      description: A volume, or 0 for the whole book
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
     ChapterId:
       name: chapterId
       in: path
@@ -1707,6 +1778,42 @@ components:
         inCatalog:
           type: boolean
           description: Described by the built-in catalogue (otherwise only known to the server)
+    Download:
+      type: object
+      required: [volumeId, title, chapterCount, renderedCount, status, hasFile, outdated]
+      properties:
+        volumeId:
+          type: integer
+          format: int64
+          description: The volume (0 - the whole book)
+        title:
+          type: string
+        chapterCount:
+          type: integer
+          description: Narrated chapters
+        renderedCount:
+          type: integer
+          description: Narrated chapters with current audio
+        status:
+          type: string
+          enum: [none, queued, assembling, ready, failed]
+          description: queued also covers waiting for chapters to be rendered
+        error:
+          type: string
+        hasFile:
+          type: boolean
+          description: An assembled file can be downloaded (also while a new one is built)
+        outdated:
+          type: boolean
+          description: Chapters were rendered again or changed since the file was assembled
+        sizeBytes:
+          type: integer
+          format: int64
+        durationMs:
+          type: integer
+          format: int64
+        job:
+          $ref: "#/components/schemas/Job"
     LexiconEntry:
       type: object
       required: [id, bookId, term, replacement, phonemes]

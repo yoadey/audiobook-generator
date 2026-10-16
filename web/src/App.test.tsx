@@ -914,6 +914,61 @@ describe('App', () => {
     expect(await screen.findByText(/waits until/)).toBeInTheDocument();
   });
 
+  it('builds and offers M4B downloads per volume', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: [], total: 0 },
+      'GET /api/books/1/downloads': [
+        {
+          volumeId: 5,
+          title: 'Book One',
+          chapterCount: 12,
+          renderedCount: 12,
+          status: 'ready',
+          hasFile: true,
+          outdated: false,
+          sizeBytes: 300 << 20,
+          durationMs: 3_725_000,
+        },
+        {
+          volumeId: 6,
+          title: 'Book Two',
+          chapterCount: 10,
+          renderedCount: 4,
+          status: 'none',
+          hasFile: false,
+          outdated: false,
+        },
+      ],
+      'POST /api/books/1/downloads/6': {
+        volumeId: 6,
+        title: 'Book Two',
+        chapterCount: 10,
+        renderedCount: 4,
+        status: 'queued',
+        hasFile: false,
+        outdated: false,
+      },
+    });
+    renderAt('/books/1');
+    const card = await screen.findByTestId('downloads-card');
+    expect(within(card).getByText(/1:02:05 · 300 MB/)).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: 'Download Book One' })).toHaveAttribute(
+      'href',
+      'http://localhost:3000/api/books/1/downloads/5/file',
+    );
+    expect(within(card).queryByRole('link', { name: 'Download Book Two' })).toBeNull();
+    fireEvent.click(within(card).getByRole('button', { name: 'Build' }));
+    await vi.waitFor(() =>
+      expect(
+        fetch.mock.calls.some(
+          ([r]) => typeof r !== 'string' && r.method === 'POST' && r.url.endsWith('/downloads/6'),
+        ),
+      ).toBe(true),
+    );
+  });
+
   it('shows the podcast feed URL', async () => {
     stubApi({
       '/api/books/1': { ...book, feedPath: '/feed/tok/1.xml' },

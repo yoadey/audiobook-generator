@@ -30,10 +30,12 @@ type Scheduler struct {
 // once). Without it every progress save would queue the failing chapter.
 const RetryFailedAfter = 30 * time.Minute
 
-// Job priorities: explicit requests before lookahead.
+// Job priorities: explicit requests before lookahead, both before
+// chapters rendered for a download.
 const (
-	priorityManual    = 200
-	priorityLookahead = 100
+	priorityManual     = 200
+	priorityLookahead  = 100
+	priorityBackground = 10
 )
 
 // current reports whether a chapter's audio matches the book's narrator
@@ -59,6 +61,12 @@ func (s *Scheduler) Stale(b *store.Book, c *store.Chapter) bool {
 // With force, current audio is rendered again.
 func (s *Scheduler) RenderChapter(ctx context.Context, b *store.Book, c *store.Chapter, force bool) (bool, error) {
 	return s.enqueue(ctx, b, c, priorityManual, force)
+}
+
+// RenderBackground queues a chapter that is missing or outdated, behind
+// everything a listener waits for (e.g. for a download).
+func (s *Scheduler) RenderBackground(ctx context.Context, b *store.Book, c *store.Chapter) (bool, error) {
+	return s.enqueue(ctx, b, c, priorityBackground, false)
 }
 
 func (s *Scheduler) enqueue(ctx context.Context, b *store.Book, c *store.Chapter, priority int, force bool) (bool, error) {

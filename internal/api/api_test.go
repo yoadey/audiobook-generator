@@ -21,6 +21,7 @@ import (
 
 	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/api"
+	"github.com/yoadey/audiobook-generator/internal/assemble"
 	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/casting"
@@ -123,6 +124,12 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 			_ = caster.Start(ctx, b, false)
 		}
 	}
+	ffprobe, _ := exec.LookPath("ffprobe")
+	assembler := &assemble.Assembler{
+		Store: s, Jobs: runner, Scheduler: scheduler, FFmpeg: ffmpeg, FFprobe: ffprobe, DataDir: dir,
+		Log: log, WaitInterval: 50 * time.Millisecond,
+	}
+	runner.Handle(assemble.JobType, assembler.Handler())
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = runner.Run(ctx); close(done) }()
@@ -130,7 +137,8 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	mux := http.NewServeMux()
 	api.NewServer(api.Options{
 		Store: s, TTS: fakeTTS{}, Jobs: runner, Scheduler: scheduler, DefaultVoice: "af_heart",
-		LLM: pool, Analyzer: analyzer, Caster: caster, Attributor: attributor, Voices: voices, DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
+		LLM: pool, Analyzer: analyzer, Caster: caster, Attributor: attributor, Assembler: assembler, Voices: voices,
+		DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
 	}).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(func() {

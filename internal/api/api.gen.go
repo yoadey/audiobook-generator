@@ -302,6 +302,33 @@ func (e DatabaseInfoDialect) Valid() bool {
 	}
 }
 
+// Defines values for DownloadStatus.
+const (
+	DownloadStatusAssembling DownloadStatus = "assembling"
+	DownloadStatusFailed     DownloadStatus = "failed"
+	DownloadStatusNone       DownloadStatus = "none"
+	DownloadStatusQueued     DownloadStatus = "queued"
+	DownloadStatusReady      DownloadStatus = "ready"
+)
+
+// Valid indicates whether the value is a known member of the DownloadStatus enum.
+func (e DownloadStatus) Valid() bool {
+	switch e {
+	case DownloadStatusAssembling:
+		return true
+	case DownloadStatusFailed:
+		return true
+	case DownloadStatusNone:
+		return true
+	case DownloadStatusQueued:
+		return true
+	case DownloadStatusReady:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Emotion.
 const (
 	EmotionAfraid     Emotion = "afraid"
@@ -996,6 +1023,35 @@ type DatabaseInfo struct {
 // DatabaseInfoDialect defines model for DatabaseInfo.Dialect.
 type DatabaseInfoDialect string
 
+// Download defines model for Download.
+type Download struct {
+	// ChapterCount Narrated chapters
+	ChapterCount int     `json:"chapterCount"`
+	DurationMs   *int64  `json:"durationMs,omitempty"`
+	Error        *string `json:"error,omitempty"`
+
+	// HasFile An assembled file can be downloaded (also while a new one is built)
+	HasFile bool `json:"hasFile"`
+	Job     *Job `json:"job,omitempty"`
+
+	// Outdated Chapters were rendered again or changed since the file was assembled
+	Outdated bool `json:"outdated"`
+
+	// RenderedCount Narrated chapters with current audio
+	RenderedCount int    `json:"renderedCount"`
+	SizeBytes     *int64 `json:"sizeBytes,omitempty"`
+
+	// Status queued also covers waiting for chapters to be rendered
+	Status DownloadStatus `json:"status"`
+	Title  string         `json:"title"`
+
+	// VolumeId The volume (0 - the whole book)
+	VolumeId int64 `json:"volumeId"`
+}
+
+// DownloadStatus queued also covers waiting for chapters to be rendered
+type DownloadStatus string
+
 // Emotion defines model for Emotion.
 type Emotion string
 
@@ -1377,6 +1433,9 @@ type Offset = int32
 // ProviderId defines model for ProviderId.
 type ProviderId = int64
 
+// VolumeId defines model for VolumeId.
+type VolumeId = int64
+
 // ListBooksParams defines parameters for ListBooks.
 type ListBooksParams struct {
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
@@ -1536,6 +1595,15 @@ type ServerInterface interface {
 	// GetBookCover The book's cover image
 	// (GET /books/{bookId}/cover)
 	GetBookCover(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// ListDownloads The book's M4B downloads, one per volume (or one for the whole book without volumes)
+	// (GET /books/{bookId}/downloads)
+	ListDownloads(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// AssembleDownload Build the M4B of a volume (missing chapters are rendered first)
+	// (POST /books/{bookId}/downloads/{volumeId})
+	AssembleDownload(w http.ResponseWriter, r *http.Request, bookId BookId, volumeId VolumeId)
+	// GetDownloadFile The assembled M4B with chapter markers; supports HTTP range requests
+	// (GET /books/{bookId}/downloads/{volumeId}/file)
+	GetDownloadFile(w http.ResponseWriter, r *http.Request, bookId BookId, volumeId VolumeId)
 	// ListLexicon The book's pronunciation lexicon
 	// (GET /books/{bookId}/lexicon)
 	ListLexicon(w http.ResponseWriter, r *http.Request, bookId BookId)
@@ -2132,6 +2200,102 @@ func (siw *ServerInterfaceWrapper) GetBookCover(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBookCover(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListDownloads operation middleware
+func (siw *ServerInterfaceWrapper) ListDownloads(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDownloads(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AssembleDownload operation middleware
+func (siw *ServerInterfaceWrapper) AssembleDownload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "volumeId" -------------
+	var volumeId VolumeId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "volumeId", r.PathValue("volumeId"), &volumeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volumeId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AssembleDownload(w, r, bookId, volumeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDownloadFile operation middleware
+func (siw *ServerInterfaceWrapper) GetDownloadFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "volumeId" -------------
+	var volumeId VolumeId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "volumeId", r.PathValue("volumeId"), &volumeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volumeId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDownloadFile(w, r, bookId, volumeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3171,6 +3335,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/chapters/{chapterId}/quotes/{quoteRef}", wrapper.UpdateQuote)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/render", wrapper.RenderChapter)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/chapters/{chapterId}/audio", wrapper.GetChapterAudio)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/downloads", wrapper.ListDownloads)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/downloads/{volumeId}", wrapper.AssembleDownload)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/downloads/{volumeId}/file", wrapper.GetDownloadFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/voices", wrapper.ListVoices)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/voices/preview", wrapper.PreviewVoice)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/jobs/{jobId}/retry", wrapper.RetryJob)
@@ -4025,6 +4192,173 @@ type GetBookCoverdefaultJSONResponse struct {
 }
 
 func (response GetBookCoverdefaultJSONResponse) VisitGetBookCoverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDownloadsRequestObject struct {
+	BookId BookId `json:"bookId"`
+}
+
+type ListDownloadsResponseObject interface {
+	VisitListDownloadsResponse(w http.ResponseWriter) error
+}
+
+type ListDownloads200JSONResponse []Download
+
+func (response ListDownloads200JSONResponse) VisitListDownloadsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDownloads404JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListDownloads404JSONResponse) VisitListDownloadsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDownloadsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListDownloadsdefaultJSONResponse) VisitListDownloadsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AssembleDownloadRequestObject struct {
+	BookId   BookId   `json:"bookId"`
+	VolumeId VolumeId `json:"volumeId"`
+}
+
+type AssembleDownloadResponseObject interface {
+	VisitAssembleDownloadResponse(w http.ResponseWriter) error
+}
+
+type AssembleDownload202JSONResponse Download
+
+func (response AssembleDownload202JSONResponse) VisitAssembleDownloadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AssembleDownload404JSONResponse struct{ ErrorJSONResponse }
+
+func (response AssembleDownload404JSONResponse) VisitAssembleDownloadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AssembleDownloaddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response AssembleDownloaddefaultJSONResponse) VisitAssembleDownloadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDownloadFileRequestObject struct {
+	BookId   BookId   `json:"bookId"`
+	VolumeId VolumeId `json:"volumeId"`
+}
+
+type GetDownloadFileResponseObject interface {
+	VisitGetDownloadFileResponse(w http.ResponseWriter) error
+}
+
+type GetDownloadFile200Audiomp4Response struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetDownloadFile200Audiomp4Response) VisitGetDownloadFileResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "audio/mp4")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetDownloadFile404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetDownloadFile404JSONResponse) VisitGetDownloadFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDownloadFiledefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetDownloadFiledefaultJSONResponse) VisitGetDownloadFileResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -6143,6 +6477,15 @@ type StrictServerInterface interface {
 	// GetBookCover The book's cover image
 	// (GET /books/{bookId}/cover)
 	GetBookCover(ctx context.Context, request GetBookCoverRequestObject) (GetBookCoverResponseObject, error)
+	// ListDownloads The book's M4B downloads, one per volume (or one for the whole book without volumes)
+	// (GET /books/{bookId}/downloads)
+	ListDownloads(ctx context.Context, request ListDownloadsRequestObject) (ListDownloadsResponseObject, error)
+	// AssembleDownload Build the M4B of a volume (missing chapters are rendered first)
+	// (POST /books/{bookId}/downloads/{volumeId})
+	AssembleDownload(ctx context.Context, request AssembleDownloadRequestObject) (AssembleDownloadResponseObject, error)
+	// GetDownloadFile The assembled M4B with chapter markers; supports HTTP range requests
+	// (GET /books/{bookId}/downloads/{volumeId}/file)
+	GetDownloadFile(ctx context.Context, request GetDownloadFileRequestObject) (GetDownloadFileResponseObject, error)
 	// ListLexicon The book's pronunciation lexicon
 	// (GET /books/{bookId}/lexicon)
 	ListLexicon(ctx context.Context, request ListLexiconRequestObject) (ListLexiconResponseObject, error)
@@ -6681,6 +7024,86 @@ func (sh *strictHandler) GetBookCover(w http.ResponseWriter, r *http.Request, bo
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetBookCoverResponseObject); ok {
 		if err := validResponse.VisitGetBookCoverResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListDownloads operation middleware
+func (sh *strictHandler) ListDownloads(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request ListDownloadsRequestObject
+
+	request.BookId = bookId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListDownloads(ctx, request.(ListDownloadsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListDownloads")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListDownloadsResponseObject); ok {
+		if err := validResponse.VisitListDownloadsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AssembleDownload operation middleware
+func (sh *strictHandler) AssembleDownload(w http.ResponseWriter, r *http.Request, bookId BookId, volumeId VolumeId) {
+	var request AssembleDownloadRequestObject
+
+	request.BookId = bookId
+	request.VolumeId = volumeId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AssembleDownload(ctx, request.(AssembleDownloadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AssembleDownload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AssembleDownloadResponseObject); ok {
+		if err := validResponse.VisitAssembleDownloadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetDownloadFile operation middleware
+func (sh *strictHandler) GetDownloadFile(w http.ResponseWriter, r *http.Request, bookId BookId, volumeId VolumeId) {
+	var request GetDownloadFileRequestObject
+
+	request.BookId = bookId
+	request.VolumeId = volumeId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDownloadFile(ctx, request.(GetDownloadFileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDownloadFile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDownloadFileResponseObject); ok {
+		if err := validResponse.VisitGetDownloadFileResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

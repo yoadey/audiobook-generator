@@ -63,6 +63,37 @@ type Volume struct {
 	Title  string `gorm:"not null"`
 }
 
+// DownloadStatus is the state of an assembled audiobook file.
+type DownloadStatus string
+
+// Download states.
+const (
+	DownloadQueued     DownloadStatus = "queued" // also: waiting for chapters to be rendered
+	DownloadAssembling DownloadStatus = "assembling"
+	DownloadReady      DownloadStatus = "ready"
+	DownloadFailed     DownloadStatus = "failed"
+)
+
+// Download is an M4B file with chapter markers: one per volume, or one for
+// the whole book (VolumeID 0) when it has no volumes.
+type Download struct {
+	ID       int64          `gorm:"primaryKey"`
+	BookID   int64          `gorm:"not null;uniqueIndex:idx_downloads_book_volume,priority:1"`
+	VolumeID int64          `gorm:"not null;default:0;uniqueIndex:idx_downloads_book_volume,priority:2"`
+	Status   DownloadStatus `gorm:"not null"`
+	Error    string         `gorm:"not null;default:''"`
+	// Path of the finished file (relative to the data dir); a previous file
+	// stays available while a new one is assembled.
+	Path       string `gorm:"not null;default:''"`
+	Size       int64  `gorm:"not null;default:0"`
+	DurationMs int64  `gorm:"not null;default:0"`
+	// SourceKey identifies the chapter audio the file was built from; a
+	// different key means the file is outdated.
+	SourceKey string `gorm:"not null;default:''"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // ChapterStatus is the processing state of a chapter.
 type ChapterStatus string
 

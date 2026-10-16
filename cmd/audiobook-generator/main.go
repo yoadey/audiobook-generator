@@ -18,6 +18,7 @@ import (
 
 	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/api"
+	"github.com/yoadey/audiobook-generator/internal/assemble"
 	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
@@ -124,6 +125,11 @@ func run() error {
 		}
 	}
 	scheduler := &render.Scheduler{Store: st, Jobs: runner, DefaultVoice: cfg.TTS.DefaultVoice}
+	assembler := &assemble.Assembler{
+		Store: st, Jobs: runner, Scheduler: scheduler, FFmpeg: cfg.FFmpeg, FFprobe: cfg.FFprobe,
+		DataDir: cfg.DataDir, Log: log,
+	}
+	runner.Handle(assemble.JobType, assembler.Handler())
 	runnerDone := make(chan struct{})
 	go func() {
 		defer close(runnerDone)
@@ -144,6 +150,7 @@ func run() error {
 				Analyzer:       analyzer,
 				Caster:         caster,
 				Attributor:     attributor,
+				Assembler:      assembler,
 				Voices:         voices,
 				DefaultVoice:   cfg.TTS.DefaultVoice,
 				DataDir:        cfg.DataDir,

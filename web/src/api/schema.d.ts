@@ -317,6 +317,67 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/books/{bookId}/downloads': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** The book's M4B downloads, one per volume (or one for the whole book without volumes) */
+    get: operations['listDownloads'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/downloads/{volumeId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+        /** @description A volume, or 0 for the whole book */
+        volumeId: components['parameters']['VolumeId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Build the M4B of a volume (missing chapters are rendered first) */
+    post: operations['assembleDownload'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/downloads/{volumeId}/file': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+        /** @description A volume, or 0 for the whole book */
+        volumeId: components['parameters']['VolumeId'];
+      };
+      cookie?: never;
+    };
+    /** The assembled M4B with chapter markers; supports HTTP range requests */
+    get: operations['getDownloadFile'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/voices': {
     parameters: {
       query?: never;
@@ -965,6 +1026,33 @@ export interface components {
       /** @description Described by the built-in catalogue (otherwise only known to the server) */
       inCatalog: boolean;
     };
+    Download: {
+      /**
+       * Format: int64
+       * @description The volume (0 - the whole book)
+       */
+      volumeId: number;
+      title: string;
+      /** @description Narrated chapters */
+      chapterCount: number;
+      /** @description Narrated chapters with current audio */
+      renderedCount: number;
+      /**
+       * @description queued also covers waiting for chapters to be rendered
+       * @enum {string}
+       */
+      status: 'none' | 'queued' | 'assembling' | 'ready' | 'failed';
+      error?: string;
+      /** @description An assembled file can be downloaded (also while a new one is built) */
+      hasFile: boolean;
+      /** @description Chapters were rendered again or changed since the file was assembled */
+      outdated: boolean;
+      /** Format: int64 */
+      sizeBytes?: number;
+      /** Format: int64 */
+      durationMs?: number;
+      job?: components['schemas']['Job'];
+    };
     LexiconEntry: {
       /** Format: int64 */
       id: number;
@@ -1309,6 +1397,8 @@ export interface components {
   };
   parameters: {
     BookId: number;
+    /** @description A volume, or 0 for the whole book */
+    VolumeId: number;
     ChapterId: number;
     JobId: number;
     CharacterId: number;
@@ -1865,6 +1955,82 @@ export interface operations {
     requestBody?: never;
     responses: {
       /** @description Audio file */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'audio/mp4': string;
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listDownloads: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Downloads in reading order */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Download'][];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  assembleDownload: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+        /** @description A volume, or 0 for the whole book */
+        volumeId: components['parameters']['VolumeId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Queued (or already pending) */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Download'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getDownloadFile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+        /** @description A volume, or 0 for the whole book */
+        volumeId: components['parameters']['VolumeId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Audiobook file */
       200: {
         headers: {
           [name: string]: unknown;

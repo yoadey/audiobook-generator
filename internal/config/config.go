@@ -35,6 +35,8 @@ type Config struct {
 
 	// FFmpeg is the ffmpeg binary used to encode chapter audio.
 	FFmpeg string `env:"FFMPEG" envDefault:"ffmpeg"`
+	// FFprobe measures chapter files when assembling downloads.
+	FFprobe string `env:"FFPROBE" envDefault:"ffprobe"`
 	// AudioBitrate of the AAC chapter files.
 	AudioBitrate string `env:"AUDIO_BITRATE" envDefault:"64k"`
 
