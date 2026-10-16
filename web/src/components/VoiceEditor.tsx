@@ -83,7 +83,7 @@ export function VoiceEditor({
 }) {
   const voices = useQuery(voicesQuery);
   const quotes = useQuery(quotesQuery(c.id));
-  const preview = usePreview();
+  const preview = usePreview(c.bookId);
   const initialTier: TierChoice = c.tierManual ? c.tier : 'auto';
   const initialParts = normalize(parseRecipe(c.voice) ?? []);
   const [tier, setTier] = useState<TierChoice>(initialTier);

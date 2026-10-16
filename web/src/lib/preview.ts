@@ -11,9 +11,10 @@ const isAbort = (err: unknown) => err instanceof DOMException && err.name === 'A
 /**
  * Plays voice previews one at a time: starting one cancels the previous
  * (also while it is still loading), and object URLs are released when
- * playback ends, is replaced, or the component unmounts.
+ * playback ends, is replaced, or the component unmounts. With bookId, the
+ * book's pronunciation lexicon applies to the text.
  */
-export function usePreview() {
+export function usePreview(bookId?: number) {
   const audio = useRef<HTMLAudioElement | null>(null);
   const url = useRef<string | null>(null);
   const request = useRef<AbortController | null>(null);
@@ -47,7 +48,7 @@ export function usePreview() {
       setLoading(id);
       try {
         const sample = typeof text === 'function' ? await text(ctrl.signal) : text;
-        const u = await previewVoice(voice, speed, sample, ctrl.signal);
+        const u = await previewVoice(voice, speed, sample, ctrl.signal, bookId);
         if (ctrl.signal.aborted) {
           URL.revokeObjectURL(u);
           return;
@@ -68,7 +69,7 @@ export function usePreview() {
         notifyError('Preview failed', err);
       }
     },
-    [stop],
+    [stop, bookId],
   );
 
   return { play, stop, playing, loading };

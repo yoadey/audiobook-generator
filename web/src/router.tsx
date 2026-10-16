@@ -11,6 +11,7 @@ import { ChapterPage } from './routes/ChapterPage';
 import { CharacterPage } from './routes/CharacterPage';
 import { CharactersPage } from './routes/CharactersPage';
 import { JobsPage } from './routes/JobsPage';
+import { LexiconPage } from './routes/LexiconPage';
 import { Layout } from './routes/Layout';
 import { LibraryPage } from './routes/LibraryPage';
 import { ListenPage } from './routes/ListenPage';
@@ -78,6 +79,12 @@ const listenRoute = createRoute({
   component: ListenPage,
 });
 
+const lexiconRoute = createRoute({
+  getParentRoute: () => bookRoute,
+  path: '/lexicon',
+  component: LexiconPage,
+});
+
 const jobsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/jobs',
@@ -110,6 +117,7 @@ const routeTree = rootRoute.addChildren([
     chapterRoute,
     charactersRoute.addChildren([charactersIndexRoute, characterRoute]),
     listenRoute,
+    lexiconRoute,
   ]),
   jobsRoute,
   voicesRoute,

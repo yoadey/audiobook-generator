@@ -22,6 +22,9 @@ export type QuoteUpdate = components['schemas']['QuoteUpdate'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type CharacterUpdate = components['schemas']['CharacterUpdate'];
 export type Job = components['schemas']['Job'];
+export type LexiconEntry = components['schemas']['LexiconEntry'];
+export type LexiconEntryInput = components['schemas']['LexiconEntryInput'];
+export type LexiconEntryUpdate = components['schemas']['LexiconEntryUpdate'];
 export type LLMProvider = components['schemas']['LLMProvider'];
 export type LLMProviderInput = components['schemas']['LLMProviderInput'];
 export type LLMProviderUpdate = components['schemas']['LLMProviderUpdate'];
@@ -140,6 +143,12 @@ export const chapterQuery = (chapterId: number) =>
       }
       return attributionActive(c.attributionStatus) ? 10_000 : false;
     },
+  });
+
+export const lexiconQuery = (bookId: number) =>
+  queryOptions({
+    queryKey: ['books', bookId, 'lexicon'],
+    queryFn: () => unwrap(api.GET('/books/{bookId}/lexicon', { params: { path: { bookId } } })),
   });
 
 export const progressQuery = (bookId: number) =>
@@ -312,17 +321,21 @@ export const retryJob = (jobId: number) =>
 export const cancelJob = (jobId: number) =>
   unwrap(api.POST('/jobs/{jobId}/cancel', { params: { path: { jobId } } }));
 
-/** Synthesizes a sample and returns an object URL for an <audio> element. */
+/**
+ * Synthesizes a sample and returns an object URL for an <audio> element;
+ * with bookId the book's pronunciation lexicon applies to the text.
+ */
 export async function previewVoice(
   voice: string,
   speed: number,
   text?: string,
   signal?: AbortSignal,
+  bookId?: number,
 ): Promise<string> {
   const response = await globalThis.fetch(`${baseUrl}/voices/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ voice, speed, text }),
+    body: JSON.stringify({ voice, speed, text, bookId }),
     signal,
   });
   if (!response.ok) {
@@ -335,6 +348,15 @@ export async function previewVoice(
   }
   return URL.createObjectURL(await response.blob());
 }
+
+export const createLexiconEntry = (bookId: number, body: LexiconEntryInput) =>
+  unwrap(api.POST('/books/{bookId}/lexicon', { params: { path: { bookId } }, body }));
+
+export const updateLexiconEntry = (entryId: number, body: LexiconEntryUpdate) =>
+  unwrap(api.PATCH('/lexicon/{entryId}', { params: { path: { entryId } }, body }));
+
+export const deleteLexiconEntry = (entryId: number) =>
+  unwrap(api.DELETE('/lexicon/{entryId}', { params: { path: { entryId } } }));
 
 export const createLLMProvider = (body: LLMProviderInput) =>
   unwrap(api.POST('/llm/providers', { body }));

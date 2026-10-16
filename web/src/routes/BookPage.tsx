@@ -14,7 +14,13 @@ import {
   Title,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
-import { IconHeadphones, IconSearch, IconTrash, IconWaveSine } from '@tabler/icons-react';
+import {
+  IconHeadphones,
+  IconSearch,
+  IconSpeakerphone,
+  IconTrash,
+  IconWaveSine,
+} from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
@@ -139,6 +145,14 @@ export function BookPage() {
               >
                 Render next 10
               </Button>
+              <ButtonLink
+                variant="default"
+                to="/books/$bookId/lexicon"
+                params={{ bookId: String(bookId) }}
+                leftSection={<IconSpeakerphone size={16} />}
+              >
+                Pronunciation
+              </ButtonLink>
             </>
           )}
           <Button

@@ -126,7 +126,7 @@ export function CharactersPage() {
   const chars = useQuery(
     charactersQuery(bookId, debounced, sort, pageNo, PAGE_SIZE, tier === 'all' ? undefined : tier),
   );
-  const preview = usePreview();
+  const preview = usePreview(bookId);
   const casting = useCastingWatch(bookId);
   // A real quote of the character if one is found, else a standard sentence.
   const sample = (id: number) => async () => {

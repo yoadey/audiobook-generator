@@ -914,6 +914,54 @@ describe('App', () => {
     expect(await screen.findByText(/waits until/)).toBeInTheDocument();
   });
 
+  it('lists, adds and previews pronunciations', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      'GET /api/books/1/lexicon': [
+        { id: 3, bookId: 1, term: 'Ryoka', replacement: 'ɹiˈoʊkə', phonemes: true },
+      ],
+      'POST /api/books/1/lexicon': {
+        id: 4,
+        bookId: 1,
+        term: 'Erin',
+        replacement: 'Air-in',
+        phonemes: false,
+      },
+      'DELETE /api/lexicon/3': {},
+    });
+    renderAt('/books/1/lexicon');
+    expect(await screen.findByText('ɹiˈoʊkə')).toBeInTheDocument();
+    expect(screen.getByText('IPA')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Word or name'), { target: { value: ' Erin ' } });
+    fireEvent.change(screen.getByLabelText('Say instead'), { target: { value: 'Air-in' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'POST')).toBe(
+        true,
+      ),
+    );
+    const post = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'POST')!;
+    expect(await (post[0] as Request).json()).toEqual({
+      term: 'Erin',
+      replacement: 'Air-in',
+      phonemes: false,
+    });
+
+    // A saved entry is previewed through the book's lexicon.
+    fireEvent.click(screen.getByRole('button', { name: 'Listen to Ryoka' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => String(r).endsWith('/voices/preview'))).toBe(true),
+    );
+    const call = fetch.mock.calls.find(([r]) => String(r).endsWith('/voices/preview'))!;
+    const init = (call as unknown as [string, RequestInit])[1];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      voice: 'af_heart',
+      text: 'Ryoka',
+      bookId: 1,
+    });
+  });
+
   it('shows API errors', async () => {
     stubApi({});
     renderAt('/library');
