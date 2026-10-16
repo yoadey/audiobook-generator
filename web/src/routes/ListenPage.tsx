@@ -12,11 +12,14 @@ import {
   Select,
   Slider,
   Stack,
+  Tabs,
   Text,
   Title,
   UnstyledButton,
 } from '@mantine/core';
 import {
+  IconBook,
+  IconList,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
   IconPlayerSkipBack,
@@ -39,21 +42,33 @@ import {
   progressQuery,
   renderChapter,
   saveProgress,
+  timingsQuery,
 } from '../api/client';
 import { AudioBadge } from '../components/AudioBadge';
 import { AnchorLink } from '../components/links';
+import { Reader } from '../components/Reader';
 import { formatDuration } from '../lib/format';
 import { notifyError } from '../lib/notify';
+import { resumeAt as resumePosition, segmentAt, startOf } from '../lib/reading';
 
 const SAVE_EVERY_MS = 15_000;
 const RATES = ['0.8', '0.9', '1', '1.1', '1.25', '1.5', '1.75', '2'];
 const RATE_KEY = 'abg.playbackRate';
+const TAB_KEY = 'abg.listenTab';
 
-function storedRate(): string {
+function stored(key: string, fallback: string): string {
   try {
-    return localStorage.getItem(RATE_KEY) ?? '1';
+    return localStorage.getItem(key) ?? fallback;
   } catch {
-    return '1';
+    return fallback;
+  }
+}
+
+function store(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage unavailable (private mode): the choice only lasts this visit.
   }
 }
 
@@ -107,6 +122,10 @@ function Player({
   const resumeAt = useRef<number | null>(
     progress.chapterId === startId ? progress.positionMs : null,
   );
+  // Where reading stopped: listening resumes there once the timings are known.
+  const resumeSegment = useRef<number | null>(
+    progress.chapterId === startId ? (progress.segmentId ?? null) : null,
+  );
   const autoplay = useRef(false);
 
   const index = narrated.findIndex((c) => c.id === currentId);
@@ -119,20 +138,47 @@ function Player({
   const [duration, setDuration] = useState(0);
   // The render a playing chapter started with (see the <audio> src).
   const [pinned, setPinned] = useState<{ id: number; version?: string } | null>(null);
-  const [rate, setRate] = useState(storedRate);
+  const [rate, setRate] = useState(() => stored(RATE_KEY, '1'));
+  const [tab, setTab] = useState(() => stored(TAB_KEY, 'text'));
+  // The chapter the page opened at (where reading stopped is known for it).
+  const [opened, setOpened] = useState<number | null>(startId);
   const lastSaved = useRef(0);
 
+  // The render being played (pinned) and when its segments are spoken.
+  const version = pinned?.id === current?.id ? pinned?.version : current?.audioVersion;
+  const timings = useQuery({
+    ...timingsQuery(currentId, version),
+    enabled: ready,
+  });
+  const cues = ready ? timings.data?.cues : undefined;
+  const cuesRef = useRef(cues);
+  useEffect(() => {
+    cuesRef.current = cues;
+  }, [cues]);
+
   const save = useMutation({
-    mutationFn: ({ chapterId, ms }: { chapterId: number; ms: number }) =>
-      saveProgress(bookId, chapterId, ms),
+    mutationFn: ({
+      chapterId,
+      ms,
+      segmentId,
+    }: {
+      chapterId: number;
+      ms: number;
+      segmentId?: number;
+    }) => saveProgress(bookId, chapterId, ms, segmentId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['books', bookId, 'chapters'] }),
   });
+  // Stores the position; the segment comes from the timings of the chapter
+  // playing, or is given (reading without audio).
   const persist = useCallback(
-    (chapterId: number, ms: number) => {
+    (chapterId: number, ms: number, segmentId?: number) => {
       lastSaved.current = Date.now();
-      save.mutate({ chapterId, ms });
+      const seg =
+        segmentId ??
+        (chapterId === currentId && cuesRef.current ? segmentAt(cuesRef.current, ms) : undefined);
+      save.mutate({ chapterId, ms, segmentId: seg });
     },
-    [save],
+    [save, currentId],
   );
 
   const render = useMutation({
@@ -147,7 +193,7 @@ function Player({
   useEffect(() => {
     if (current && savedFor.current !== current.id) {
       savedFor.current = current.id;
-      persist(current.id, resumeAt.current ?? 0);
+      persist(current.id, resumeAt.current ?? 0, resumeSegment.current ?? undefined);
     }
   }, [current, persist]);
 
@@ -158,7 +204,9 @@ function Player({
         persist(current.id, audio.current.currentTime * 1000);
       }
       resumeAt.current = null;
+      resumeSegment.current = null;
       autoplay.current = play;
+      setOpened(null);
       setPosition(0);
       setDuration(0);
       setCurrentId(c.id);
@@ -206,12 +254,50 @@ function Player({
 
   useEffect(() => {
     if (audio.current) audio.current.playbackRate = Number(rate);
-    try {
-      localStorage.setItem(RATE_KEY, rate);
-    } catch {
-      // Storage unavailable (private mode): the rate only lasts this visit.
-    }
+    store(RATE_KEY, rate);
   }, [rate, ready]);
+
+  // Resume where reading stopped once the audio and its timings are there.
+  useEffect(() => {
+    const a = audio.current;
+    if (!cues || !a || !duration || resumeSegment.current === null) return;
+    const ms = resumePosition(cues, a.currentTime * 1000, resumeSegment.current);
+    resumeSegment.current = null;
+    if (ms !== a.currentTime * 1000) {
+      a.currentTime = ms / 1000;
+      setPosition(ms);
+    }
+  }, [cues, duration]);
+
+  // Clicking a passage: listen from there.
+  const seekTo = useCallback(
+    (ms: number) => {
+      const a = audio.current;
+      if (!a || !current) return;
+      a.currentTime = ms / 1000;
+      setPosition(ms);
+      if (a.paused) persist(current.id, ms);
+    },
+    [current, persist],
+  );
+  // Reading while paused moves the listening position along.
+  const readAt = useCallback(
+    (segmentId: number) => {
+      if (!current) return;
+      const a = audio.current;
+      const start = cuesRef.current ? startOf(cuesRef.current, segmentId) : undefined;
+      if (a && start !== undefined) {
+        if (!a.paused) return;
+        a.currentTime = start / 1000;
+        setPosition(start);
+        persist(current.id, start, segmentId);
+      } else {
+        resumeSegment.current = segmentId;
+        persist(current.id, 0, segmentId);
+      }
+    },
+    [current, persist],
+  );
 
   if (!current) {
     return <Alert title="Nothing to play">This book has no narrated chapters.</Alert>;
@@ -388,28 +474,72 @@ function Player({
         </Stack>
       </Card>
 
-      <Card withBorder padding={0}>
-        <ScrollArea h={360}>
-          {narrated.map((c, i) => (
-            <UnstyledButton
-              key={c.id}
-              onClick={() => goTo(c, true)}
-              w="100%"
-              px="md"
-              py={8}
-              bg={c.id === current.id ? 'var(--mantine-color-default-hover)' : undefined}
-              style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
-            >
-              <Group justify="space-between" wrap="nowrap">
-                <Text size="sm" fw={c.id === current.id ? 600 : 400} truncate>
-                  {i + 1}. {c.title}
-                </Text>
-                <AudioBadge chapter={c} />
-              </Group>
-            </UnstyledButton>
-          ))}
-        </ScrollArea>
-      </Card>
+      <Tabs
+        value={tab}
+        onChange={(v) => {
+          if (!v) return;
+          setTab(v);
+          store(TAB_KEY, v);
+        }}
+        keepMounted={false}
+      >
+        <Tabs.List>
+          <Tabs.Tab value="text" leftSection={<IconBook size={16} />}>
+            Read along
+          </Tabs.Tab>
+          <Tabs.Tab value="chapters" leftSection={<IconList size={16} />}>
+            Chapters
+          </Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="text" pt="sm">
+          <Card withBorder padding={0}>
+            <Reader
+              key={current.id}
+              chapter={current}
+              cues={cues}
+              settled={!ready || !timings.isPending}
+              positionMs={position}
+              playing={playing}
+              startSegment={
+                current.id !== opened
+                  ? undefined
+                  : (progress.segmentId ??
+                    (cues && progress.positionMs > 0
+                      ? segmentAt(cues, progress.positionMs)
+                      : undefined))
+              }
+              onSeek={seekTo}
+              onRead={readAt}
+              next={narrated[index + 1]}
+              onNext={() => goTo(narrated[index + 1], playing)}
+            />
+          </Card>
+        </Tabs.Panel>
+        <Tabs.Panel value="chapters" pt="sm">
+          <Card withBorder padding={0}>
+            <ScrollArea h={360}>
+              {narrated.map((c, i) => (
+                <UnstyledButton
+                  key={c.id}
+                  onClick={() => goTo(c, true)}
+                  w="100%"
+                  px="md"
+                  py={8}
+                  bg={c.id === current.id ? 'var(--mantine-color-default-hover)' : undefined}
+                  style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
+                >
+                  <Group justify="space-between" wrap="nowrap">
+                    <Text size="sm" fw={c.id === current.id ? 600 : 400} truncate>
+                      {i + 1}. {c.title}
+                    </Text>
+                    <AudioBadge chapter={c} />
+                  </Group>
+                </UnstyledButton>
+              ))}
+            </ScrollArea>
+          </Card>
+        </Tabs.Panel>
+      </Tabs>
     </Stack>
   );
 }

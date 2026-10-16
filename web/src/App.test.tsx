@@ -341,6 +341,111 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Play' })).toBeEnabled();
   });
 
+  const readText = (id: number, audioStatus: string) => ({
+    ...chapters[0],
+    id,
+    audioStatus,
+    paragraphs: [
+      {
+        id: 200,
+        idx: 0,
+        kind: 'text',
+        text: 'It was late. “Come in,” she said.',
+        segments: [
+          {
+            id: 201,
+            idx: 0,
+            kind: 'narration',
+            quoteRef: 0,
+            text: 'It was late.',
+            confidence: 1,
+            speakerManual: false,
+          },
+          {
+            id: 202,
+            idx: 1,
+            kind: 'quote',
+            quoteRef: 1,
+            text: '“Come in,”',
+            confidence: 1,
+            speakerManual: false,
+          },
+          {
+            id: 203,
+            idx: 2,
+            kind: 'narration',
+            quoteRef: 0,
+            text: 'she said.',
+            confidence: 1,
+            speakerManual: false,
+          },
+        ],
+      },
+    ],
+  });
+  const progressPuts = (fetch: ReturnType<typeof stubApi>) =>
+    fetch.mock.calls
+      .map(([r]) => r)
+      .filter((r): r is Request => typeof r !== 'string' && r.method === 'PUT');
+
+  it('reads along: a click on a passage listens from there', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/chapters': { items: chapters, total: 2 },
+      '/api/chapters/10': readText(10, 'ready'),
+      '/api/chapters/10/timings': {
+        chapterId: 10,
+        version: 'abc',
+        exact: true,
+        cues: [
+          { segmentId: 201, startMs: 300, endMs: 1200 },
+          { segmentId: 202, startMs: 1350, endMs: 2000 },
+          { segmentId: 203, startMs: 2150, endMs: 2900 },
+        ],
+      },
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+    });
+    renderAt('/books/1/listen');
+    expect(await screen.findByRole('tab', { name: 'Read along' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await screen.findByText(/Click a passage to listen from there/);
+    fireEvent.click(await screen.findByText('“Come in,”'));
+    await vi.waitFor(async () => {
+      const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
+      expect(bodies).toContainEqual({ chapterId: 10, positionMs: 1350, segmentId: 202 });
+    });
+  });
+
+  it('keeps the reading position of a chapter without audio', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/chapters': {
+        items: [{ ...chapters[0], id: 12, title: 'Chapter 2', audioStatus: 'none' }],
+        total: 1,
+      },
+      '/api/chapters/12': readText(12, 'none'),
+      'GET /api/books/1/progress': { chapterId: 12, positionMs: 0, segmentId: 202 },
+      'PUT /api/books/1/progress': { chapterId: 12, positionMs: 0 },
+    });
+    renderAt('/books/1/listen');
+    await screen.findByText(/No audio yet; your reading position is kept/);
+    // The stored position is marked and kept when the chapter is entered.
+    expect((await screen.findByText('“Come in,”')).style.background).not.toBe('');
+    await vi.waitFor(async () => {
+      const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
+      expect(bodies).toContainEqual({ chapterId: 12, positionMs: 0, segmentId: 202 });
+    });
+    fireEvent.click(screen.getByText('she said.'));
+    await vi.waitFor(async () => {
+      const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
+      expect(bodies).toContainEqual({ chapterId: 12, positionMs: 0, segmentId: 203 });
+    });
+    expect(screen.getByText('she said.').style.background).not.toBe('');
+  });
+
   it('lists jobs', async () => {
     stubApi({
       '/api/jobs': {

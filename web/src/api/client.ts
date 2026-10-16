@@ -4,6 +4,8 @@ import createClient from 'openapi-fetch';
 import type { components, paths } from './schema';
 
 export type Analysis = components['schemas']['Analysis'];
+export type AppSettings = components['schemas']['AppSettings'];
+export type AppSettingsUpdate = components['schemas']['AppSettingsUpdate'];
 export type AnalysisStatus = components['schemas']['AnalysisStatus'];
 export type AudioStatus = components['schemas']['AudioStatus'];
 export type Book = components['schemas']['Book'];
@@ -15,6 +17,8 @@ export type BookPage = components['schemas']['BookPage'];
 export type Chapter = components['schemas']['Chapter'];
 export type ChapterAttribution = components['schemas']['ChapterAttribution'];
 export type ChapterDetail = components['schemas']['ChapterDetail'];
+export type ChapterTimings = components['schemas']['ChapterTimings'];
+export type Cue = components['schemas']['Cue'];
 export type ChapterUpdate = components['schemas']['ChapterUpdate'];
 export type Character = components['schemas']['Character'];
 export type Download = components['schemas']['Download'];
@@ -193,6 +197,27 @@ export const progressQuery = (bookId: number) =>
     staleTime: Infinity,
   });
 
+/** When each segment is spoken in a render (version: its audioVersion). */
+export const timingsQuery = (chapterId: number, version?: string) =>
+  queryOptions({
+    queryKey: ['chapters', chapterId, 'timings', version ?? ''],
+    queryFn: () =>
+      unwrap(
+        api.GET('/chapters/{chapterId}/timings', {
+          params: { path: { chapterId }, query: version ? { v: version } : {} },
+        }),
+      ),
+    // A render's timings never change.
+    staleTime: Infinity,
+  });
+
+export const settingsQuery = queryOptions({
+  queryKey: ['settings'],
+  queryFn: () => unwrap(api.GET('/settings')),
+});
+
+export const updateSettings = (body: AppSettingsUpdate) => unwrap(api.PATCH('/settings', { body }));
+
 export const voicesQuery = queryOptions({
   queryKey: ['voices'],
   queryFn: () => unwrap(api.GET('/voices')),
@@ -353,11 +378,16 @@ export const renderBookChapters = (bookId: number, count: number, fromChapterId?
     }),
   );
 
-export const saveProgress = (bookId: number, chapterId: number, positionMs: number) =>
+export const saveProgress = (
+  bookId: number,
+  chapterId: number,
+  positionMs: number,
+  segmentId?: number,
+) =>
   unwrap(
     api.PUT('/books/{bookId}/progress', {
       params: { path: { bookId } },
-      body: { chapterId, positionMs: Math.max(0, Math.round(positionMs)) },
+      body: { chapterId, positionMs: Math.max(0, Math.round(positionMs)), segmentId },
     }),
   );
 
