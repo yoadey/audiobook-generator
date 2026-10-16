@@ -438,12 +438,17 @@ func TestStartWhileTheJobFinishes(t *testing.T) {
 		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"CastingStatus": store.CastingDone}))
 		got, err := s.GetBook(ctx, b.ID)
 		require.NoError(t, err)
-		// … when a start arrives: another job is queued, so nothing is lost.
+		// … when a start arrives: another job is queued, so nothing is lost
+		// (and a restart is fine too: the job is not at work).
 		require.NoError(t, c.Start(ctx, got, false))
 		assert.Len(t, c.Jobs.(*enqueuer).jobs, 2)
 		got, err = s.GetBook(ctx, b.ID)
 		require.NoError(t, err)
 		assert.Equal(t, store.CastingQueued, got.CastingStatus)
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"CastingStatus": store.CastingDone}))
+		got, err = s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		require.NoError(t, c.Start(ctx, got, true), "the waiting jobs do the recast")
 	})
 }
 
@@ -486,11 +491,23 @@ func TestCastingFailureAndQuota(t *testing.T) {
 		c.Catalog = NewCatalog(&fakeVoices{err: errors.New("down")})
 		require.NoError(t, c.Start(ctx, b, false))
 		require.Error(t, c.Run(ctx, b.ID, func(float64) {}), "retried until the TTS server answers")
-		require.ErrorIs(t, c.Start(ctx, b, true), ErrBusy)
+		running, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		require.ErrorIs(t, c.Start(ctx, running, true), ErrBusy, "not while the casting is at work")
 
+		// A failure does not hide a newer start's job.
 		j := c.Jobs.(*enqueuer).jobs[0]
-		c.Handler().OnFail(ctx, &j, errors.New("gave up"))
+		require.NoError(t, s.DB().Model(&store.Job{}).Where("id = ?", j.ID).Update("status", store.JobFailed).Error)
+		newer := &store.Job{Type: JobType, Queue: Queue, BookID: &b.ID}
+		require.NoError(t, s.EnqueueJob(ctx, newer))
+		c.Handler().OnFail(ctx, &j, errors.New("old failure"))
 		got, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.NotEqual(t, store.CastingFailed, got.CastingStatus)
+		require.NoError(t, s.DB().Model(&store.Job{}).Where("id = ?", newer.ID).Update("status", store.JobDone).Error)
+
+		c.Handler().OnFail(ctx, &j, errors.New("gave up"))
+		got, err = s.GetBook(ctx, b.ID)
 		require.NoError(t, err)
 		assert.Equal(t, store.CastingFailed, got.CastingStatus)
 		assert.Equal(t, "gave up", got.CastingError)

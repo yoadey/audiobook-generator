@@ -113,8 +113,15 @@ func (c *Caster) Start(ctx context.Context, b *store.Book, restart bool) error {
 		return err
 	}
 	if pending != nil {
-		if restart {
+		// A restart must not reset voices under a casting at work; a job
+		// that is only waiting (its work done, or not begun) is fine.
+		if restart && Active(b) {
 			return ErrBusy
+		}
+		if restart {
+			if err := c.Store.ResetCasting(ctx, b.ID); err != nil {
+				return err
+			}
 		}
 		// A queued job picks up what is new. A running one sees the
 		// "queued" status when it finishes and runs again, but it may be
@@ -159,6 +166,10 @@ func (c *Caster) Handler() jobs.Handler {
 		},
 		OnFail: func(ctx context.Context, j *store.Job, err error) {
 			if j.BookID == nil {
+				return
+			}
+			// A newer start queued another job: that one decides.
+			if p, perr := c.Store.PendingBookJob(ctx, JobType, *j.BookID); perr == nil && p != nil && p.ID != j.ID {
 				return
 			}
 			if _, uerr := c.Store.TransitionCasting(ctx, *j.BookID, store.CastingFailed,

@@ -399,7 +399,9 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 		return nil, err
 	}
 	// The change is saved; a casting that cannot be queued is not its error.
-	if err := s.castIfNeeded(ctx, c.ID); err != nil {
+	// A tier left to the casting again is ranked by it.
+	auto := u.Tier != nil && *u.Tier == CharacterUpdateTierAuto
+	if err := s.castIfNeeded(ctx, c.ID, auto); err != nil {
 		s.Log.WarnContext(ctx, "queue casting", "character", c.ID, "err", err)
 	}
 	out, err := s.characterDetail(ctx, c.ID)
@@ -462,12 +464,12 @@ func voiceFields(c *store.Character, u *CharacterUpdate, fields map[string]any) 
 
 // castIfNeeded starts the casting for a main character without a voice
 // (promoted, or its voice reset), once the analysis has finished.
-func (s *Server) castIfNeeded(ctx context.Context, id int64) error {
+func (s *Server) castIfNeeded(ctx context.Context, id int64, always bool) error {
 	c, err := s.Store.GetCharacter(ctx, id)
 	if err != nil {
 		return err
 	}
-	if c.Tier != store.TierMain || c.VoiceRecipe != "" {
+	if !always && (c.Tier != store.TierMain || c.VoiceRecipe != "") {
 		return nil
 	}
 	b, err := s.Store.GetBook(ctx, c.BookID)
@@ -527,6 +529,10 @@ func (s *Server) MergeCharacters(ctx context.Context, req MergeCharactersRequest
 	}
 	if err := s.Store.UpdateCharacter(ctx, target.ID, map[string]any{"UserEdited": true}); err != nil {
 		return nil, err
+	}
+	// The merge may have dropped a voice that no longer fits.
+	if err := s.castIfNeeded(ctx, target.ID, false); err != nil {
+		s.Log.WarnContext(ctx, "queue casting", "character", target.ID, "err", err)
 	}
 	out, err := s.characterDetail(ctx, target.ID)
 	if err != nil {
