@@ -276,7 +276,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Base voices offered by the TTS server */
+    /** The voice catalogue, reconciled with the voices the TTS server offers */
     get: operations['listVoices'];
     put?: never;
     post?: never;
@@ -460,6 +460,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/books/{bookId}/casting': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** State of the book's voice casting */
+    get: operations['getCasting'];
+    put?: never;
+    /**
+     * Cast voices for the main characters that have none
+     * @description Gives every main character without a voice its own recipe. With restart, all tiers and voices the user did not choose are cast anew. Needs a finished character analysis.
+     */
+    post: operations['startCasting'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/books/{bookId}/characters': {
     parameters: {
       query?: never;
@@ -517,6 +540,25 @@ export interface paths {
     head?: never;
     /** Correct a character (protects it from being overwritten by the analysis) */
     patch: operations['updateCharacter'];
+    trace?: never;
+  };
+  '/characters/{characterId}/quotes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    /** Quotes the character speaks in the book (for voice previews) */
+    get: operations['listCharacterQuotes'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   '/characters/{characterId}/split': {
@@ -592,6 +634,7 @@ export interface components {
       analysisStatus: components['schemas']['AnalysisStatus'];
       /** @description Share of analysed batches (0..1) once the analysis is planned */
       analysisProgress?: number;
+      castingStatus: components['schemas']['CastingStatus'];
       /** Format: date-time */
       createdAt: string;
       /** Format: date-time */
@@ -764,6 +807,12 @@ export interface components {
       gender: 'female' | 'male' | 'unknown';
       /** @description Overall quality grade from the Kokoro model card (A best) */
       grade?: string;
+      /** @description Timbre, as a hint for casting ("" for voices outside the catalogue) */
+      traits: string;
+      /** @description Offered by the TTS server */
+      available: boolean;
+      /** @description Described by the built-in catalogue (otherwise only known to the server) */
+      inCatalog: boolean;
     };
     VoicePreview: {
       voice: string;
@@ -932,6 +981,59 @@ export interface components {
       job?: components['schemas']['Job'];
     };
     /** @enum {string} */
+    Tier: 'main' | 'minor';
+    /** @enum {string} */
+    CastingStatus: 'none' | 'queued' | 'running' | 'done' | 'failed';
+    CastingStart: {
+      /** @description Cast all tiers and voices anew, except those chosen by hand */
+      restart?: boolean;
+    };
+    CastingWarning: {
+      /**
+       * @description narrator: sounds like the narrator; similar: sounds like another character
+       * @enum {string}
+       */
+      kind: 'narrator' | 'similar';
+      /** Format: int64 */
+      characterId: number;
+      characterName: string;
+      /** Format: int64 */
+      otherId?: number;
+      otherName?: string;
+      /** @description How different the voices are (0 same … 1 nothing in common, plus speed difference) */
+      distance: number;
+    };
+    Casting: {
+      status: components['schemas']['CastingStatus'];
+      error?: string;
+      /** Format: date-time */
+      finishedAt?: string;
+      /** Format: int64 */
+      mainCount: number;
+      /** Format: int64 */
+      minorCount: number;
+      /**
+       * Format: int64
+       * @description Main characters with their own recipe
+       */
+      voicedCount: number;
+      /** @description Configured number of main characters the casting picks */
+      mainLimit: number;
+      narratorVoice: string;
+      narratorSpeed: number;
+      prompt: string;
+      /** @description Main characters whose voices are hard to tell apart (e.g. after a narrator change) */
+      warnings: components['schemas']['CastingWarning'][];
+      job?: components['schemas']['Job'];
+    };
+    Quote: {
+      text: string;
+      /** Format: int64 */
+      chapterId: number;
+      chapterIdx: number;
+      chapterTitle: string;
+    };
+    /** @enum {string} */
     Gender: 'female' | 'male' | 'unknown';
     /** @enum {string} */
     AgeGroup: 'child' | 'teen' | 'adult' | 'elderly' | 'unknown';
@@ -958,6 +1060,21 @@ export interface components {
       firstChapterIdx: number;
       /** @description Corrected by hand; the analysis does not overwrite the profile */
       userEdited: boolean;
+      tier: components['schemas']['Tier'];
+      /** @description The tier was chosen by hand; the casting keeps it */
+      tierManual: boolean;
+      /** @description The recipe the character speaks with (its own, or its pool voice) */
+      voice: string;
+      voiceSpeed: number;
+      /**
+       * @description own: the character's recipe; pool: a pool voice by gender and age; narrator: no fitting voice, the narrator speaks
+       * @enum {string}
+       */
+      voiceSource: 'own' | 'pool' | 'narrator';
+      /** @description The recipe was chosen by hand; the casting keeps it */
+      voiceManual: boolean;
+      /** @description Why the casting chose the recipe */
+      voiceNote: string;
     };
     CharacterPage: {
       items: components['schemas']['Character'][];
@@ -982,6 +1099,14 @@ export interface components {
       description?: string;
       speechStyle?: string;
       importance?: number;
+      /**
+       * @description main/minor fixes the tier; auto leaves it to the casting
+       * @enum {string}
+       */
+      tier?: 'main' | 'minor' | 'auto';
+      /** @description A recipe like "bf_emma(0.7)+af_bella(0.3)" (chosen by hand, kept by the casting); empty to leave the voice to the casting again */
+      voice?: string;
+      voiceSpeed?: number;
     };
     CharacterMerge: {
       /** Format: int64 */
@@ -1842,12 +1967,66 @@ export interface operations {
       default: components['responses']['Error'];
     };
   };
+  getCasting: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Casting */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Casting'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  startCasting: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        'application/json': components['schemas']['CastingStart'];
+      };
+    };
+    responses: {
+      /** @description The casting is queued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Casting'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
   listCharacters: {
     parameters: {
       query?: {
         /** @description Substring of a name or alias */
         search?: string;
         sort?: 'importance' | 'name' | 'chapters' | 'first';
+        tier?: components['schemas']['Tier'];
         offset?: components['parameters']['Offset'];
         limit?: components['parameters']['Limit'];
       };
@@ -1868,6 +2047,7 @@ export interface operations {
           'application/json': components['schemas']['CharacterPage'];
         };
       };
+      400: components['responses']['Error'];
       404: components['responses']['Error'];
       default: components['responses']['Error'];
     };
@@ -1976,6 +2156,32 @@ export interface operations {
       400: components['responses']['Error'];
       404: components['responses']['Error'];
       409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listCharacterQuotes: {
+    parameters: {
+      query?: {
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Quotes */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Quote'][];
+        };
+      };
+      404: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };

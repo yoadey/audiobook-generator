@@ -1,0 +1,11 @@
+Base voices (id | gender | accent | grade | traits):
+{{range .Voices}}{{.}}
+{{end}}
+Narrator: {{.Narrator}}
+Voices already taken:
+{{if .Taken}}{{range .Taken}}{{.}}
+{{end}}{{else}}(none)
+{{end}}
+Characters ({{len .Characters}}):
+{{range .Characters}}{{.}}
+{{end}}

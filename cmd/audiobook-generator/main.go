@@ -20,6 +20,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/api"
 	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
+	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/config"
 	"github.com/yoadey/audiobook-generator/internal/httpserver"
 	"github.com/yoadey/audiobook-generator/internal/importer"
@@ -95,6 +96,22 @@ func run() error {
 		Store: st, LLM: llmPool, Jobs: runner, BatchTokens: cfg.LLM.AnalysisBatchTokens, Log: log,
 	}
 	runner.Handle(analysis.JobType, analyzer.Handler())
+	voices := casting.NewCatalog(speech)
+	caster := &casting.Caster{
+		Store: st, LLM: llmPool, Jobs: runner, Catalog: voices, DefaultVoice: cfg.TTS.DefaultVoice,
+		MainCharacters: cfg.Casting.MainCharacters, Log: log,
+	}
+	runner.Handle(casting.JobType, caster.Handler())
+	// A finished analysis casts the voices of its main characters.
+	analyzer.OnDone = func(ctx context.Context, bookID int64) {
+		b, err := st.GetBook(ctx, bookID)
+		if err == nil {
+			err = caster.Start(ctx, b, false)
+		}
+		if err != nil {
+			log.Error("start casting", "book", bookID, "err", err)
+		}
+	}
 	scheduler := &render.Scheduler{Store: st, Jobs: runner, DefaultVoice: cfg.TTS.DefaultVoice}
 	runnerDone := make(chan struct{})
 	go func() {
@@ -114,6 +131,8 @@ func run() error {
 				Scheduler:      scheduler,
 				LLM:            llmPool,
 				Analyzer:       analyzer,
+				Caster:         caster,
+				Voices:         voices,
 				DefaultVoice:   cfg.TTS.DefaultVoice,
 				DataDir:        cfg.DataDir,
 				MaxUploadBytes: cfg.MaxUploadMB << 20,

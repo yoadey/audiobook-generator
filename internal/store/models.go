@@ -46,6 +46,11 @@ type Book struct {
 	AnalysisStartedAt  *time.Time
 	AnalysisFinishedAt *time.Time
 
+	// Voice casting (see CastingStatus).
+	CastingStatus     CastingStatus `gorm:"not null;default:'none'"`
+	CastingError      string        `gorm:"not null;default:''"`
+	CastingFinishedAt *time.Time
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -271,6 +276,27 @@ const (
 	AnalysisFailed  AnalysisStatus = "failed"
 )
 
+// CastingStatus is the state of a book's voice casting.
+type CastingStatus string
+
+// Casting states.
+const (
+	CastingNone    CastingStatus = "none"
+	CastingQueued  CastingStatus = "queued"
+	CastingRunning CastingStatus = "running"
+	CastingDone    CastingStatus = "done"
+	CastingFailed  CastingStatus = "failed"
+)
+
+// Tier of a character.
+type Tier string
+
+// Tiers.
+const (
+	TierMain  Tier = "main"
+	TierMinor Tier = "minor"
+)
+
 // Narration is how a chapter is told.
 type Narration string
 
@@ -324,8 +350,20 @@ type Character struct {
 	FirstChapterIdx int `gorm:"not null;default:0"`
 	// UserEdited protects the profile from being overwritten by analysis.
 	UserEdited bool `gorm:"not null;default:false"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// Tier decides how a character is voiced: main characters get their
+	// own recipe, minor ones a pool voice. TierManual protects a tier the
+	// user chose from the casting.
+	Tier       Tier `gorm:"not null;default:'minor'"`
+	TierManual bool `gorm:"not null;default:false"`
+	// VoiceRecipe is the character's own Kokoro recipe ("" = pool voice);
+	// VoiceManual protects one the user chose. VoiceNote is the casting's
+	// reasoning.
+	VoiceRecipe string  `gorm:"not null;default:''"`
+	VoiceSpeed  float64 `gorm:"not null;default:1"`
+	VoiceManual bool    `gorm:"not null;default:false"`
+	VoiceNote   string  `gorm:"not null;default:''"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // CharacterAlias is another name of a character. Norm is the normalized

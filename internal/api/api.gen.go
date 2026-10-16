@@ -134,6 +134,51 @@ func (e BookStatus) Valid() bool {
 	}
 }
 
+// Defines values for CastingStatus.
+const (
+	CastingStatusDone    CastingStatus = "done"
+	CastingStatusFailed  CastingStatus = "failed"
+	CastingStatusNone    CastingStatus = "none"
+	CastingStatusQueued  CastingStatus = "queued"
+	CastingStatusRunning CastingStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the CastingStatus enum.
+func (e CastingStatus) Valid() bool {
+	switch e {
+	case CastingStatusDone:
+		return true
+	case CastingStatusFailed:
+		return true
+	case CastingStatusNone:
+		return true
+	case CastingStatusQueued:
+		return true
+	case CastingStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CastingWarningKind.
+const (
+	CastingWarningKindNarrator CastingWarningKind = "narrator"
+	CastingWarningKindSimilar  CastingWarningKind = "similar"
+)
+
+// Valid indicates whether the value is a known member of the CastingWarningKind enum.
+func (e CastingWarningKind) Valid() bool {
+	switch e {
+	case CastingWarningKindNarrator:
+		return true
+	case CastingWarningKindSimilar:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ChapterStatus.
 const (
 	ChapterStatusImported ChapterStatus = "imported"
@@ -143,6 +188,69 @@ const (
 func (e ChapterStatus) Valid() bool {
 	switch e {
 	case ChapterStatusImported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CharacterVoiceSource.
+const (
+	CharacterVoiceSourceNarrator CharacterVoiceSource = "narrator"
+	CharacterVoiceSourceOwn      CharacterVoiceSource = "own"
+	CharacterVoiceSourcePool     CharacterVoiceSource = "pool"
+)
+
+// Valid indicates whether the value is a known member of the CharacterVoiceSource enum.
+func (e CharacterVoiceSource) Valid() bool {
+	switch e {
+	case CharacterVoiceSourceNarrator:
+		return true
+	case CharacterVoiceSourceOwn:
+		return true
+	case CharacterVoiceSourcePool:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CharacterDetailVoiceSource.
+const (
+	CharacterDetailVoiceSourceNarrator CharacterDetailVoiceSource = "narrator"
+	CharacterDetailVoiceSourceOwn      CharacterDetailVoiceSource = "own"
+	CharacterDetailVoiceSourcePool     CharacterDetailVoiceSource = "pool"
+)
+
+// Valid indicates whether the value is a known member of the CharacterDetailVoiceSource enum.
+func (e CharacterDetailVoiceSource) Valid() bool {
+	switch e {
+	case CharacterDetailVoiceSourceNarrator:
+		return true
+	case CharacterDetailVoiceSourceOwn:
+		return true
+	case CharacterDetailVoiceSourcePool:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CharacterUpdateTier.
+const (
+	CharacterUpdateTierAuto  CharacterUpdateTier = "auto"
+	CharacterUpdateTierMain  CharacterUpdateTier = "main"
+	CharacterUpdateTierMinor CharacterUpdateTier = "minor"
+)
+
+// Valid indicates whether the value is a known member of the CharacterUpdateTier enum.
+func (e CharacterUpdateTier) Valid() bool {
+	switch e {
+	case CharacterUpdateTierAuto:
+		return true
+	case CharacterUpdateTierMain:
+		return true
+	case CharacterUpdateTierMinor:
 		return true
 	default:
 		return false
@@ -344,6 +452,24 @@ func (e SegmentKind) Valid() bool {
 	}
 }
 
+// Defines values for Tier.
+const (
+	TierMain  Tier = "main"
+	TierMinor Tier = "minor"
+)
+
+// Valid indicates whether the value is a known member of the Tier enum.
+func (e Tier) Valid() bool {
+	switch e {
+	case TierMain:
+		return true
+	case TierMinor:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VoiceGender.
 const (
 	VoiceGenderFemale  VoiceGender = "female"
@@ -436,6 +562,7 @@ type Book struct {
 	AnalysisProgress *float32       `json:"analysisProgress,omitempty"`
 	AnalysisStatus   AnalysisStatus `json:"analysisStatus"`
 	Author           string         `json:"author"`
+	CastingStatus    CastingStatus  `json:"castingStatus"`
 	ChapterCount     int            `json:"chapterCount"`
 	CreatedAt        time.Time      `json:"createdAt"`
 
@@ -475,6 +602,54 @@ type BookUpdate struct {
 	NarratorSpeed *float32 `json:"narratorSpeed,omitempty"`
 	NarratorVoice *string  `json:"narratorVoice,omitempty"`
 }
+
+// Casting defines model for Casting.
+type Casting struct {
+	Error      *string    `json:"error,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	Job        *Job       `json:"job,omitempty"`
+	MainCount  int64      `json:"mainCount"`
+
+	// MainLimit Configured number of main characters the casting picks
+	MainLimit     int           `json:"mainLimit"`
+	MinorCount    int64         `json:"minorCount"`
+	NarratorSpeed float32       `json:"narratorSpeed"`
+	NarratorVoice string        `json:"narratorVoice"`
+	Prompt        string        `json:"prompt"`
+	Status        CastingStatus `json:"status"`
+
+	// VoicedCount Main characters with their own recipe
+	VoicedCount int64 `json:"voicedCount"`
+
+	// Warnings Main characters whose voices are hard to tell apart (e.g. after a narrator change)
+	Warnings []CastingWarning `json:"warnings"`
+}
+
+// CastingStart defines model for CastingStart.
+type CastingStart struct {
+	// Restart Cast all tiers and voices anew, except those chosen by hand
+	Restart *bool `json:"restart,omitempty"`
+}
+
+// CastingStatus defines model for CastingStatus.
+type CastingStatus string
+
+// CastingWarning defines model for CastingWarning.
+type CastingWarning struct {
+	CharacterId   int64  `json:"characterId"`
+	CharacterName string `json:"characterName"`
+
+	// Distance How different the voices are (0 same … 1 nothing in common, plus speed difference)
+	Distance float32 `json:"distance"`
+
+	// Kind narrator: sounds like the narrator; similar: sounds like another character
+	Kind      CastingWarningKind `json:"kind"`
+	OtherId   *int64             `json:"otherId,omitempty"`
+	OtherName *string            `json:"otherName,omitempty"`
+}
+
+// CastingWarningKind narrator: sounds like the narrator; similar: sounds like another character
+type CastingWarningKind string
 
 // Chapter defines model for Chapter.
 type Chapter struct {
@@ -580,10 +755,30 @@ type Character struct {
 	Role            string   `json:"role"`
 	Speaks          bool     `json:"speaks"`
 	SpeechStyle     string   `json:"speechStyle"`
+	Tier            Tier     `json:"tier"`
+
+	// TierManual The tier was chosen by hand; the casting keeps it
+	TierManual bool `json:"tierManual"`
 
 	// UserEdited Corrected by hand; the analysis does not overwrite the profile
 	UserEdited bool `json:"userEdited"`
+
+	// Voice The recipe the character speaks with (its own, or its pool voice)
+	Voice string `json:"voice"`
+
+	// VoiceManual The recipe was chosen by hand; the casting keeps it
+	VoiceManual bool `json:"voiceManual"`
+
+	// VoiceNote Why the casting chose the recipe
+	VoiceNote string `json:"voiceNote"`
+
+	// VoiceSource own: the character's recipe; pool: a pool voice by gender and age; narrator: no fitting voice, the narrator speaks
+	VoiceSource CharacterVoiceSource `json:"voiceSource"`
+	VoiceSpeed  float32              `json:"voiceSpeed"`
 }
+
+// CharacterVoiceSource own: the character's recipe; pool: a pool voice by gender and age; narrator: no fitting voice, the narrator speaks
+type CharacterVoiceSource string
 
 // CharacterDetail defines model for CharacterDetail.
 type CharacterDetail struct {
@@ -601,10 +796,30 @@ type CharacterDetail struct {
 	Role            string       `json:"role"`
 	Speaks          bool         `json:"speaks"`
 	SpeechStyle     string       `json:"speechStyle"`
+	Tier            Tier         `json:"tier"`
+
+	// TierManual The tier was chosen by hand; the casting keeps it
+	TierManual bool `json:"tierManual"`
 
 	// UserEdited Corrected by hand; the analysis does not overwrite the profile
 	UserEdited bool `json:"userEdited"`
+
+	// Voice The recipe the character speaks with (its own, or its pool voice)
+	Voice string `json:"voice"`
+
+	// VoiceManual The recipe was chosen by hand; the casting keeps it
+	VoiceManual bool `json:"voiceManual"`
+
+	// VoiceNote Why the casting chose the recipe
+	VoiceNote string `json:"voiceNote"`
+
+	// VoiceSource own: the character's recipe; pool: a pool voice by gender and age; narrator: no fitting voice, the narrator speaks
+	VoiceSource CharacterDetailVoiceSource `json:"voiceSource"`
+	VoiceSpeed  float32                    `json:"voiceSpeed"`
 }
+
+// CharacterDetailVoiceSource own: the character's recipe; pool: a pool voice by gender and age; narrator: no fitting voice, the narrator speaks
+type CharacterDetailVoiceSource string
 
 // CharacterMerge defines model for CharacterMerge.
 type CharacterMerge struct {
@@ -640,7 +855,17 @@ type CharacterUpdate struct {
 	Name        *string   `json:"name,omitempty"`
 	Role        *string   `json:"role,omitempty"`
 	SpeechStyle *string   `json:"speechStyle,omitempty"`
+
+	// Tier main/minor fixes the tier; auto leaves it to the casting
+	Tier *CharacterUpdateTier `json:"tier,omitempty"`
+
+	// Voice A recipe like "bf_emma(0.7)+af_bella(0.3)" (chosen by hand, kept by the casting); empty to leave the voice to the casting again
+	Voice      *string  `json:"voice,omitempty"`
+	VoiceSpeed *float32 `json:"voiceSpeed,omitempty"`
 }
+
+// CharacterUpdateTier main/minor fixes the tier; auto leaves it to the casting
+type CharacterUpdateTier string
 
 // DatabaseInfo defines model for DatabaseInfo.
 type DatabaseInfo struct {
@@ -863,6 +1088,14 @@ type ProgressUpdate struct {
 	PositionMs int64 `json:"positionMs"`
 }
 
+// Quote defines model for Quote.
+type Quote struct {
+	ChapterId    int64  `json:"chapterId"`
+	ChapterIdx   int    `json:"chapterIdx"`
+	ChapterTitle string `json:"chapterTitle"`
+	Text         string `json:"text"`
+}
+
 // RenderRequest defines model for RenderRequest.
 type RenderRequest struct {
 	Count int `json:"count"`
@@ -911,16 +1144,27 @@ type TTSInfo struct {
 	VoiceCount *int `json:"voiceCount,omitempty"`
 }
 
+// Tier defines model for Tier.
+type Tier string
+
 // Voice defines model for Voice.
 type Voice struct {
-	Gender VoiceGender `json:"gender"`
+	// Available Offered by the TTS server
+	Available bool        `json:"available"`
+	Gender    VoiceGender `json:"gender"`
 
 	// Grade Overall quality grade from the Kokoro model card (A best)
 	Grade *string `json:"grade,omitempty"`
 	Id    string  `json:"id"`
 
+	// InCatalog Described by the built-in catalogue (otherwise only known to the server)
+	InCatalog bool `json:"inCatalog"`
+
 	// Language e.g. en-US, en-GB
 	Language string `json:"language"`
+
+	// Traits Timbre, as a hint for casting ("" for voices outside the catalogue)
+	Traits string `json:"traits"`
 }
 
 // VoiceGender defines model for Voice.Gender.
@@ -989,6 +1233,7 @@ type ListCharactersParams struct {
 	// Search Substring of a name or alias
 	Search *string                   `form:"search,omitempty" json:"search,omitempty"`
 	Sort   *ListCharactersParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+	Tier   *Tier                     `form:"tier,omitempty" json:"tier,omitempty"`
 	Offset *Offset                   `form:"offset,omitempty" json:"offset,omitempty"`
 	Limit  *Limit                    `form:"limit,omitempty" json:"limit,omitempty"`
 }
@@ -1000,6 +1245,11 @@ type ListCharactersParamsSort string
 type RenderChapterParams struct {
 	// Force Render even if the audio is current
 	Force *bool `form:"force,omitempty" json:"force,omitempty"`
+}
+
+// ListCharacterQuotesParams defines parameters for ListCharacterQuotes.
+type ListCharacterQuotesParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListJobsParams defines parameters for ListJobs.
@@ -1018,6 +1268,9 @@ type UpdateBookJSONRequestBody = BookUpdate
 
 // StartAnalysisJSONRequestBody defines body for StartAnalysis for application/json ContentType.
 type StartAnalysisJSONRequestBody = AnalysisStart
+
+// StartCastingJSONRequestBody defines body for StartCasting for application/json ContentType.
+type StartCastingJSONRequestBody = CastingStart
 
 // MergeCharactersJSONRequestBody defines body for MergeCharacters for application/json ContentType.
 type MergeCharactersJSONRequestBody = CharacterMerge
@@ -1078,6 +1331,12 @@ type ServerInterface interface {
 	// PauseAnalysis Pause the character analysis (a running batch finishes first)
 	// (POST /books/{bookId}/analysis/pause)
 	PauseAnalysis(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// GetCasting State of the book's voice casting
+	// (GET /books/{bookId}/casting)
+	GetCasting(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// StartCasting Cast voices for the main characters that have none
+	// (POST /books/{bookId}/casting)
+	StartCasting(w http.ResponseWriter, r *http.Request, bookId BookId)
 	// ListChapters List a book's chapters in reading order
 	// (GET /books/{bookId}/chapters)
 	ListChapters(w http.ResponseWriter, r *http.Request, bookId BookId, params ListChaptersParams)
@@ -1129,6 +1388,9 @@ type ServerInterface interface {
 	// UpdateCharacter Correct a character (protects it from being overwritten by the analysis)
 	// (PATCH /characters/{characterId})
 	UpdateCharacter(w http.ResponseWriter, r *http.Request, characterId CharacterId)
+	// ListCharacterQuotes Quotes the character speaks in the book (for voice previews)
+	// (GET /characters/{characterId}/quotes)
+	ListCharacterQuotes(w http.ResponseWriter, r *http.Request, characterId CharacterId, params ListCharacterQuotesParams)
 	// SplitCharacter Move aliases of a character to a new character
 	// (POST /characters/{characterId}/split)
 	SplitCharacter(w http.ResponseWriter, r *http.Request, characterId CharacterId)
@@ -1162,7 +1424,7 @@ type ServerInterface interface {
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(w http.ResponseWriter, r *http.Request)
-	// ListVoices Base voices offered by the TTS server
+	// ListVoices The voice catalogue, reconciled with the voices the TTS server offers
 	// (GET /voices)
 	ListVoices(w http.ResponseWriter, r *http.Request)
 	// PreviewVoice Speak a sample text with a voice
@@ -1395,6 +1657,58 @@ func (siw *ServerInterfaceWrapper) PauseAnalysis(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetCasting operation middleware
+func (siw *ServerInterfaceWrapper) GetCasting(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCasting(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartCasting operation middleware
+func (siw *ServerInterfaceWrapper) StartCasting(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartCasting(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListChapters operation middleware
 func (siw *ServerInterfaceWrapper) ListChapters(w http.ResponseWriter, r *http.Request) {
 
@@ -1516,6 +1830,19 @@ func (siw *ServerInterfaceWrapper) ListCharacters(w http.ResponseWriter, r *http
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "sort"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tier" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tier", r.URL.Query(), &params.Tier, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tier"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tier", Err: err})
 		}
 		return
 	}
@@ -1954,6 +2281,48 @@ func (siw *ServerInterfaceWrapper) UpdateCharacter(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateCharacter(w, r, characterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCharacterQuotes operation middleware
+func (siw *ServerInterfaceWrapper) ListCharacterQuotes(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "characterId" -------------
+	var characterId CharacterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "characterId", r.PathValue("characterId"), &characterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "characterId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCharacterQuotesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCharacterQuotes(w, r, characterId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2427,11 +2796,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/analysis", wrapper.GetAnalysis)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/analysis", wrapper.StartAnalysis)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/analysis/pause", wrapper.PauseAnalysis)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/casting", wrapper.GetCasting)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/casting", wrapper.StartCasting)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/characters", wrapper.ListCharacters)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/characters/merge", wrapper.MergeCharacters)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/characters/{characterId}", wrapper.DeleteCharacter)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/characters/{characterId}", wrapper.GetCharacter)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/characters/{characterId}", wrapper.UpdateCharacter)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/characters/{characterId}/quotes", wrapper.ListCharacterQuotes)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/characters/{characterId}/split", wrapper.SplitCharacter)
 
 	return m
@@ -2887,6 +3259,127 @@ func (response PauseAnalysisdefaultJSONResponse) VisitPauseAnalysisResponse(w ht
 	return err
 }
 
+type GetCastingRequestObject struct {
+	BookId BookId `json:"bookId"`
+}
+
+type GetCastingResponseObject interface {
+	VisitGetCastingResponse(w http.ResponseWriter) error
+}
+
+type GetCasting200JSONResponse Casting
+
+func (response GetCasting200JSONResponse) VisitGetCastingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCasting404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetCasting404JSONResponse) VisitGetCastingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCastingdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetCastingdefaultJSONResponse) VisitGetCastingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartCastingRequestObject struct {
+	BookId BookId `json:"bookId"`
+	Body   *StartCastingJSONRequestBody
+}
+
+type StartCastingResponseObject interface {
+	VisitStartCastingResponse(w http.ResponseWriter) error
+}
+
+type StartCasting202JSONResponse Casting
+
+func (response StartCasting202JSONResponse) VisitStartCastingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartCasting404JSONResponse struct{ ErrorJSONResponse }
+
+func (response StartCasting404JSONResponse) VisitStartCastingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartCasting409JSONResponse Error
+
+func (response StartCasting409JSONResponse) VisitStartCastingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartCastingdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response StartCastingdefaultJSONResponse) VisitStartCastingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListChaptersRequestObject struct {
 	BookId BookId `json:"bookId"`
 	Params ListChaptersParams
@@ -2964,7 +3457,21 @@ func (response ListCharacters200JSONResponse) VisitListCharactersResponse(w http
 	return err
 }
 
-type ListCharacters404JSONResponse struct{ ErrorJSONResponse }
+type ListCharacters400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListCharacters400JSONResponse) VisitListCharactersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCharacters404JSONResponse Error
 
 func (response ListCharacters404JSONResponse) VisitListCharactersResponse(w http.ResponseWriter) error {
 
@@ -3944,6 +4451,60 @@ func (response UpdateCharacterdefaultJSONResponse) VisitUpdateCharacterResponse(
 	return err
 }
 
+type ListCharacterQuotesRequestObject struct {
+	CharacterId CharacterId `json:"characterId"`
+	Params      ListCharacterQuotesParams
+}
+
+type ListCharacterQuotesResponseObject interface {
+	VisitListCharacterQuotesResponse(w http.ResponseWriter) error
+}
+
+type ListCharacterQuotes200JSONResponse []Quote
+
+func (response ListCharacterQuotes200JSONResponse) VisitListCharacterQuotesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCharacterQuotes404JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListCharacterQuotes404JSONResponse) VisitListCharacterQuotesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCharacterQuotesdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListCharacterQuotesdefaultJSONResponse) VisitListCharacterQuotesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SplitCharacterRequestObject struct {
 	CharacterId CharacterId `json:"characterId"`
 	Body        *SplitCharacterJSONRequestBody
@@ -4770,6 +5331,12 @@ type StrictServerInterface interface {
 	// PauseAnalysis Pause the character analysis (a running batch finishes first)
 	// (POST /books/{bookId}/analysis/pause)
 	PauseAnalysis(ctx context.Context, request PauseAnalysisRequestObject) (PauseAnalysisResponseObject, error)
+	// GetCasting State of the book's voice casting
+	// (GET /books/{bookId}/casting)
+	GetCasting(ctx context.Context, request GetCastingRequestObject) (GetCastingResponseObject, error)
+	// StartCasting Cast voices for the main characters that have none
+	// (POST /books/{bookId}/casting)
+	StartCasting(ctx context.Context, request StartCastingRequestObject) (StartCastingResponseObject, error)
 	// ListChapters List a book's chapters in reading order
 	// (GET /books/{bookId}/chapters)
 	ListChapters(ctx context.Context, request ListChaptersRequestObject) (ListChaptersResponseObject, error)
@@ -4821,6 +5388,9 @@ type StrictServerInterface interface {
 	// UpdateCharacter Correct a character (protects it from being overwritten by the analysis)
 	// (PATCH /characters/{characterId})
 	UpdateCharacter(ctx context.Context, request UpdateCharacterRequestObject) (UpdateCharacterResponseObject, error)
+	// ListCharacterQuotes Quotes the character speaks in the book (for voice previews)
+	// (GET /characters/{characterId}/quotes)
+	ListCharacterQuotes(ctx context.Context, request ListCharacterQuotesRequestObject) (ListCharacterQuotesResponseObject, error)
 	// SplitCharacter Move aliases of a character to a new character
 	// (POST /characters/{characterId}/split)
 	SplitCharacter(ctx context.Context, request SplitCharacterRequestObject) (SplitCharacterResponseObject, error)
@@ -4854,7 +5424,7 @@ type StrictServerInterface interface {
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(ctx context.Context, request GetSystemInfoRequestObject) (GetSystemInfoResponseObject, error)
-	// ListVoices Base voices offered by the TTS server
+	// ListVoices The voice catalogue, reconciled with the voices the TTS server offers
 	// (GET /voices)
 	ListVoices(ctx context.Context, request ListVoicesRequestObject) (ListVoicesResponseObject, error)
 	// PreviewVoice Speak a sample text with a voice
@@ -5124,6 +5694,68 @@ func (sh *strictHandler) PauseAnalysis(w http.ResponseWriter, r *http.Request, b
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PauseAnalysisResponseObject); ok {
 		if err := validResponse.VisitPauseAnalysisResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCasting operation middleware
+func (sh *strictHandler) GetCasting(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request GetCastingRequestObject
+
+	request.BookId = bookId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCasting(ctx, request.(GetCastingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCasting")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCastingResponseObject); ok {
+		if err := validResponse.VisitGetCastingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartCasting operation middleware
+func (sh *strictHandler) StartCasting(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request StartCastingRequestObject
+
+	request.BookId = bookId
+
+	var body StartCastingJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartCasting(ctx, request.(StartCastingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartCasting")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartCastingResponseObject); ok {
+		if err := validResponse.VisitStartCastingResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -5611,6 +6243,33 @@ func (sh *strictHandler) UpdateCharacter(w http.ResponseWriter, r *http.Request,
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateCharacterResponseObject); ok {
 		if err := validResponse.VisitUpdateCharacterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCharacterQuotes operation middleware
+func (sh *strictHandler) ListCharacterQuotes(w http.ResponseWriter, r *http.Request, characterId CharacterId, params ListCharacterQuotesParams) {
+	var request ListCharacterQuotesRequestObject
+
+	request.CharacterId = characterId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCharacterQuotes(ctx, request.(ListCharacterQuotesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCharacterQuotes")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCharacterQuotesResponseObject); ok {
+		if err := validResponse.VisitListCharacterQuotesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

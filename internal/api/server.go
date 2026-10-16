@@ -9,6 +9,7 @@ import (
 
 	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
+	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/llm"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -35,6 +36,8 @@ type Options struct {
 	Scheduler      *render.Scheduler
 	LLM            *llm.Pool
 	Analyzer       *analysis.Analyzer
+	Caster         *casting.Caster
+	Voices         *casting.Catalog
 	DefaultVoice   string
 	DataDir        string
 	MaxUploadBytes int64
@@ -44,13 +47,14 @@ type Options struct {
 // Server implements StrictServerInterface.
 type Server struct {
 	Options
+	previews *previewCache
 }
 
 var _ StrictServerInterface = (*Server)(nil)
 
 // NewServer returns the API implementation.
 func NewServer(o Options) *Server {
-	return &Server{Options: o}
+	return &Server{Options: o, previews: newPreviewCache(32 << 20)}
 }
 
 // Register mounts the API under /api on mux.

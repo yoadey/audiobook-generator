@@ -34,6 +34,7 @@ func (s *Server) toBook(b *store.Book) Book {
 		ChapterCount:   b.ChapterCount,
 		HasCover:       b.CoverPath != "",
 		AnalysisStatus: AnalysisStatus(cmp.Or(b.AnalysisStatus, store.AnalysisNone)),
+		CastingStatus:  CastingStatus(cmp.Or(b.CastingStatus, store.CastingNone)),
 		CreatedAt:      b.CreatedAt,
 		UpdatedAt:      b.UpdatedAt,
 	}

@@ -56,6 +56,8 @@ type CharacterFilter struct {
 	Search string
 	// Sort: "importance" (default), "name", "chapters" or "first".
 	Sort string
+	// Tier limits the list to main or minor characters.
+	Tier Tier
 }
 
 func likePattern(s string) string {
@@ -72,6 +74,9 @@ func (s *Store) ListCharacters(ctx context.Context, bookID int64, f CharacterFil
 		q = q.Where(`LOWER(name) LIKE ? ESCAPE '\' OR id IN (?)`, p,
 			db.Session(&gorm.Session{NewDB: true}).Model(&CharacterAlias{}).Select("character_id").
 				Where(`book_id = ? AND LOWER(alias) LIKE ? ESCAPE '\'`, bookID, p))
+	}
+	if f.Tier != "" {
+		q = q.Where("tier = ?", f.Tier)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -369,7 +374,8 @@ func (s *Store) MergeCharacters(ctx context.Context, targetID int64, sourceIDs .
 			return err
 		}
 		if err := db.Model(&Character{ID: target.ID}).Select("Gender", "AgeGroup", "Role", "Description",
-			"SpeechStyle", "Importance", "Speaks", "UserEdited").Updates(&target).Error; err != nil {
+			"SpeechStyle", "Importance", "Speaks", "UserEdited", "Tier", "TierManual",
+			"VoiceRecipe", "VoiceSpeed", "VoiceManual", "VoiceNote").Updates(&target).Error; err != nil {
 			return err
 		}
 		return tx.RefreshCharacterStats(ctx, target.ID)
@@ -401,6 +407,21 @@ func mergeProfile(dst, src *Character) {
 	dst.Importance = max(dst.Importance, src.Importance)
 	dst.Speaks = dst.Speaks || src.Speaks
 	dst.UserEdited = dst.UserEdited || src.UserEdited
+	// The merged character keeps a voice: its own, else a hand-picked or
+	// cast one of a source; a main character stays main.
+	if dst.VoiceRecipe == "" || (!dst.VoiceManual && src.VoiceManual) {
+		if src.VoiceRecipe != "" {
+			dst.VoiceRecipe, dst.VoiceSpeed, dst.VoiceManual, dst.VoiceNote =
+				src.VoiceRecipe, src.VoiceSpeed, src.VoiceManual, src.VoiceNote
+		}
+	}
+	switch {
+	case dst.TierManual:
+	case src.TierManual:
+		dst.Tier, dst.TierManual = src.Tier, true
+	case src.Tier == TierMain:
+		dst.Tier = TierMain
+	}
 }
 
 func containsID(ids []int64, id int64) bool {
@@ -597,6 +618,7 @@ func (s *Store) ResetAnalysis(ctx context.Context, bookID int64) error {
 		return tx.db.Model(&Book{ID: bookID}).Updates(map[string]any{
 			"analysis_status": AnalysisNone, "analysis_error": "",
 			"analysis_started_at": nil, "analysis_finished_at": nil,
+			"casting_status": CastingNone, "casting_error": "", "casting_finished_at": nil,
 		}).Error
 	})
 }

@@ -1,23 +1,21 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 )
-
-// voiceRecipeRe matches a Kokoro voice or weighted mix: "af_heart",
-// "bf_emma(2)+af_bella(1)".
-var voiceRecipeRe = regexp.MustCompile(`^[a-z]{2}_[a-z0-9]+(\([0-9]+(\.[0-9]+)?\))?(\+[a-z]{2}_[a-z0-9]+(\([0-9]+(\.[0-9]+)?\))?)*$`)
 
 const defaultPreviewText = "It was a bright cold day in April, and the clocks were striking thirteen."
 
@@ -31,7 +29,7 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 	fields := map[string]any{}
 	if v := req.Body.NarratorVoice; v != nil {
 		voice := strings.TrimSpace(*v)
-		if voice != "" && !voiceRecipeRe.MatchString(voice) {
+		if _, err := casting.ParseRecipe(voice); voice != "" && err != nil {
 			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(
 				`narratorVoice must be a voice like "af_heart" or a mix like "bf_emma(2)+af_bella(1)"`))}, nil
 		}
@@ -190,56 +188,54 @@ func (s *Server) GetChapterAudio(ctx context.Context, req GetChapterAudioRequest
 	return audioFile{r: requestFrom(ctx), path: p, name: fmt.Sprintf("%d.m4a", c.ID)}, nil
 }
 
-var languages = map[byte]string{
-	'a': "en-US", 'b': "en-GB", 'e': "es", 'f': "fr", 'h': "hi", 'i': "it",
-	'j': "ja", 'p': "pt-BR", 'z': "zh",
-}
-
-// ListVoices lists the TTS server's voices.
+// ListVoices lists the voice catalogue as the TTS server offers it.
 func (s *Server) ListVoices(ctx context.Context, _ ListVoicesRequestObject) (ListVoicesResponseObject, error) {
-	vs, err := s.TTS.Voices(ctx)
+	vs, err := s.Voices.Voices(ctx)
 	if err != nil {
-		return ListVoices502JSONResponse{ErrorJSONResponse(errMsg("TTS server: " + err.Error()))}, nil
+		return ListVoices502JSONResponse{ErrorJSONResponse(errMsg(err.Error()))}, nil
 	}
 	out := make([]Voice, 0, len(vs))
 	for _, v := range vs {
-		voice := Voice{Id: v.ID, Language: "unknown", Gender: VoiceGenderUnknown, Grade: nonEmpty(v.OverallGrade)}
-		if len(v.ID) >= 3 && v.ID[2] == '_' {
-			if l, ok := languages[v.ID[0]]; ok {
-				voice.Language = l
-			}
-			switch v.ID[1] {
-			case 'f':
-				voice.Gender = VoiceGenderFemale
-			case 'm':
-				voice.Gender = VoiceGenderMale
-			}
+		if !v.Available && !v.InCatalog {
+			continue
 		}
-		out = append(out, voice)
+		out = append(out, Voice{
+			Id: v.ID, Language: v.Accent, Gender: VoiceGender(v.Gender), Grade: nonEmpty(v.Grade),
+			Traits: v.Traits, Available: v.Available, InCatalog: v.InCatalog,
+		})
 	}
 	return ListVoices200JSONResponse(out), nil
 }
 
-// PreviewVoice speaks a sample.
+// PreviewVoice speaks a sample; recent previews are cached.
 func (s *Server) PreviewVoice(ctx context.Context, req PreviewVoiceRequestObject) (PreviewVoiceResponseObject, error) {
 	voice := strings.TrimSpace(req.Body.Voice)
-	if !voiceRecipeRe.MatchString(voice) {
-		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg("invalid voice"))}, nil
+	if _, err := casting.ParseRecipe(voice); err != nil {
+		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg(err.Error()))}, nil
 	}
 	text := defaultPreviewText
 	if req.Body.Text != nil && strings.TrimSpace(*req.Body.Text) != "" {
 		text = strings.TrimSpace(*req.Body.Text)
 	}
+	if utf8.RuneCountInString(text) > 500 {
+		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg("text must be at most 500 characters"))}, nil
+	}
 	speed := 1.0
 	if req.Body.Speed != nil {
 		speed = min(max(float64(*req.Body.Speed), 0.5), 2)
 	}
-	data, err := s.TTS.Synthesize(ctx, tts.Speech{Text: text, Voice: voice, Speed: speed, Format: "mp3"})
-	if err != nil {
-		return PreviewVoice502JSONResponse{Message: "TTS server: " + err.Error()}, nil
+	key := previewKey(voice, speed, text)
+	data, ok := s.previews.get(key)
+	if !ok {
+		var err error
+		data, err = s.TTS.Synthesize(ctx, tts.Speech{Text: text, Voice: voice, Speed: speed, Format: "mp3"})
+		if err != nil {
+			return PreviewVoice502JSONResponse{Message: "TTS server: " + err.Error()}, nil
+		}
+		s.previews.put(key, data)
 	}
 	return PreviewVoice200AudiompegResponse{
-		Body: strings.NewReader(string(data)), ContentLength: int64(len(data)),
+		Body: bytes.NewReader(data), ContentLength: int64(len(data)),
 	}, nil
 }
 

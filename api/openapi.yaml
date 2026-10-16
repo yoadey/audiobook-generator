@@ -449,7 +449,7 @@ paths:
   /voices:
     get:
       operationId: listVoices
-      summary: Base voices offered by the TTS server
+      summary: The voice catalogue, reconciled with the voices the TTS server offers
       tags: [audio]
       responses:
         "200":
@@ -728,6 +728,52 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /books/{bookId}/casting:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getCasting
+      summary: State of the book's voice casting
+      tags: [casting]
+      responses:
+        "200":
+          description: Casting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Casting"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: startCasting
+      summary: Cast voices for the main characters that have none
+      description: >-
+        Gives every main character without a voice its own recipe. With
+        restart, all tiers and voices the user did not choose are cast
+        anew. Needs a finished character analysis.
+      tags: [casting]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CastingStart"
+      responses:
+        "202":
+          description: The casting is queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Casting"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /books/{bookId}/characters:
     parameters:
       - $ref: "#/components/parameters/BookId"
@@ -750,6 +796,11 @@ paths:
             type: string
             enum: [importance, name, chapters, first]
             default: importance
+        - name: tier
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Tier"
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
       responses:
@@ -759,6 +810,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CharacterPage"
+        "400":
+          $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
         default:
@@ -846,6 +899,36 @@ paths:
         "404":
           $ref: "#/components/responses/Error"
         "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /characters/{characterId}/quotes:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    get:
+      operationId: listCharacterQuotes
+      summary: Quotes the character speaks in the book (for voice previews)
+      tags: [casting]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: Quotes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Quote"
+        "404":
           $ref: "#/components/responses/Error"
         default:
           $ref: "#/components/responses/Error"
@@ -1009,6 +1092,7 @@ components:
         - narratorSpeed
         - lookahead
         - analysisStatus
+        - castingStatus
         - createdAt
         - updatedAt
       properties:
@@ -1049,6 +1133,8 @@ components:
         analysisProgress:
           type: number
           description: Share of analysed batches (0..1) once the analysis is planned
+        castingStatus:
+          $ref: "#/components/schemas/CastingStatus"
         createdAt:
           type: string
           format: date-time
@@ -1345,7 +1431,7 @@ components:
 
     Voice:
       type: object
-      required: [id, language, gender]
+      required: [id, language, gender, traits, available, inCatalog]
       properties:
         id:
           type: string
@@ -1358,6 +1444,15 @@ components:
         grade:
           type: string
           description: Overall quality grade from the Kokoro model card (A best)
+        traits:
+          type: string
+          description: Timbre, as a hint for casting ("" for voices outside the catalogue)
+        available:
+          type: boolean
+          description: Offered by the TTS server
+        inCatalog:
+          type: boolean
+          description: Described by the built-in catalogue (otherwise only known to the server)
     VoicePreview:
       type: object
       required: [voice]
@@ -1661,6 +1756,90 @@ components:
           description: Prompt version new batches use
         job:
           $ref: "#/components/schemas/Job"
+    Tier:
+      type: string
+      enum: [main, minor]
+    CastingStatus:
+      type: string
+      enum: [none, queued, running, done, failed]
+    CastingStart:
+      type: object
+      properties:
+        restart:
+          type: boolean
+          description: Cast all tiers and voices anew, except those chosen by hand
+    CastingWarning:
+      type: object
+      required: [kind, characterId, characterName, distance]
+      properties:
+        kind:
+          type: string
+          enum: [narrator, similar]
+          description: "narrator: sounds like the narrator; similar: sounds like another character"
+        characterId:
+          type: integer
+          format: int64
+        characterName:
+          type: string
+        otherId:
+          type: integer
+          format: int64
+        otherName:
+          type: string
+        distance:
+          type: number
+          description: How different the voices are (0 same … 1 nothing in common, plus speed difference)
+    Casting:
+      type: object
+      required: [status, mainCount, minorCount, voicedCount, mainLimit, narratorVoice, narratorSpeed, prompt,
+        warnings]
+      properties:
+        status:
+          $ref: "#/components/schemas/CastingStatus"
+        error:
+          type: string
+        finishedAt:
+          type: string
+          format: date-time
+        mainCount:
+          type: integer
+          format: int64
+        minorCount:
+          type: integer
+          format: int64
+        voicedCount:
+          type: integer
+          format: int64
+          description: Main characters with their own recipe
+        mainLimit:
+          type: integer
+          description: Configured number of main characters the casting picks
+        narratorVoice:
+          type: string
+        narratorSpeed:
+          type: number
+        prompt:
+          type: string
+        warnings:
+          type: array
+          description: Main characters whose voices are hard to tell apart (e.g. after a narrator change)
+          items:
+            $ref: "#/components/schemas/CastingWarning"
+        job:
+          $ref: "#/components/schemas/Job"
+    Quote:
+      type: object
+      required: [text, chapterId, chapterIdx, chapterTitle]
+      properties:
+        text:
+          type: string
+        chapterId:
+          type: integer
+          format: int64
+        chapterIdx:
+          type: integer
+        chapterTitle:
+          type: string
     Gender:
       type: string
       enum: [female, male, unknown]
@@ -1679,7 +1858,8 @@ components:
     Character:
       type: object
       required: [id, bookId, name, aliases, gender, ageGroup, role, description, speechStyle, importance,
-        speaks, chapterCount, firstChapterIdx, userEdited]
+        speaks, chapterCount, firstChapterIdx, userEdited, tier, tierManual, voice, voiceSpeed, voiceSource,
+        voiceManual, voiceNote]
       properties:
         id:
           type: integer
@@ -1716,6 +1896,28 @@ components:
         userEdited:
           type: boolean
           description: Corrected by hand; the analysis does not overwrite the profile
+        tier:
+          $ref: "#/components/schemas/Tier"
+        tierManual:
+          type: boolean
+          description: The tier was chosen by hand; the casting keeps it
+        voice:
+          type: string
+          description: The recipe the character speaks with (its own, or its pool voice)
+        voiceSpeed:
+          type: number
+        voiceSource:
+          type: string
+          enum: [own, pool, narrator]
+          description: >-
+            own: the character's recipe; pool: a pool voice by gender and
+            age; narrator: no fitting voice, the narrator speaks
+        voiceManual:
+          type: boolean
+          description: The recipe was chosen by hand; the casting keeps it
+        voiceNote:
+          type: string
+          description: Why the casting chose the recipe
     CharacterPage:
       type: object
       required: [items, total]
@@ -1778,6 +1980,20 @@ components:
           type: integer
           minimum: 1
           maximum: 5
+        tier:
+          type: string
+          enum: [main, minor, auto]
+          description: main/minor fixes the tier; auto leaves it to the casting
+        voice:
+          type: string
+          maxLength: 200
+          description: >-
+            A recipe like "bf_emma(0.7)+af_bella(0.3)" (chosen by hand, kept by
+            the casting); empty to leave the voice to the casting again
+        voiceSpeed:
+          type: number
+          minimum: 0.5
+          maximum: 2
     CharacterMerge:
       type: object
       required: [targetId, sourceIds]

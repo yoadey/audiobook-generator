@@ -280,6 +280,48 @@ var migrations = []*gormigrate.Migration{
 				"character_aliases", "characters")
 		},
 	},
+	{
+		ID: "202610180001_casting",
+		Migrate: func(tx *gorm.DB) error {
+			type Book struct {
+				CastingStatus     string `gorm:"not null;default:'none'"`
+				CastingError      string `gorm:"not null;default:''"`
+				CastingFinishedAt *time.Time
+			}
+			for _, col := range []string{"CastingStatus", "CastingError", "CastingFinishedAt"} {
+				if err := tx.Migrator().AddColumn(&Book{}, col); err != nil {
+					return fmt.Errorf("books.%s: %w", col, err)
+				}
+			}
+			type Character struct {
+				Tier        string  `gorm:"not null;default:'minor'"`
+				TierManual  bool    `gorm:"not null;default:false"`
+				VoiceRecipe string  `gorm:"not null;default:''"`
+				VoiceSpeed  float64 `gorm:"not null;default:1"`
+				VoiceManual bool    `gorm:"not null;default:false"`
+				VoiceNote   string  `gorm:"not null;default:''"`
+			}
+			for _, col := range []string{"Tier", "TierManual", "VoiceRecipe", "VoiceSpeed", "VoiceManual", "VoiceNote"} {
+				if err := tx.Migrator().AddColumn(&Character{}, col); err != nil {
+					return fmt.Errorf("characters.%s: %w", col, err)
+				}
+			}
+			return nil
+		},
+		Rollback: func(tx *gorm.DB) error {
+			for _, col := range []string{"tier", "tier_manual", "voice_recipe", "voice_speed", "voice_manual", "voice_note"} {
+				if err := tx.Migrator().DropColumn("characters", col); err != nil {
+					return err
+				}
+			}
+			for _, col := range []string{"casting_status", "casting_error", "casting_finished_at"} {
+				if err := tx.Migrator().DropColumn("books", col); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

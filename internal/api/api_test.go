@@ -21,6 +21,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/api"
 	"github.com/yoadey/audiobook-generator/internal/audio"
+	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/epub/epubtest"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
@@ -35,7 +36,11 @@ type fakeTTS struct{}
 
 func (fakeTTS) BaseURL() string { return "http://kokoro:8880" }
 func (fakeTTS) Voices(context.Context) ([]tts.Voice, error) {
-	return []tts.Voice{{ID: "af_heart", OverallGrade: "A"}, {ID: "bm_george"}, {ID: "jf_alpha"}}, nil
+	var out []tts.Voice
+	for _, id := range []string{"af_heart", "af_bella", "af_nicole", "bf_emma", "am_michael", "am_puck", "bm_george", "jf_alpha"} {
+		out = append(out, tts.Voice{ID: id})
+	}
+	return out, nil
 }
 func (fakeTTS) Synthesize(_ context.Context, s tts.Speech) ([]byte, error) {
 	if s.Format == "mp3" {
@@ -106,6 +111,14 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	pool := llm.NewPool(s, nil, log)
 	analyzer := &analysis.Analyzer{Store: s, LLM: pool, Jobs: runner, BatchTokens: analysis.DefaultBatchTokens, Log: log}
 	runner.Handle(analysis.JobType, analyzer.Handler())
+	voices := casting.NewCatalog(fakeTTS{})
+	caster := &casting.Caster{Store: s, LLM: pool, Jobs: runner, Catalog: voices, DefaultVoice: "af_heart", Log: log}
+	runner.Handle(casting.JobType, caster.Handler())
+	analyzer.OnDone = func(ctx context.Context, bookID int64) {
+		if b, err := s.GetBook(ctx, bookID); err == nil {
+			_ = caster.Start(ctx, b, false)
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = runner.Run(ctx); close(done) }()
@@ -113,7 +126,7 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	mux := http.NewServeMux()
 	api.NewServer(api.Options{
 		Store: s, TTS: fakeTTS{}, Jobs: runner, Scheduler: scheduler, DefaultVoice: "af_heart",
-		LLM: pool, Analyzer: analyzer, DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
+		LLM: pool, Analyzer: analyzer, Caster: caster, Voices: voices, DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
 	}).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(func() {
@@ -287,10 +300,16 @@ func TestAudioFlow(t *testing.T) {
 		// Voices and previews.
 		var voices []api.Voice
 		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/voices", nil, &voices))
-		require.Len(t, voices, 3)
-		assert.Equal(t, api.Voice{Id: "af_heart", Language: "en-US", Gender: api.VoiceGenderFemale, Grade: ptr("A")}, voices[0])
-		assert.Equal(t, "en-GB", voices[1].Language)
-		assert.Equal(t, api.VoiceGenderMale, voices[1].Gender)
+		byID := map[string]api.Voice{}
+		for _, v := range voices {
+			byID[v.Id] = v
+		}
+		assert.Equal(t, api.Voice{Id: "af_heart", Language: "en-US", Gender: api.VoiceGenderFemale, Grade: ptr("A"),
+			Traits: "warm, expressive, young adult", Available: true, InCatalog: true}, byID["af_heart"])
+		assert.Equal(t, "en-GB", byID["bm_george"].Language)
+		assert.Equal(t, api.VoiceGenderMale, byID["bm_george"].Gender)
+		assert.False(t, byID["am_adam"].Available, "in the catalogue, not on the server")
+		assert.Equal(t, api.Voice{Id: "jf_alpha", Language: "ja", Gender: api.VoiceGenderFemale, Available: true}, byID["jf_alpha"])
 		assert.Equal(t, http.StatusOK, c.json(http.MethodPost, "/api/voices/preview", map[string]any{"voice": "bm_george"}, nil))
 		assert.Equal(t, http.StatusBadRequest, c.json(http.MethodPost, "/api/voices/preview", map[string]any{"voice": "x; rm -rf"}, nil))
 

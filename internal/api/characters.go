@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/analysis"
+	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
@@ -184,6 +186,15 @@ func validateCharacterUpdate(u *CharacterUpdate) string {
 		return "a field is too long"
 	case u.Aliases != nil && len(*u.Aliases) > 200:
 		return "too many aliases"
+	case u.Tier != nil && !u.Tier.Valid():
+		return "tier must be main, minor or auto"
+	case u.VoiceSpeed != nil && (*u.VoiceSpeed < 0.5 || *u.VoiceSpeed > 2):
+		return "voiceSpeed must be between 0.5 and 2"
+	}
+	if u.Voice != nil && strings.TrimSpace(*u.Voice) != "" {
+		if _, err := casting.ParseRecipe(*u.Voice); err != nil {
+			return err.Error()
+		}
 	}
 	if u.Aliases != nil {
 		for _, a := range *u.Aliases {
@@ -195,7 +206,7 @@ func validateCharacterUpdate(u *CharacterUpdate) string {
 	return ""
 }
 
-func toCharacter(c *store.Character, aliases []store.CharacterAlias) Character {
+func toCharacter(c *store.Character, aliases []store.CharacterAlias, v casting.Voice) Character {
 	as := make([]string, 0, len(aliases))
 	for _, a := range aliases {
 		as = append(as, a.Alias)
@@ -205,7 +216,9 @@ func toCharacter(c *store.Character, aliases []store.CharacterAlias) Character {
 		Gender: Gender(c.Gender), AgeGroup: AgeGroup(c.AgeGroup), Role: c.Role,
 		Description: c.Description, SpeechStyle: c.SpeechStyle, Importance: c.Importance,
 		Speaks: c.Speaks, ChapterCount: c.ChapterCount, FirstChapterIdx: c.FirstChapterIdx,
-		UserEdited: c.UserEdited,
+		UserEdited: c.UserEdited, Tier: Tier(cmp.Or(c.Tier, store.TierMinor)), TierManual: c.TierManual,
+		Voice: v.Recipe, VoiceSpeed: float32(v.Speed), VoiceSource: CharacterVoiceSource(v.Source),
+		VoiceManual: c.VoiceManual, VoiceNote: c.VoiceNote,
 	}
 }
 
@@ -222,13 +235,19 @@ func (s *Server) characterDetail(ctx context.Context, id int64) (CharacterDetail
 	if err != nil {
 		return CharacterDetail{}, err
 	}
-	base := toCharacter(c, as[id])
+	voices, err := s.characterVoices(ctx, c.BookID)
+	if err != nil {
+		return CharacterDetail{}, err
+	}
+	base := toCharacter(c, as[id], voices(c))
 	out := CharacterDetail{
 		Id: base.Id, BookId: base.BookId, Name: base.Name, Aliases: base.Aliases, Gender: base.Gender,
 		AgeGroup: base.AgeGroup, Role: base.Role, Description: base.Description, SpeechStyle: base.SpeechStyle,
 		Importance: base.Importance, Speaks: base.Speaks, ChapterCount: base.ChapterCount,
 		FirstChapterIdx: base.FirstChapterIdx, UserEdited: base.UserEdited,
-		Chapters: make([]ChapterRef, 0, len(chs)),
+		Tier: base.Tier, TierManual: base.TierManual, Voice: base.Voice, VoiceSpeed: base.VoiceSpeed,
+		VoiceSource: CharacterDetailVoiceSource(base.VoiceSource), VoiceManual: base.VoiceManual,
+		VoiceNote: base.VoiceNote, Chapters: make([]ChapterRef, 0, len(chs)),
 	}
 	for _, ch := range chs {
 		out.Chapters = append(out.Chapters, ChapterRef{Id: ch.ID, Idx: ch.Idx, Title: ch.Title})
@@ -238,8 +257,9 @@ func (s *Server) characterDetail(ctx context.Context, id int64) (CharacterDetail
 
 // ListCharacters returns a page of a book's characters.
 func (s *Server) ListCharacters(ctx context.Context, req ListCharactersRequestObject) (ListCharactersResponseObject, error) {
-	if _, err := s.Store.GetBook(ctx, req.BookId); isNotFound(err) {
-		return ListCharacters404JSONResponse{ErrorJSONResponse(errMsg("book not found"))}, nil
+	b, err := s.Store.GetBook(ctx, req.BookId)
+	if isNotFound(err) {
+		return ListCharacters404JSONResponse{Message: "book not found"}, nil
 	} else if err != nil {
 		return nil, err
 	}
@@ -250,6 +270,12 @@ func (s *Server) ListCharacters(ctx context.Context, req ListCharactersRequestOb
 	}
 	if req.Params.Sort != nil {
 		f.Sort = string(*req.Params.Sort)
+	}
+	if req.Params.Tier != nil {
+		if !req.Params.Tier.Valid() {
+			return ListCharacters400JSONResponse{ErrorJSONResponse(errMsg("tier must be main or minor"))}, nil
+		}
+		f.Tier = store.Tier(*req.Params.Tier)
 	}
 	cs, total, err := s.Store.ListCharacters(ctx, req.BookId, f, offset, limit)
 	if err != nil {
@@ -263,9 +289,10 @@ func (s *Server) ListCharacters(ctx context.Context, req ListCharactersRequestOb
 	if err != nil {
 		return nil, err
 	}
+	voices := s.bookVoices(ctx, b)
 	out := CharacterPage{Items: make([]Character, 0, len(cs)), Total: total}
 	for i := range cs {
-		out.Items = append(out.Items, toCharacter(&cs[i], as[cs[i].ID]))
+		out.Items = append(out.Items, toCharacter(&cs[i], as[cs[i].ID], voices(&cs[i])))
 	}
 	return ListCharacters200JSONResponse(out), nil
 }
@@ -304,15 +331,24 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 	} else if err != nil {
 		return nil, err
 	}
-	if busy {
+	u := req.Body
+	// The analysis does not touch voices: they may change while it runs.
+	voiceOnly := u.Name == nil && u.Aliases == nil && u.Gender == nil && u.AgeGroup == nil && u.Role == nil &&
+		u.Description == nil && u.SpeechStyle == nil && u.Importance == nil
+	if busy && !voiceOnly {
 		// A running batch would overwrite the correction with its snapshot.
 		return UpdateCharacter409JSONResponse{Message: analysisBusyMsg}, nil
 	}
 	if msg := validateCharacterUpdate(req.Body); msg != "" {
 		return UpdateCharacter400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 	}
-	u := req.Body
-	fields := map[string]any{"UserEdited": true}
+	fields := map[string]any{}
+	if !voiceOnly {
+		fields["UserEdited"] = true
+	}
+	if msg := voiceFields(c, u, fields); msg != "" {
+		return UpdateCharacter400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
+	}
 	if u.Name != nil {
 		name := strings.TrimSpace(*u.Name)
 		if store.NormName(name) == "" {
@@ -358,11 +394,82 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 	if err != nil {
 		return nil, err
 	}
+	if err := s.castIfNeeded(ctx, c.ID); err != nil {
+		return nil, err
+	}
 	out, err := s.characterDetail(ctx, c.ID)
 	if err != nil {
 		return nil, err
 	}
 	return UpdateCharacter200JSONResponse(out), nil
+}
+
+// voiceFields adds the tier and voice changes of an update to fields; it
+// returns a message for an update that cannot be applied.
+func voiceFields(c *store.Character, u *CharacterUpdate, fields map[string]any) string {
+	recipe, manual := c.VoiceRecipe, c.VoiceManual
+	if u.Voice != nil {
+		if v := strings.TrimSpace(*u.Voice); v == "" {
+			// Back to the casting: a main character is cast again.
+			recipe, manual = "", false
+			fields["VoiceSpeed"] = 1.0
+		} else {
+			r, _ := casting.ParseRecipe(v)
+			recipe, manual = r.String(), true
+		}
+		fields["VoiceNote"] = ""
+	}
+	if u.Tier != nil {
+		switch *u.Tier {
+		case CharacterUpdateTierAuto:
+			fields["TierManual"] = false
+		default:
+			fields["Tier"], fields["TierManual"] = store.Tier(*u.Tier), true
+			if store.Tier(*u.Tier) == store.TierMinor && !manual {
+				recipe = "" // minor characters speak with pool voices
+			}
+		}
+	}
+	// A cast voice no longer fits a character whose gender changed.
+	if u.Gender != nil && store.Gender(*u.Gender) != c.Gender && !manual {
+		recipe = ""
+	}
+	if u.VoiceSpeed != nil {
+		if recipe == "" {
+			return "voiceSpeed needs a voice of the character's own"
+		}
+		fields["VoiceSpeed"], manual = float64(*u.VoiceSpeed), true
+	}
+	if recipe != c.VoiceRecipe {
+		fields["VoiceRecipe"] = recipe
+		if recipe == "" {
+			fields["VoiceNote"] = ""
+		}
+	}
+	if manual != c.VoiceManual {
+		fields["VoiceManual"] = manual
+	}
+	return ""
+}
+
+// castIfNeeded starts the casting for a main character without a voice
+// (promoted, or its voice reset), once the analysis has finished.
+func (s *Server) castIfNeeded(ctx context.Context, id int64) error {
+	c, err := s.Store.GetCharacter(ctx, id)
+	if err != nil {
+		return err
+	}
+	if c.Tier != store.TierMain || c.VoiceRecipe != "" {
+		return nil
+	}
+	b, err := s.Store.GetBook(ctx, c.BookID)
+	if err != nil {
+		return err
+	}
+	if err := s.Caster.Start(ctx, b, false); err != nil && !errors.Is(err, casting.ErrNotReady) {
+		return err
+	}
+	return nil
 }
 
 // DeleteCharacter removes a character.

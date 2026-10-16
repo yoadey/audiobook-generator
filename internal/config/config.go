@@ -41,6 +41,8 @@ type Config struct {
 	DB  Database `envPrefix:"DB_"`
 	TTS TTS      `envPrefix:"TTS_"`
 	LLM LLM      `envPrefix:"LLM_"`
+	// Casting is the voice casting.
+	Casting Casting `envPrefix:"CASTING_"`
 }
 
 // LLM configures the LLM layer. Providers can also be managed in the UI.
@@ -54,6 +56,13 @@ type LLM struct {
 	// AnalysisBatchTokens is the input size of one character analysis
 	// request (fewer, larger requests save daily request quota).
 	AnalysisBatchTokens int `env:"ANALYSIS_BATCH_TOKENS" envDefault:"30000"`
+}
+
+// Casting configures the voice casting.
+type Casting struct {
+	// MainCharacters is how many speaking characters get their own voice
+	// recipe; the others get pool voices.
+	MainCharacters int `env:"MAIN_CHARACTERS" envDefault:"50"`
 }
 
 // Database selects and configures the GORM dialect.
@@ -120,6 +129,9 @@ func (c Config) Validate() error {
 	}
 	if c.TTS.DefaultVoice == "" {
 		errs = append(errs, errors.New("ABG_TTS_DEFAULT_VOICE must not be empty"))
+	}
+	if c.Casting.MainCharacters < 1 || c.Casting.MainCharacters > 500 {
+		errs = append(errs, fmt.Errorf("ABG_CASTING_MAIN_CHARACTERS must be between 1 and 500, got %d", c.Casting.MainCharacters))
 	}
 	if c.LLM.AnalysisBatchTokens < 1000 {
 		errs = append(errs, fmt.Errorf("ABG_LLM_ANALYSIS_BATCH_TOKENS must be at least 1000, got %d", c.LLM.AnalysisBatchTokens))

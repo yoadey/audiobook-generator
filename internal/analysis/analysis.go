@@ -64,7 +64,9 @@ type Analyzer struct {
 	// MergePairs bounds the duplicate checks per run, MergeGroup the
 	// pairs per request (defaults 1500 and 20).
 	MergePairs, MergeGroup int
-	Log                    *slog.Logger
+	// OnDone is called when an analysis has finished (to cast voices).
+	OnDone func(ctx context.Context, bookID int64)
+	Log    *slog.Logger
 }
 
 // batchDoneKey carries a function called after each analysed batch.
@@ -323,8 +325,11 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 	}
 	now := time.Now().UTC()
 	a.Log.Info("analysis done", "book", bookID)
-	_, err = a.Store.TransitionAnalysis(ctx, bookID, store.AnalysisDone,
+	ok, err := a.Store.TransitionAnalysis(ctx, bookID, store.AnalysisDone,
 		map[string]any{"analysis_finished_at": now}, store.AnalysisMerging)
+	if err == nil && ok && a.OnDone != nil {
+		a.OnDone(ctx, bookID)
+	}
 	return err
 }
 
