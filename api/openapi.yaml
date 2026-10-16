@@ -1359,7 +1359,9 @@ components:
           description: Quotations with a speaker
         unsure:
           type: integer
-          description: Quotations attributed automatically with a confidence below unsureBelow (or to nobody)
+          description: >-
+            Quotations attributed automatically with a confidence below unsureBelow (or to nobody);
+            0 unless the status is done
         unsureBelow:
           type: number
         job:
@@ -1397,7 +1399,7 @@ components:
           format: int64
           description: Who speaks the quotation (absent - the narrator reads it)
         emotion:
-          type: string
+          $ref: "#/components/schemas/Emotion"
         confidence:
           type: number
           description: How sure the attribution is (0..1; 1 for a speaker chosen by hand)

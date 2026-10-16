@@ -777,7 +777,7 @@ export interface components {
       quotes: number;
       /** @description Quotations with a speaker */
       attributed: number;
-      /** @description Quotations attributed automatically with a confidence below unsureBelow (or to nobody) */
+      /** @description Quotations attributed automatically with a confidence below unsureBelow (or to nobody); 0 unless the status is done */
       unsure: number;
       unsureBelow: number;
       job?: components['schemas']['Job'];
@@ -805,7 +805,7 @@ export interface components {
        * @description Who speaks the quotation (absent - the narrator reads it)
        */
       speakerId?: number;
-      emotion?: string;
+      emotion?: components['schemas']['Emotion'];
       /** @description How sure the attribution is (0..1; 1 for a speaker chosen by hand) */
       confidence: number;
       speakerManual: boolean;

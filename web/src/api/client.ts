@@ -116,11 +116,21 @@ export const chapterQuery = (chapterId: number) =>
   queryOptions({
     queryKey: ['chapters', chapterId],
     queryFn: () => unwrap(api.GET('/chapters/{chapterId}', { params: { path: { chapterId } } })),
-    refetchInterval: (q) =>
-      q.state.data &&
-      (audioPending(q.state.data.audioStatus) || attributionActive(q.state.data.attributionStatus))
-        ? POLL_MS
-        : false,
+    refetchInterval: (q) => {
+      const c = q.state.data;
+      if (!c) {
+        return false;
+      }
+      if (audioPending(c.audioStatus) || c.attributionStatus === 'running') {
+        return POLL_MS;
+      }
+      if (attributionActive(c.attributionStatus)) {
+        // Queued: slowly, very slowly while it waits for LLM quota.
+        const until = c.attribution?.job?.notBefore;
+        return until && new Date(until).getTime() > Date.now() ? 60_000 : 10_000;
+      }
+      return false;
+    },
   });
 
 export const progressQuery = (bookId: number) =>
@@ -167,7 +177,7 @@ export const charactersQuery = (
   tier?: Tier,
 ) =>
   queryOptions({
-    queryKey: ['books', bookId, 'characters', { search, sort, page, tier }],
+    queryKey: ['books', bookId, 'characters', { search, sort, page, pageSize, tier }],
     queryFn: () =>
       unwrap(
         api.GET('/books/{bookId}/characters', {

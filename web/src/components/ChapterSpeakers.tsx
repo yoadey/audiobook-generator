@@ -1,20 +1,9 @@
-import {
-  Alert,
-  Badge,
-  Box,
-  Button,
-  Group,
-  Popover,
-  Select,
-  Stack,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { Alert, Badge, Box, Button, Group, Popover, Select, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { modals } from '@mantine/modals';
 import { IconAlertTriangle, IconUserQuestion, IconUsers } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 
 import {
   type ChapterDetail,
@@ -50,10 +39,12 @@ const statusLabel: Record<ChapterDetail['attributionStatus'], string> = {
 /** State and controls of a chapter's speaker attribution. */
 export function AttributionBar({
   chapter,
+  analysisDone,
   onlyUnsure,
   onOnlyUnsure,
 }: {
   chapter: ChapterDetail;
+  analysisDone: boolean;
   onlyUnsure: boolean;
   onOnlyUnsure: (on: boolean) => void;
 }) {
@@ -61,7 +52,11 @@ export function AttributionBar({
   const a = chapter.attribution;
   const start = useMutation({
     mutationFn: (force: boolean) => startAttribution(chapter.id, force),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['chapters', chapter.id] }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['chapters', chapter.id] }),
+        queryClient.invalidateQueries({ queryKey: ['books', chapter.bookId, 'chapters'] }),
+      ]),
     onError: (e) => notifyError('Could not attribute the speakers', e),
   });
   if (!a || a.quotes === 0 || chapter.excluded) {
@@ -82,7 +77,7 @@ export function AttributionBar({
           {a.attributed} of {a.quotes} quotes with a speaker
           {a.unsure > 0 && `, ${a.unsure} to check`}
         </Text>
-        {a.unsure > 0 && (
+        {(a.unsure > 0 || onlyUnsure) && (
           <Button
             size="compact-xs"
             variant={onlyUnsure ? 'filled' : 'light'}
@@ -94,7 +89,13 @@ export function AttributionBar({
           </Button>
         )}
         {(a.status === 'none' || a.status === 'failed') && (
-          <Button size="compact-xs" loading={start.isPending} onClick={() => start.mutate(false)}>
+          <Button
+            size="compact-xs"
+            loading={start.isPending}
+            disabled={!analysisDone}
+            title={analysisDone ? undefined : 'Needs a finished character analysis'}
+            onClick={() => start.mutate(false)}
+          >
             Attribute speakers
           </Button>
         )}
@@ -141,39 +142,46 @@ export function AttributionBar({
 function QuoteEditor({
   chapter,
   segment,
+  names,
   onDone,
 }: {
   chapter: ChapterDetail;
   segment: Segment;
+  names: Map<number, string>;
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
   const [speaker, setSpeaker] = useState<string>(
     segment.speakerId === undefined ? 'narrator' : String(segment.speakerId),
   );
-  const [emotion, setEmotion] = useState<string>(segment.emotion ?? 'neutral');
+  const [emotion, setEmotion] = useState<Emotion>(segment.emotion ?? 'neutral');
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search.trim(), 300);
+  const known = new Map(names);
+  const selectedLabel =
+    speaker === 'narrator' ? NARRATOR_LABEL : (known.get(Number(speaker)) ?? '');
+  // Mantine puts the selected label into the search box: no search for it.
   const found = useQuery({
     ...charactersQuery(chapter.bookId, debounced, 'importance', 1, 20),
-    enabled: debounced.length >= 2,
+    enabled: debounced.length >= 2 && debounced !== selectedLabel,
   });
-  const known = new Map<number, string>();
-  for (const c of [...(chapter.speakers ?? []), ...(chapter.characters ?? [])]) {
-    known.set(c.id, c.name);
-  }
+  const foundIds = new Set<string>();
   for (const c of found.data?.items ?? []) {
     known.set(c.id, c.name);
+    foundIds.add(String(c.id));
   }
   const save = useMutation({
     mutationFn: () =>
       updateQuote(chapter.id, segment.quoteRef, {
         ...(speaker === 'narrator' ? { narrator: true } : { speakerId: Number(speaker) }),
-        emotion: emotion as Emotion,
+        emotion,
       }),
-    onSuccess: (detail) => {
+    onSuccess: async (detail) => {
+      await queryClient.cancelQueries({ queryKey: ['chapters', chapter.id] });
       queryClient.setQueryData(['chapters', chapter.id], detail);
       void queryClient.invalidateQueries({ queryKey: ['books', chapter.bookId] });
+      // Characters' quotes and chapter lists change with the speaker.
+      void queryClient.invalidateQueries({ queryKey: ['characters'] });
       onDone();
     },
     onError: (e) => notifyError('Could not save the speaker', e),
@@ -183,7 +191,7 @@ function QuoteEditor({
       <Select
         label="Speaker"
         data={[
-          { value: 'narrator', label: 'Narrator (no speaker)' },
+          { value: 'narrator', label: NARRATOR_LABEL },
           ...[...known].map(([id, name]) => ({ value: String(id), label: name })),
         ]}
         value={speaker}
@@ -191,15 +199,24 @@ function QuoteEditor({
         searchable
         searchValue={search}
         onSearchChange={setSearch}
+        // The server also matches aliases: keep what it found.
+        filter={({ options, search: q }) =>
+          options.filter(
+            (o) =>
+              'value' in o &&
+              (foundIds.has(o.value) || o.label.toLowerCase().includes(q.toLowerCase().trim())),
+          )
+        }
         nothingFoundMessage="Type to search all characters"
         allowDeselect={false}
         comboboxProps={{ withinPortal: false }}
+        data-autofocus
       />
       <Select
         label="Emotion"
         data={emotions}
         value={emotion}
-        onChange={(v) => v && setEmotion(v)}
+        onChange={(v) => v && setEmotion(v as Emotion)}
         allowDeselect={false}
         comboboxProps={{ withinPortal: false }}
       />
@@ -212,83 +229,96 @@ function QuoteEditor({
   );
 }
 
+const NARRATOR_LABEL = 'Narrator (no speaker)';
+
 /** A piece of a quotation, colored by its speaker; click to change it. */
-export function QuoteSpan({
+export const QuoteSpan = memo(function QuoteSpan({
   chapter,
   segment,
   first,
+  names,
 }: {
   chapter: ChapterDetail;
   segment: Segment;
   first: boolean;
+  names: Map<number, string>;
 }) {
+  // The popover (and its listeners) only exists while it is open: a chapter
+  // can have thousands of quote pieces.
   const [open, setOpen] = useState(false);
-  const names = new Map<number, string>();
-  for (const c of [...(chapter.characters ?? []), ...(chapter.speakers ?? [])]) {
-    names.set(c.id, c.name);
-  }
   const name = segment.speakerId === undefined ? 'Narrator' : (names.get(segment.speakerId) ?? '?');
   const color = speakerColor(segment.speakerId);
-  const below = chapter.attribution?.unsureBelow ?? 0.6;
-  const check =
-    chapter.attributionStatus === 'done' || segment.speakerManual ? unsure(segment, below) : false;
-  return (
-    <Popover opened={open} onChange={setOpen} position="bottom-start" withArrow shadow="md">
-      <Popover.Target>
-        <Box
+  const check = unsure(chapter, segment);
+  const labeled =
+    first &&
+    (segment.speakerId !== undefined ||
+      segment.speakerManual ||
+      chapter.attributionStatus === 'done');
+  const span = (
+    <Box
+      component="span"
+      data-quote={segment.quoteRef}
+      role="button"
+      tabIndex={0}
+      aria-label={`${name}${check ? ' (to check)' : ''}: ${segment.text}`}
+      title={
+        segment.speakerManual
+          ? `${name}, chosen by you`
+          : `${name}, confidence ${Math.round(segment.confidence * 100)}%`
+      }
+      onClick={() => setOpen((o) => !o)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          setOpen((o) => !o);
+        }
+      }}
+      style={{
+        background: `var(--mantine-color-${color}-light)`,
+        borderRadius: 4,
+        padding: '1px 2px',
+        cursor: 'pointer',
+        outline: check ? '1px dashed var(--mantine-color-yellow-6)' : undefined,
+      }}
+    >
+      {labeled && (
+        <Text
           component="span"
-          data-quote={segment.quoteRef}
-          role="button"
-          tabIndex={0}
-          aria-label={`Quote ${segment.quoteRef}, spoken by ${name}`}
-          onClick={() => setOpen((o) => !o)}
-          onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setOpen((o) => !o)}
-          style={{
-            background: `var(--mantine-color-${color}-light)`,
-            borderRadius: 4,
-            padding: '1px 2px',
-            cursor: 'pointer',
-            outline: check ? '1px dashed var(--mantine-color-yellow-6)' : undefined,
-          }}
+          size="xs"
+          fw={600}
+          c={`${color}.7`}
+          mr={4}
+          style={{ whiteSpace: 'nowrap' }}
         >
-          {first &&
-            (segment.speakerId !== undefined ||
-              segment.speakerManual ||
-              chapter.attributionStatus === 'done') && (
-              <Tooltip
-                label={
-                  segment.speakerManual
-                    ? 'Chosen by you'
-                    : `Confidence ${Math.round(segment.confidence * 100)}%`
-                }
-                openDelay={300}
-              >
-                <Text
-                  component="span"
-                  size="xs"
-                  fw={600}
-                  c={`${color}.7`}
-                  mr={4}
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  {check ? (
-                    <IconUserQuestion
-                      size={12}
-                      style={{ verticalAlign: -1 }}
-                      aria-label="to check"
-                    />
-                  ) : null}{' '}
-                  {name}
-                  {segment.emotion && segment.emotion !== 'neutral' ? ` · ${segment.emotion}` : ''}
-                </Text>
-              </Tooltip>
-            )}
-          {segment.text}
-        </Box>
-      </Popover.Target>
+          {check && <IconUserQuestion size={12} style={{ verticalAlign: -1 }} />} {name}
+          {segment.emotion && segment.emotion !== 'neutral' ? ` · ${segment.emotion}` : ''}
+        </Text>
+      )}
+      {segment.text}
+    </Box>
+  );
+  if (!open) {
+    return span;
+  }
+  return (
+    <Popover
+      opened
+      onChange={setOpen}
+      position="bottom-start"
+      withArrow
+      shadow="md"
+      trapFocus
+      returnFocus
+    >
+      <Popover.Target>{span}</Popover.Target>
       <Popover.Dropdown>
-        {open && <QuoteEditor chapter={chapter} segment={segment} onDone={() => setOpen(false)} />}
+        <QuoteEditor
+          chapter={chapter}
+          segment={segment}
+          names={names}
+          onDone={() => setOpen(false)}
+        />
       </Popover.Dropdown>
     </Popover>
   );
-}
+});

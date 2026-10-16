@@ -27,7 +27,7 @@ import {
 } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 
 import {
   audioUrl,
@@ -45,7 +45,7 @@ import { AttributionBar, QuoteSpan } from '../components/ChapterSpeakers';
 import { AnchorLink } from '../components/links';
 import { confirmMerge } from '../lib/confirm';
 import { formatListeningTime, formatNumber } from '../lib/format';
-import { unsure } from '../lib/speakers';
+import { speakerNames, unsure } from '../lib/speakers';
 import { notifyError, notifySuccess } from '../lib/notify';
 
 const narrations: Record<NonNullable<ChapterDetail['narration']>, string> = {
@@ -64,16 +64,18 @@ function narrationLabel(c: ChapterDetail): string {
   return `${[label, pov && `POV ${pov}`].filter(Boolean).join(', ')} · `;
 }
 
-function ParagraphView({
+const ParagraphView = memo(function ParagraphView({
   chapter,
   p,
   firstPieces,
+  names,
   onSplit,
 }: {
   chapter: ChapterDetail;
   p: Paragraph;
   firstPieces: Set<number>;
-  onSplit?: () => void;
+  names: Map<number, string>;
+  onSplit?: (p: Paragraph) => void;
 }) {
   const body =
     p.kind === 'scene_break' ? (
@@ -86,7 +88,12 @@ function ParagraphView({
           <span key={s.id}>
             {i > 0 && ' '}
             {s.kind === 'quote' ? (
-              <QuoteSpan chapter={chapter} segment={s} first={firstPieces.has(s.id)} />
+              <QuoteSpan
+                chapter={chapter}
+                segment={s}
+                first={firstPieces.has(s.id)}
+                names={names}
+              />
             ) : (
               s.text
             )}
@@ -103,7 +110,7 @@ function ParagraphView({
               variant="subtle"
               color="gray"
               size="sm"
-              onClick={onSplit}
+              onClick={() => onSplit(p)}
               aria-label="Split here"
             >
               <IconScissors size={14} />
@@ -114,7 +121,7 @@ function ParagraphView({
       <Box style={{ flex: 1 }}>{body}</Box>
     </Group>
   );
-}
+});
 
 function TitleEditor({ chapter, onSave }: { chapter: ChapterDetail; onSave: (t: string) => void }) {
   // Remounted (key) when the stored title changes, so no syncing effect.
@@ -176,7 +183,8 @@ export function ChapterPage() {
   const queryClient = useQueryClient();
   const book = useQuery(bookQuery(bookId));
   const { data: chapter, error, isPending } = useQuery(chapterQuery(chapterId));
-  const [onlyUnsure, setOnlyUnsure] = useState(false);
+  // The filter belongs to one chapter (the page is reused for the next).
+  const [unsureFor, setUnsureFor] = useState<number | null>(null);
 
   const invalidate = () =>
     Promise.all([
@@ -212,6 +220,42 @@ export function ChapterPage() {
     onError: (err) => notifyError('Could not split chapter', err),
   });
 
+  // Computed once per chapter, not per quote.
+  const names = useMemo(
+    () => (chapter ? speakerNames(chapter) : new Map<number, string>()),
+    [chapter],
+  );
+  // The first piece of each quotation carries its speaker's name.
+  const firstPieces = useMemo(() => {
+    const first = new Set<number>();
+    const seen = new Set<number>();
+    for (const p of chapter?.paragraphs ?? []) {
+      for (const s of p.segments) {
+        if (s.quoteRef > 0 && !seen.has(s.quoteRef)) {
+          seen.add(s.quoteRef);
+          first.add(s.id);
+        }
+      }
+    }
+    return first;
+  }, [chapter]);
+  const splitMutate = split.mutate;
+  const openSplit = useCallback(
+    (p: Paragraph) =>
+      modals.open({
+        title: 'Split chapter',
+        children: (
+          <SplitTitle
+            onSubmit={(title) => {
+              modals.closeAll();
+              splitMutate({ paragraphId: p.id, title });
+            }}
+          />
+        ),
+      }),
+    [splitMutate],
+  );
+
   if (isPending) {
     return (
       <Center py="xl">
@@ -227,20 +271,9 @@ export function ChapterPage() {
     );
   }
 
-  // The first piece of each quotation carries its speaker's name.
-  const firstPieces = new Set<number>();
-  const seenQuotes = new Set<number>();
-  for (const p of chapter.paragraphs) {
-    for (const s of p.segments) {
-      if (s.quoteRef > 0 && !seenQuotes.has(s.quoteRef)) {
-        seenQuotes.add(s.quoteRef);
-        firstPieces.add(s.id);
-      }
-    }
-  }
-  const below = chapter.attribution?.unsureBelow ?? 0.6;
+  const onlyUnsure = unsureFor === chapter.id;
   const visible = onlyUnsure
-    ? chapter.paragraphs.filter((p) => p.segments.some((s) => unsure(s, below)))
+    ? chapter.paragraphs.filter((p) => p.segments.some((s) => unsure(chapter, s)))
     : chapter.paragraphs;
 
   const go = (id: number | undefined) =>
@@ -358,7 +391,17 @@ export function ChapterPage() {
         </Group>
       )}
 
-      <AttributionBar chapter={chapter} onlyUnsure={onlyUnsure} onOnlyUnsure={setOnlyUnsure} />
+      <AttributionBar
+        chapter={chapter}
+        analysisDone={book.data?.analysisStatus === 'done'}
+        onlyUnsure={onlyUnsure}
+        onOnlyUnsure={(on) => setUnsureFor(on ? chapter.id : null)}
+      />
+      {onlyUnsure && visible.length === 0 && (
+        <Text c="dimmed" size="sm">
+          Nothing left to check in this chapter.
+        </Text>
+      )}
 
       <Stack gap="sm" mt="md">
         {visible.map((p) => (
@@ -367,22 +410,8 @@ export function ChapterPage() {
             chapter={chapter}
             p={p}
             firstPieces={firstPieces}
-            onSplit={
-              p.idx === 0 || onlyUnsure
-                ? undefined
-                : () =>
-                    modals.open({
-                      title: 'Split chapter',
-                      children: (
-                        <SplitTitle
-                          onSubmit={(title) => {
-                            modals.closeAll();
-                            split.mutate({ paragraphId: p.id, title });
-                          }}
-                        />
-                      ),
-                    })
-            }
+            names={names}
+            onSplit={p.idx === 0 || onlyUnsure ? undefined : openSplit}
           />
         ))}
       </Stack>

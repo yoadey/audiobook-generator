@@ -168,8 +168,10 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 	for _, sg := range segs {
 		seg := Segment{
 			Id: sg.ID, Idx: sg.Idx, Kind: SegmentKind(sg.Kind), QuoteRef: sg.QuoteRef, Text: sg.Text,
-			SpeakerId: sg.SpeakerCharacterID, Emotion: nonEmpty(sg.Emotion), Confidence: float32(sg.Confidence),
-			SpeakerManual: sg.SpeakerManual,
+			SpeakerId: sg.SpeakerCharacterID, Confidence: float32(sg.Confidence), SpeakerManual: sg.SpeakerManual,
+		}
+		if e := Emotion(sg.Emotion); e.Valid() {
+			seg.Emotion = &e
 		}
 		if id := sg.SpeakerCharacterID; id != nil && !seen[*id] {
 			seen[*id] = true

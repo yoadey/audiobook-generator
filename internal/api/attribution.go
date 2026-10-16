@@ -121,7 +121,10 @@ func (s *Server) UpdateQuote(ctx context.Context, req UpdateQuoteRequestObject) 
 	if u.Emotion != nil {
 		emotion = string(*u.Emotion)
 	}
-	if err := s.Store.SetQuoteSpeaker(ctx, c.ID, req.QuoteRef, speaker, emotion); err != nil {
+	if err := s.Store.SetQuoteSpeaker(ctx, c.ID, req.QuoteRef, speaker, emotion); isNotFound(err) {
+		// Split or merged away meanwhile.
+		return UpdateQuote404JSONResponse{Message: "quotation not found"}, nil
+	} else if err != nil {
 		return nil, err
 	}
 	// A speaker chosen for a chapter means the character appears in it.

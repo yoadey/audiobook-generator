@@ -500,13 +500,14 @@ describe('App', () => {
     renderAt('/books/1/chapters/10');
     const bar = await screen.findByTestId('attribution-bar');
     expect(within(bar).getByText(/1 of 2 quotes with a speaker, 1 to check/)).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Quote 1, spoken by Erin Solstice' }),
-    ).toHaveTextContent('Erin Solstice · happy');
+    expect(screen.getByRole('button', { name: 'Erin Solstice: “My dear,”' })).toHaveTextContent(
+      'Erin Solstice · happy',
+    );
     fireEvent.click(within(bar).getByRole('button', { name: 'Show only those to check' }));
     expect(screen.queryByText('Nothing else.')).not.toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Show all' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quote 2, spoken by Narrator' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Narrator (to check): “Come.”' }));
     fireEvent.click((await screen.findAllByLabelText('Speaker'))[0]!);
     fireEvent.click(await screen.findByRole('option', { name: 'Lyonette', hidden: true }));
     // (The popover is still fading in under jsdom, hence hidden.)

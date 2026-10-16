@@ -770,7 +770,7 @@ type ChapterAttribution struct {
 	Quotes int               `json:"quotes"`
 	Status AttributionStatus `json:"status"`
 
-	// Unsure Quotations attributed automatically with a confidence below unsureBelow (or to nobody)
+	// Unsure Quotations attributed automatically with a confidence below unsureBelow (or to nobody); 0 unless the status is done
 	Unsure      int     `json:"unsure"`
 	UnsureBelow float32 `json:"unsureBelow"`
 }
@@ -1230,7 +1230,7 @@ type RenderResult struct {
 type Segment struct {
 	// Confidence How sure the attribution is (0..1; 1 for a speaker chosen by hand)
 	Confidence float32     `json:"confidence"`
-	Emotion    *string     `json:"emotion,omitempty"`
+	Emotion    *Emotion    `json:"emotion,omitempty"`
 	Id         int64       `json:"id"`
 	Idx        int         `json:"idx"`
 	Kind       SegmentKind `json:"kind"`

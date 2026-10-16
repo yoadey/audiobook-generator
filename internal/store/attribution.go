@@ -77,15 +77,22 @@ func (s *Store) SetQuoteSpeaker(ctx context.Context, chapterID int64, quoteRef i
 ) error {
 	return s.Tx(ctx, func(tx *Store) error {
 		db := tx.db
-		res := db.Model(&Segment{}).Where("chapter_id = ? AND quote_ref = ?", chapterID, quoteRef).
+		var before Segment
+		if err := db.Where("chapter_id = ? AND quote_ref = ?", chapterID, quoteRef).Order("idx").
+			Take(&before).Error; err != nil {
+			return notFound(err)
+		}
+		if err := db.Model(&Segment{}).Where("chapter_id = ? AND quote_ref = ?", chapterID, quoteRef).
 			Updates(map[string]any{
 				"speaker_character_id": characterID, "emotion": emotion, "confidence": 1, "speaker_manual": true,
-			})
-		if res.Error != nil {
-			return res.Error
+			}).Error; err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
-			return ErrNotFound
+		// Confirming the speaker it already has changes nothing audible.
+		same := before.Emotion == emotion && (before.SpeakerCharacterID == nil) == (characterID == nil) &&
+			(characterID == nil || *before.SpeakerCharacterID == *characterID)
+		if same {
+			return nil
 		}
 		return db.Model(&Chapter{ID: chapterID}).Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
 	})
