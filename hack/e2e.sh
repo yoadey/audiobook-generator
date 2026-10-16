@@ -156,4 +156,41 @@ grep -q '"speakerId"' <<<"$detail"
 grep -q '"audioStatus":"ready"' <<<"$detail"
 grep -q '"audioRerendering":false' <<<"$detail"
 if grep -q '"audioError"' <<<"$detail"; then exit 1; fi
+
+# Podcast feed: works without a session and lists the rendered chapters.
+feed="$(curl -fsS "localhost:18080/api/books/$id" |
+  python3 -c 'import sys, json; print(json.load(sys.stdin)["feedPath"])')"
+rss="$(curl -fsS "localhost:18080$feed")"
+grep -q '<rss' <<<"$rss"
+grep -q '<enclosure' <<<"$rss"
+
+# M4B of the first volume (its missing chapters are rendered first).
+volume="$(curl -fsS "localhost:18080/api/books/$id/downloads" |
+  python3 -c 'import sys, json; print(json.load(sys.stdin)[0]["volumeId"])')"
+curl -fsS -X POST "localhost:18080/api/books/$id/downloads/$volume" >/dev/null
+for _ in $(seq 1 120); do
+  downloads="$(curl -fsS "localhost:18080/api/books/$id/downloads")"
+  grep -q '"status":"ready"' <<<"$downloads" && break
+  grep -q '"status":"failed"' <<<"$downloads" && break
+  sleep 1
+done
+echo "$downloads"
+grep -q '"status":"ready"' <<<"$downloads"
+code="$(curl -sS -o /tmp/volume.m4b -w '%{http_code}' "localhost:18080/api/books/$id/downloads/$volume/file")"
+test "$code" = 200
+test -s /tmp/volume.m4b
+
+# Export and import as a new book.
+curl -fsS -o /tmp/book.abg.zip "localhost:18080/api/books/$id/export"
+restored="$(curl -fsS -F "file=@/tmp/book.abg.zip" localhost:18080/api/import |
+  python3 -c 'import sys, json; print(json.load(sys.stdin)["id"])')"
+for _ in $(seq 1 60); do
+  book="$(curl -fsS "localhost:18080/api/books/$restored")"
+  grep -q '"status":"importing"' <<<"$book" || break
+  sleep 1
+done
+echo "$book"
+grep -q '"status":"imported"' <<<"$book"
+curl -fsS "localhost:18080/api/books/$restored/characters?tier=main" | grep -q '"voiceSource":"own"'
+
 echo "e2e ($db) passed"

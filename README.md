@@ -8,8 +8,10 @@ Go backend, React frontend, shipped as a self-contained Helm chart that
 brings the app, the [Kokoro](https://github.com/remsky/Kokoro-FastAPI) TTS
 server and storage.
 
-> **Status:** milestone M6 — a **multi-voice audiobook**: every
-> character speaks with their own voice. EPUBs are split into volumes, chapters and narration/quote segments
+> **Status:** milestone M7 — **feature-complete v1.0**: a multi-voice
+> audiobook in which every character speaks with their own voice, plus
+> pronunciations, podcast feeds, M4B downloads, sign-in, backups and
+> export/import. EPUBs are split into volumes, chapters and narration/quote segments
 > (a 3-million-word book imports in seconds) and can be reviewed in the UI;
 > chapters are rendered with a narrator voice of your choice (Kokoro, voice
 > mixes, speed, previews) and played in the built-in player, which resumes
@@ -25,7 +27,13 @@ server and storage.
 > quotes. Before a chapter is rendered, the LLM attributes its quotations to
 > their speakers (just in time, in parts for long chapters); the chapter
 > editor shows who says what, flags unsure speakers and lets you correct
-> them. See [`docs/PLAN.md`](docs/PLAN.md).
+> them. A per-book pronunciation lexicon fixes how fantasy names are
+> spoken (plain text or Kokoro phonemes, with previews); every book has a
+> podcast RSS feed for any podcast app and an M4B per volume with chapter
+> markers. Sign-in via OpenID Connect (e.g. Zitadel), Prometheus metrics,
+> Litestream backups of SQLite to S3 and an export/import of a book with
+> everything its analysis cost round it off. See
+> [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Install
 
@@ -51,7 +59,48 @@ Common options (all values: [`charts/audiobook-generator/values.yaml`](charts/au
 | `llm.attributionTokens` | `12000` | input tokens per speaker attribution request (longer chapters are sent in parts) |
 | `casting.mainCharacters` | `50` | speaking characters that get a voice recipe of their own; the rest speak with pool voices |
 | `ingress.enabled` | `false` | expose the UI |
+| `publicUrl` | `""` | external URL (`https://audiobooks.example.com`) for feed links and the sign-in redirect; empty: taken from each request |
+| `auth.oidc.enabled` | `false` | require a sign-in via OpenID Connect (see below) |
+| `feed.enabled` | `true` | podcast RSS feed per book; the chart generates the token key |
+| `backup.litestream.enabled` | `false` | stream the SQLite database to S3 and restore it onto a fresh volume |
 | `metrics.serviceMonitor.enabled` | `false` | Prometheus Operator scraping of `/metrics` |
+
+### Sign-in
+
+With `auth.oidc.enabled`, every page and API call needs a sign-in at your
+OpenID Connect provider (authorization code flow with PKCE; listening
+positions are kept per user). Register a web application with the
+redirect URI `<publicUrl>/auth/callback` and the post-logout URI
+`<publicUrl>/`, then:
+
+```yaml
+publicUrl: https://audiobooks.example.com
+auth:
+  oidc:
+    enabled: true
+    issuer: https://id.example.com
+    clientId: "123456789@audiobooks"
+    clientSecret: { existingSecret: audiobooks-oidc, key: client-secret }  # omit for a public client
+```
+
+Who may sign in is decided by the provider (e.g. Zitadel's "check
+authorization on authentication" with a project role). Health probes,
+`/metrics` and the podcast feeds stay reachable without a session; feed
+URLs carry a token instead, so treat them like passwords.
+
+### Podcast feeds, downloads, backup
+
+- **Podcast**: the book page shows a feed URL (button *Podcast*) that any
+  podcast app can subscribe to; rendered chapters are its episodes.
+- **Downloads**: one M4B with chapter markers and cover per volume (card
+  *Downloads*); missing chapters are rendered first.
+- **Backup**: with SQLite, `backup.litestream` (S3 endpoint, bucket and a
+  Secret with `access-key-id`/`secret-access-key`) keeps the database in
+  S3. Audio is not backed up; it can be rendered again.
+- **Export/import**: *Export* on the book page downloads a zip with the
+  book, its characters, voices, speakers, chapter edits and pronunciations
+  (no audio); *Import export* in the library restores it as a new book,
+  also on another instance or database.
 
 ### LLM providers
 
@@ -109,8 +158,9 @@ internal/                 Go packages: epub (parser), segment (quotes, chunking)
                           importer, jobs (persistent queue), render (TTS + ffmpeg,
                           lookahead), llm (providers, limits, prompts), analysis
                           (character bible), casting (voices), attribution (speakers),
-                          audio, store, api,
-                          tts, webui
+                          lexicon (pronunciations), feed (podcast RSS), assemble (M4B),
+                          auth (OIDC), transfer (export/import), metrics,
+                          audio, store, api, tts, webui
 web/                      React + Mantine frontend (built into internal/webui/dist)
 charts/audiobook-generator/  Helm chart
 hack/                     CI helpers: kubeconform, kind e2e, fake TTS/LLM server

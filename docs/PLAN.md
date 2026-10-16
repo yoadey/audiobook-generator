@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-16 · Status: **M0–M6 implemented** (LLM layer, character bible, voice casting, **multi-voice audiobook**), M7 next
+Last updated: 2026-10-16 · Status: **M0–M7 implemented** (feature-complete v1.0: multi-voice audiobook, lexicon, podcast RSS, M4B, OIDC, metrics, Litestream, export/import); M8 optional
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -503,7 +503,9 @@ GET    /api/events                        SSE: job and progress events
 GET    /api/chapters/{id}/audio           range requests for the player
 PUT    /api/books/{id}/progress           listening position
 GET    /feed/{token}/{bookId}.xml         podcast RSS (token instead of session)
-GET    /api/export/{bookId} · POST /api/import
+GET    /api/books/{id}/downloads · POST …/downloads/{volumeId} · GET …/downloads/{volumeId}/file   M4B
+GET    /api/books/{id}/export · POST /api/import
+GET    /auth/login|callback|logout · GET /api/me
 GET    /healthz · /readyz · /metrics
 ```
 

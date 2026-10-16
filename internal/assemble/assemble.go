@@ -37,7 +37,7 @@ const JobType = "assemble_download"
 const Queue = "assemble"
 
 // DefaultWaitInterval is how often a job waiting for chapters looks again.
-const DefaultWaitInterval = time.Minute
+const DefaultWaitInterval = 30 * time.Second
 
 // Enqueuer schedules jobs.
 type Enqueuer interface {

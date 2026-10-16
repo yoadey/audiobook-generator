@@ -17,7 +17,14 @@ helm install audiobooks oci://ghcr.io/yoadey/charts/audiobook-generator
 | Deployment + Service `kokoro` | `tts.kokoro.enabled` (default) |
 | CloudNativePG `Cluster` | `database.type=postgres`, `database.postgres.mode=cnpg` |
 | Secret with the Postgres password | external Postgres with `password` and no `existingSecret` |
+| Secret `<release>-app` with generated keys (feed tokens, session cookie; kept across upgrades and on uninstall) | `feed.enabled` / `auth.oidc.enabled` without an `existingSecret` |
+| Litestream sidecar + restore init container + ConfigMap | `backup.litestream.enabled` (SQLite only) |
 | Ingress / ServiceMonitor / NetworkPolicy | when enabled |
+
+The generated keys are looked up from the cluster on upgrades. Tools that
+render without cluster access (`helm template`, Argo CD) cannot do that and
+would generate new ones on every render: give `feed.existingSecret` and
+`auth.oidc.sessionKey.existingSecret` there.
 
 ## Database modes
 
