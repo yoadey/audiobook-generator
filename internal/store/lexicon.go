@@ -24,20 +24,30 @@ func (s *Store) GetLexiconEntry(ctx context.Context, id int64) (*LexiconEntry, e
 	return &e, nil
 }
 
+// LexiconTermTaken reports whether another entry of the book has the term
+// (ignoring case; compared in Go: SQLite's LOWER() folds ASCII only).
+func (s *Store) LexiconTermTaken(ctx context.Context, bookID, exceptID int64, term string) (bool, error) {
+	var terms []string
+	if err := s.db.WithContext(ctx).Model(&LexiconEntry{}).Where("book_id = ? AND id <> ?", bookID, exceptID).
+		Pluck("term", &terms).Error; err != nil {
+		return false, err
+	}
+	for _, t := range terms {
+		if strings.EqualFold(t, term) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // SaveLexiconEntry creates or updates an entry; a term may exist once per
 // book (ignoring case), else ErrConflict.
 func (s *Store) SaveLexiconEntry(ctx context.Context, e *LexiconEntry) error {
 	return s.Tx(ctx, func(tx *Store) error {
-		// Compared in Go: SQLite's LOWER() folds ASCII only.
-		var terms []LexiconEntry
-		if err := tx.db.Select("id, term").Where("book_id = ? AND id <> ?", e.BookID, e.ID).
-			Find(&terms).Error; err != nil {
+		if taken, err := tx.LexiconTermTaken(ctx, e.BookID, e.ID, e.Term); err != nil {
 			return err
-		}
-		for _, t := range terms {
-			if strings.EqualFold(t.Term, e.Term) {
-				return fmt.Errorf("%w: %q is already in the lexicon", ErrConflict, e.Term)
-			}
+		} else if taken {
+			return fmt.Errorf("%w: %q is already in the lexicon", ErrConflict, e.Term)
 		}
 		return tx.db.Save(e).Error
 	})

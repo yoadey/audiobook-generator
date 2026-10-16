@@ -283,12 +283,18 @@ func TestSameOriginWithoutSignIn(t *testing.T) {
 	assert.Equal(t, http.StatusOK, post("", "abg.lan"))
 	assert.Equal(t, http.StatusForbidden, post("null", "abg.lan"))
 
-	public := auth.SameOrigin("https://audio.example.org", ok)
-	r := httptest.NewRequest(http.MethodPost, "http://internal:8080/api/books", nil)
-	r.Header.Set("Origin", "https://audio.example.org")
-	w := httptest.NewRecorder()
-	public.ServeHTTP(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
+	public := auth.SameOrigin("https://audio.example.org:443", ok)
+	for origin, want := range map[string]int{
+		"https://audio.example.org": http.StatusOK, // default port
+		"http://internal:8080":      http.StatusOK, // the host it came in on (port-forward, LAN IP)
+		"https://evil.example":      http.StatusForbidden,
+	} {
+		r := httptest.NewRequest(http.MethodPost, "http://internal:8080/api/books", nil)
+		r.Header.Set("Origin", origin)
+		w := httptest.NewRecorder()
+		public.ServeHTTP(w, r)
+		assert.Equal(t, want, w.Code, origin)
+	}
 }
 
 func TestSafeReturn(t *testing.T) {

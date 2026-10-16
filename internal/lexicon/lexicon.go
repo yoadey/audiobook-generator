@@ -96,7 +96,22 @@ func (l *Lexicon) Apply(text string) string {
 
 // Matches reports whether any term occurs in text as a whole word.
 func (l *Lexicon) Matches(text string) bool {
-	return l != nil && l.Apply(text) != text
+	if l == nil {
+		return false
+	}
+	for pos := 0; pos < len(text); {
+		m := l.any.FindStringIndex(text[pos:])
+		if m == nil {
+			return false
+		}
+		start := pos + m[0]
+		if k, _ := l.match(text, start); k >= 0 {
+			return true
+		}
+		_, size := utf8.DecodeRuneInString(text[start:])
+		pos = start + max(size, 1)
+	}
+	return false
 }
 
 // match returns the longest term that is a whole word at start, and its

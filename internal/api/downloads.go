@@ -47,10 +47,16 @@ func (s *Server) downloads(ctx context.Context, bookID int64) ([]Download, error
 		d := Download{
 			VolumeId: p.VolumeID, Title: p.Title, ChapterCount: len(p.Chapters), Status: DownloadStatusNone,
 		}
+		toRender := 0 // what a rebuild would render first
 		for i := range p.Chapters {
 			c := &p.Chapters[i]
-			if c.AudioPath != "" && !s.Scheduler.Stale(b, c) {
+			stale := s.Scheduler.Stale(b, c)
+			if c.AudioPath != "" && !stale {
 				d.RenderedCount++
+			}
+			// Outdated audio whose re-render failed is used as it is.
+			if c.AudioPath == "" || (stale && c.AudioError == "") {
+				toRender++
 			}
 		}
 		if f := byVolume[p.VolumeID]; f != nil {
@@ -61,7 +67,7 @@ func (s *Server) downloads(ctx context.Context, bookID int64) ([]Download, error
 				d.SizeBytes = &f.Size
 				d.DurationMs = &f.DurationMs
 				// Changed chapters, or ones rendered with other voices since.
-				d.Outdated = f.SourceKey != assemble.SourceKey(&p) || d.RenderedCount < d.ChapterCount
+				d.Outdated = f.SourceKey != assemble.SourceKey(&p) || toRender > 0
 			}
 		}
 		if j := pending[p.VolumeID]; j != nil {

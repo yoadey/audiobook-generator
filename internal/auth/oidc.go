@@ -363,20 +363,33 @@ func SameOrigin(publicURL string, next http.Handler) http.Handler {
 	})
 }
 
-// sameHost compares the host of an Origin with the service's (the
-// scheme is not compared: a TLS-terminating proxy may not say it was https).
+// sameHost reports whether an Origin names the host the request came in
+// on, or the public URL's (the scheme is not compared: a TLS-terminating
+// proxy may not say it was https; default ports are ignored).
 func sameHost(originHeader string, r *http.Request, publicURL string) bool {
 	o, err := url.Parse(originHeader)
 	if err != nil || o.Host == "" {
 		return false
 	}
-	want := r.Host
+	got := hostKey(o.Scheme, o.Host)
+	if got == hostKey("", r.Host) || got == hostKey("http", r.Host) || got == hostKey("https", r.Host) {
+		return true
+	}
 	if publicURL != "" {
-		if u, err := url.Parse(publicURL); err == nil {
-			want = u.Host
+		if u, err := url.Parse(publicURL); err == nil && got == hostKey(u.Scheme, u.Host) {
+			return true
 		}
 	}
-	return strings.EqualFold(o.Host, want)
+	return false
+}
+
+// hostKey lower-cases a host and drops the scheme's default port.
+func hostKey(scheme, host string) string {
+	host = strings.ToLower(host)
+	if (scheme == "https" && strings.HasSuffix(host, ":443")) || (scheme == "http" && strings.HasSuffix(host, ":80")) {
+		host = host[:strings.LastIndex(host, ":")]
+	}
+	return host
 }
 
 // BaseURL is the configured public URL, else the one the request came in

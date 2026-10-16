@@ -21,6 +21,7 @@ func TestApply(t *testing.T) {
 	assert.Equal(t, "Air-in", l.Apply("Érin"))
 	assert.Equal(t, "nothing here", l.Apply("nothing here"))
 	assert.True(t, l.Matches("say ryoka"))
+	assert.True(t, Compile([]store.LexiconEntry{{Term: "Ryoka", Replacement: "Ryoka"}}).Matches("Ryoka"), "identity replacement")
 	assert.False(t, l.Matches("Ryokas"))
 	var none *Lexicon
 	assert.Equal(t, "x", none.Apply("x"))

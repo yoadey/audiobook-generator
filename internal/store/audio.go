@@ -179,11 +179,15 @@ func (s *Store) DownloadFiles(ctx context.Context) ([]AudioFile, error) {
 	return out, err
 }
 
-// ForgetDownloadFiles clears the file of downloads (it is gone).
+// ForgetDownloadFiles clears the file of downloads (it is gone); a
+// finished one is to be built again.
 func (s *Store) ForgetDownloadFiles(ctx context.Context, ids ...int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return s.db.WithContext(ctx).Model(&Download{}).Where("id IN ?", ids).
-		Updates(map[string]any{"path": "", "size": 0, "duration_ms": 0, "source_key": ""}).Error
+	return s.db.WithContext(ctx).Model(&Download{}).Where("id IN ?", ids).Updates(map[string]any{
+		"path": "", "size": 0, "duration_ms": 0, "source_key": "",
+		"status": gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", DownloadReady, DownloadFailed),
+		"error":  gorm.Expr("CASE WHEN status = ? THEN ? ELSE error END", DownloadReady, "the file is gone; build it again"),
+	}).Error
 }

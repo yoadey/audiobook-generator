@@ -41,8 +41,13 @@ func TestLexicon(t *testing.T) {
 		require.NoError(t, err)
 		assert.Zero(t, other.VoiceRev, "chapter 3 does not mention her")
 
+		revBefore, err := s.GetChapter(ctx, ids[1])
+		require.NoError(t, err)
 		require.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/books/"+id+"/lexicon",
 			map[string]any{"term": "ANNA", "replacement": "x"}, nil))
+		revAfter, err := s.GetChapter(ctx, ids[1])
+		require.NoError(t, err)
+		assert.Equal(t, revBefore.VoiceRev, revAfter.VoiceRev, "a refused entry outdates nothing")
 		// Case is folded beyond ASCII on both databases.
 		var emile api.LexiconEntry
 		require.Equal(t, http.StatusCreated, c.json(http.MethodPost, "/api/books/"+id+"/lexicon",

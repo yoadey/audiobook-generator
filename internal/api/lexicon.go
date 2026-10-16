@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/yoadey/audiobook-generator/internal/lexicon"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -51,6 +52,12 @@ func (s *Server) CreateLexiconEntry(ctx context.Context, req CreateLexiconEntryR
 	if msg := validateLexicon(e); msg != "" {
 		return CreateLexiconEntry400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 	}
+	// The conflict is checked first: a refused entry must not outdate audio.
+	if taken, err := s.Store.LexiconTermTaken(ctx, e.BookID, 0, e.Term); err != nil {
+		return nil, err
+	} else if taken {
+		return CreateLexiconEntry409JSONResponse{Message: fmt.Sprintf("%q is already in the lexicon", e.Term)}, nil
+	}
 	if err := s.touchTerms(ctx, e.BookID, e.Term); err != nil {
 		return nil, err
 	}
@@ -83,6 +90,11 @@ func (s *Server) UpdateLexiconEntry(ctx context.Context, req UpdateLexiconEntryR
 	}
 	if msg := validateLexicon(e); msg != "" {
 		return UpdateLexiconEntry400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
+	}
+	if taken, err := s.Store.LexiconTermTaken(ctx, e.BookID, e.ID, e.Term); err != nil {
+		return nil, err
+	} else if taken {
+		return UpdateLexiconEntry409JSONResponse{Message: fmt.Sprintf("%q is already in the lexicon", e.Term)}, nil
 	}
 	if err := s.touchTerms(ctx, e.BookID, oldTerm, e.Term); err != nil {
 		return nil, err
@@ -121,8 +133,7 @@ func (s *Server) DeleteLexiconEntry(ctx context.Context, req DeleteLexiconEntryR
 func (s *Server) touchTerms(ctx context.Context, bookID int64, terms ...string) error {
 	var es []store.LexiconEntry
 	for _, t := range terms {
-		// A replacement no text contains, so any match changes the text.
-		es = append(es, store.LexiconEntry{Term: t, Replacement: "\x00"})
+		es = append(es, store.LexiconEntry{Term: t})
 	}
 	l := lexicon.Compile(es)
 	if l == nil {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/yoadey/audiobook-generator/internal/auth"
+	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
@@ -150,16 +151,14 @@ func (h *Handler) serveCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, err := h.Store.GetBook(r.Context(), bookID)
-	if errors.Is(err, store.ErrNotFound) || err == nil && b.CoverPath == "" {
+	if errors.Is(err, store.ErrNotFound) || err == nil && (b.CoverPath == "" || !importer.AllowedCoverType(b.CoverMediaType)) {
 		http.NotFound(w, r)
 		return
 	} else if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	if b.CoverMediaType != "" {
-		w.Header().Set("Content-Type", b.CoverMediaType)
-	}
+	w.Header().Set("Content-Type", b.CoverMediaType)
 	http.ServeFile(w, r, filepath.Join(h.DataDir, b.CoverPath))
 }
 
@@ -247,7 +246,7 @@ func (h *Handler) build(ctx context.Context, b *store.Book, base string) ([]byte
 		// Private feeds must not be listed in podcast directories.
 		Block: "yes",
 	}
-	if b.CoverPath != "" {
+	if b.CoverPath != "" && importer.AllowedCoverType(b.CoverMediaType) {
 		ch.Image = &image{Href: fmt.Sprintf("%s/%d/cover", base, b.ID)}
 	}
 	for i := range chapters {

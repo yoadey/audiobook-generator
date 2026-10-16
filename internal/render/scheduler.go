@@ -82,7 +82,10 @@ func (s *Scheduler) enqueue(ctx context.Context, b *store.Book, c *store.Chapter
 	if pending != nil {
 		// A chapter queued for a download, now wanted by a listener, moves
 		// up the queue.
-		return false, s.Store.RaiseJobPriority(ctx, pending.ID, priority)
+		if pending.Status == store.JobQueued && pending.Priority < priority {
+			return false, s.Store.RaiseJobPriority(ctx, pending.ID, priority)
+		}
+		return false, nil
 	}
 	// Audio that is only outdated stays playable until the new one is
 	// ready (the listener may be in the middle of it).

@@ -175,7 +175,9 @@ func (s *Server) DeleteBook(ctx context.Context, req DeleteBookRequestObject) (D
 // GetBookCover serves the cover image.
 func (s *Server) GetBookCover(ctx context.Context, req GetBookCoverRequestObject) (GetBookCoverResponseObject, error) {
 	b, err := s.Store.GetBook(ctx, req.BookId)
-	if isNotFound(err) || (err == nil && b.CoverPath == "") {
+	// A cover stored before types were checked is only served if it is a
+	// plain image (an SVG or HTML "cover" would run as script).
+	if isNotFound(err) || (err == nil && (b.CoverPath == "" || !importer.AllowedCoverType(b.CoverMediaType))) {
 		return GetBookCover404JSONResponse{ErrorJSONResponse(errMsg("no cover"))}, nil
 	} else if err != nil {
 		return nil, err
