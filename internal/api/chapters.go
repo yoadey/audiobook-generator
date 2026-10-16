@@ -196,7 +196,7 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		WordCount: ch.WordCount, QuoteCount: ch.QuoteCount, Excluded: ch.Excluded, Status: ch.Status,
 		AudioStatus: ch.AudioStatus, AudioDurationMs: ch.AudioDurationMs, AudioError: ch.AudioError,
 		AudioStale: ch.AudioStale, AudioRerendering: ch.AudioRerendering, AudioVersion: ch.AudioVersion,
-		Narration: ch.Narration,
+		Narration:      ch.Narration,
 		PovCharacterId: ch.PovCharacterId, AttributionStatus: ch.AttributionStatus, AttributionError: ch.AttributionError,
 		Paragraphs: make([]Paragraph, 0, len(paras)),
 	}
