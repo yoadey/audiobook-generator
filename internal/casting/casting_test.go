@@ -41,10 +41,25 @@ func TestRecipes(t *testing.T) {
 		assert.ErrorIs(t, err, ErrRecipe, bad)
 	}
 
+	// Rounding never leaves the parts out of order: the string is stable.
+	for _, in := range []string{"af_x(1)+af_y(7)+af_z(7)", "af_x(0.335)+af_y(0.335)+af_z(0.33)"} {
+		r, err := ParseRecipe(in)
+		require.NoError(t, err)
+		again, err := ParseRecipe(r.String())
+		require.NoError(t, err)
+		assert.Equal(t, r.String(), again.String(), in)
+		for i := 1; i < len(r); i++ {
+			assert.GreaterOrEqual(t, r[i-1].Weight, r[i].Weight, in)
+		}
+	}
+	_, err = ParseRecipe(strings.Repeat("a", 201))
+	assert.ErrorIs(t, err, ErrRecipe)
+
 	a, _ := ParseRecipe("bf_emma(0.7)+af_bella(0.3)")
 	b, _ := ParseRecipe("bf_emma")
 	assert.InDelta(t, 0.3, Distance(a, 1, b, 1), 1e-9)
 	assert.InDelta(t, 0.4, Distance(a, 1, b, 1.1), 1e-9)
+	assert.InDelta(t, 0.15, Distance(b, 1, b, 1.8), 1e-9, "speed alone does not make a voice distinct")
 	assert.InDelta(t, 1, Distance(b, 1, Recipe{{Voice: "af_sky", Weight: 1}}, 1), 1e-9)
 	assert.InDelta(t, 0, Distance(a, 1, a, 1), 1e-9)
 }
@@ -411,6 +426,57 @@ func TestPromotionWhileCasting(t *testing.T) {
 	})
 }
 
+func TestStartWhileTheJobFinishes(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b := setup(t, s)
+		c, _ := newCaster(t, s)
+		require.NoError(t, c.Start(ctx, b, false))
+		_, err := s.ClaimJob(ctx, Queue, time.Now().UTC())
+		require.NoError(t, err)
+		// The running job has just finished its work …
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"CastingStatus": store.CastingDone}))
+		got, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		// … when a start arrives: another job is queued, so nothing is lost.
+		require.NoError(t, c.Start(ctx, got, false))
+		assert.Len(t, c.Jobs.(*enqueuer).jobs, 2)
+		got, err = s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.CastingQueued, got.CastingStatus)
+	})
+}
+
+func TestGenderChangedWhileCasting(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b := setup(t, s)
+		c, srv := newCaster(t, s)
+		x := &store.Character{BookID: b.ID, Name: "X", Gender: store.GenderMale, Speaks: true, Importance: 5}
+		require.NoError(t, s.CreateCharacter(ctx, x))
+		require.NoError(t, c.Start(ctx, b, false))
+		calls := 0
+		srv.Respond = func(llmtest.Request) llmtest.Reply {
+			calls++
+			if calls == 1 {
+				require.NoError(t, s.UpdateCharacter(ctx, x.ID, map[string]any{"Gender": store.GenderFemale}))
+				got, err := s.GetBook(ctx, b.ID)
+				require.NoError(t, err)
+				require.NoError(t, c.Start(ctx, got, false))
+			}
+			return castAnswer(t)
+		}
+		require.NoError(t, c.Run(ctx, b.ID, func(float64) {}))
+		got, err := s.GetCharacter(ctx, x.ID)
+		require.NoError(t, err)
+		r, err := ParseRecipe(got.VoiceRecipe)
+		require.NoError(t, err)
+		for _, p := range r {
+			assert.Equal(t, store.GenderFemale, lookup(t, p.Voice).Gender, "cast for the new gender")
+		}
+	})
+}
+
 func TestCastingFailureAndQuota(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
 		ctx := context.Background()
@@ -449,6 +515,10 @@ func TestQuotes(t *testing.T) {
 		qs, err = Quotes(ctx, s, &store.Character{ID: anna.ID, Name: "the girl"}, nil, 5)
 		require.NoError(t, err)
 		assert.Empty(t, qs, "descriptions are not names")
-		assert.True(t, strings.Contains(attributionRe("Erin", nil).String(), "Erin"))
+		re := attributionRe("Émile Zola", []string{"Zoë"})
+		assert.True(t, re.MatchString("“Hi,” Émile said."))
+		assert.True(t, re.MatchString("“Hi,” said Zoë."))
+		assert.False(t, re.MatchString("“Hi,” said Zoëtrope."))
+		assert.False(t, re.MatchString("“Hi,” Rémile said."))
 	})
 }

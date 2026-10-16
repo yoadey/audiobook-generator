@@ -116,11 +116,16 @@ func (c *Caster) Start(ctx context.Context, b *store.Book, restart bool) error {
 		if restart {
 			return ErrBusy
 		}
-		// The queued or running job picks up what is new: a running one
-		// sees the "queued" status when it finishes and runs again.
-		return c.Store.UpdateBook(ctx, b.ID, map[string]any{
+		// A queued job picks up what is new. A running one sees the
+		// "queued" status when it finishes and runs again, but it may be
+		// finishing right now: queue another job too (it does nothing if
+		// the first one already did the work).
+		if err := c.Store.UpdateBook(ctx, b.ID, map[string]any{
 			"CastingStatus": store.CastingQueued, "CastingError": "",
-		})
+		}); err != nil || pending.Status != store.JobRunning {
+			return err
+		}
+		return c.Jobs.Enqueue(ctx, &store.Job{Type: JobType, BookID: &b.ID, MaxAttempts: 5})
 	}
 	if restart {
 		if err := c.Store.ResetCasting(ctx, b.ID); err != nil {
@@ -248,7 +253,10 @@ func (c *Caster) cast(ctx context.Context, b *store.Book, castable []BaseVoice, 
 	narratorVoice, narratorSpeed := Narrator(b, c.DefaultVoice)
 	narrator, err := ParseRecipe(narratorVoice)
 	if err != nil {
-		return jobs.Permanent(fmt.Errorf("narrator voice %q: %w", narratorVoice, err))
+		// A narrator saved before recipes were checked this strictly.
+		if narrator, err = ParseRecipe(c.DefaultVoice); err != nil {
+			return jobs.Permanent(fmt.Errorf("narrator voice %q: %w", narratorVoice, err))
+		}
 	}
 
 	chars, err := c.Store.BookCharacters(ctx, bookID)
@@ -295,7 +303,7 @@ func (c *Caster) cast(ctx context.Context, b *store.Book, castable []BaseVoice, 
 			if r == nil {
 				continue
 			}
-			ok, err := c.Store.AssignVoice(ctx, ch.ID, r.String(), speed, note)
+			ok, err := c.Store.AssignVoice(ctx, ch.ID, ch.Gender, r.String(), speed, note)
 			if err != nil {
 				return err
 			}

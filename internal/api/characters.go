@@ -332,7 +332,8 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 		return nil, err
 	}
 	u := req.Body
-	// The analysis does not touch voices: they may change while it runs.
+	// Analysis batches do not touch voices, so they may change while it
+	// runs (its duplicate merges keep the voice of the merged character).
 	voiceOnly := u.Name == nil && u.Aliases == nil && u.Gender == nil && u.AgeGroup == nil && u.Role == nil &&
 		u.Description == nil && u.SpeechStyle == nil && u.Importance == nil
 	if busy && !voiceOnly {
@@ -391,11 +392,15 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 		_, err := tx.AddCharacterAliases(ctx, c, oldName)
 		return err
 	})
-	if err != nil {
+	if isNotFound(err) {
+		// Merged away by the analysis meanwhile.
+		return UpdateCharacter404JSONResponse{Message: "character not found"}, nil
+	} else if err != nil {
 		return nil, err
 	}
+	// The change is saved; a casting that cannot be queued is not its error.
 	if err := s.castIfNeeded(ctx, c.ID); err != nil {
-		return nil, err
+		s.Log.WarnContext(ctx, "queue casting", "character", c.ID, "err", err)
 	}
 	out, err := s.characterDetail(ctx, c.ID)
 	if err != nil {
@@ -444,6 +449,9 @@ func voiceFields(c *store.Character, u *CharacterUpdate, fields map[string]any) 
 		fields["VoiceRecipe"] = recipe
 		if recipe == "" {
 			fields["VoiceNote"] = ""
+			if u.VoiceSpeed == nil {
+				fields["VoiceSpeed"] = 1.0
+			}
 		}
 	}
 	if manual != c.VoiceManual {

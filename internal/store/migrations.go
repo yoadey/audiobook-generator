@@ -309,13 +309,26 @@ var migrations = []*gormigrate.Migration{
 			return nil
 		},
 		Rollback: func(tx *gorm.DB) error {
-			for _, col := range []string{"tier", "tier_manual", "voice_recipe", "voice_speed", "voice_manual", "voice_note"} {
-				if err := tx.Migrator().DropColumn("characters", col); err != nil {
+			type Character struct {
+				Tier        string
+				TierManual  bool
+				VoiceRecipe string
+				VoiceSpeed  float64
+				VoiceManual bool
+				VoiceNote   string
+			}
+			for _, col := range []string{"Tier", "TierManual", "VoiceRecipe", "VoiceSpeed", "VoiceManual", "VoiceNote"} {
+				if err := tx.Migrator().DropColumn(&Character{}, col); err != nil {
 					return err
 				}
 			}
-			for _, col := range []string{"casting_status", "casting_error", "casting_finished_at"} {
-				if err := tx.Migrator().DropColumn("books", col); err != nil {
+			type Book struct {
+				CastingStatus     string
+				CastingError      string
+				CastingFinishedAt *time.Time
+			}
+			for _, col := range []string{"CastingStatus", "CastingError", "CastingFinishedAt"} {
+				if err := tx.Migrator().DropColumn(&Book{}, col); err != nil {
 					return err
 				}
 			}

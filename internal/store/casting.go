@@ -43,12 +43,22 @@ func (s *Store) PromoteCharacters(ctx context.Context, ids ...int64) error {
 }
 
 // AssignVoice stores the casting's recipe for a main character that has
-// none yet and was not voiced by hand meanwhile; it reports whether it did.
-func (s *Store) AssignVoice(ctx context.Context, id int64, recipe string, speed float64, note string) (bool, error) {
+// none yet, was not voiced by hand meanwhile and still has the gender the
+// recipe was chosen for; it reports whether it did.
+func (s *Store) AssignVoice(ctx context.Context, id int64, gender Gender, recipe string, speed float64, note string) (bool, error) {
 	res := s.db.WithContext(ctx).Model(&Character{}).
-		Where("id = ? AND tier = ? AND voice_recipe = '' AND voice_manual = ?", id, TierMain, false).
+		Where("id = ? AND tier = ? AND voice_recipe = '' AND voice_manual = ? AND gender = ?",
+			id, TierMain, false, gender).
 		Updates(map[string]any{"voice_recipe": recipe, "voice_speed": speed, "voice_note": CleanText(note)})
 	return res.RowsAffected == 1, res.Error
+}
+
+// VoicedCharacters returns a book's characters with a recipe of their own.
+func (s *Store) VoicedCharacters(ctx context.Context, bookID int64) ([]Character, error) {
+	var cs []Character
+	err := s.db.WithContext(ctx).Select("id", "name", "voice_recipe", "voice_speed").
+		Where("book_id = ? AND voice_recipe <> ''", bookID).Order("id").Find(&cs).Error
+	return cs, err
 }
 
 // CastingCounts summarizes the tiers of a book's characters.

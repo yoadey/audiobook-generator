@@ -259,3 +259,43 @@ func TestAnalysisBatches(t *testing.T) {
 		assert.Zero(t, n)
 	})
 }
+
+func TestMergeKeepsFittingVoices(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b := &store.Book{Title: "B", Status: store.BookImported}
+		require.NoError(t, s.CreateBook(ctx, b))
+		mk := func(c store.Character) *store.Character {
+			c.BookID = b.ID
+			require.NoError(t, s.CreateCharacter(ctx, &c))
+			return &c
+		}
+		// A main character's cast voice moves to a voiceless target of
+		// the same gender, which becomes main.
+		target := mk(store.Character{Name: "Erin", Gender: store.GenderFemale})
+		src := mk(store.Character{Name: "Erin Solstice", Gender: store.GenderFemale, Tier: store.TierMain,
+			VoiceRecipe: "bf_emma", VoiceSpeed: 1.05})
+		got, err := s.MergeCharacters(ctx, target.ID, src.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.TierMain, got.Tier)
+		assert.Equal(t, "bf_emma", got.VoiceRecipe)
+		assert.InDelta(t, 1.05, got.VoiceSpeed, 1e-9)
+
+		// A voice cast for an unknown gender is dropped once the gender is
+		// known; one of the other gender is not taken over.
+		unknown := mk(store.Character{Name: "Guard", Tier: store.TierMain, VoiceRecipe: "af_sky"})
+		male := mk(store.Character{Name: "The Guard", Gender: store.GenderMale, Tier: store.TierMain})
+		got, err = s.MergeCharacters(ctx, unknown.ID, male.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.GenderMale, got.Gender)
+		assert.Empty(t, got.VoiceRecipe)
+
+		// A minor target (chosen by hand) does not keep a cast voice.
+		minor := mk(store.Character{Name: "Tom", Gender: store.GenderMale, Tier: store.TierMinor, TierManual: true})
+		cast := mk(store.Character{Name: "Thomas", Gender: store.GenderMale, Tier: store.TierMain, VoiceRecipe: "bm_george"})
+		got, err = s.MergeCharacters(ctx, minor.ID, cast.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.TierMinor, got.Tier)
+		assert.Empty(t, got.VoiceRecipe)
+	})
+}

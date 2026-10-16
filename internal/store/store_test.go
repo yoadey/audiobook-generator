@@ -24,6 +24,20 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	})
 }
 
+func TestLatestMigrationRollsBack(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		require.NoError(t, s.RollbackLast(ctx))
+		v, err := s.SchemaVersion(ctx)
+		require.NoError(t, err)
+		assert.NotEqual(t, store.LatestSchemaVersion(), v)
+		require.NoError(t, s.Migrate(ctx))
+		v, err = s.SchemaVersion(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, store.LatestSchemaVersion(), v)
+	})
+}
+
 func TestListBooks(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
 		ctx := context.Background()

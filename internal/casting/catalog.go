@@ -137,13 +137,17 @@ func (c *Catalog) Voices(ctx context.Context) ([]BaseVoice, error) {
 	if c.err != nil && time.Since(c.failed) < failTTL {
 		return assumed(), c.err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// The answer is shared: a caller that gives up must not cancel it, nor
+	// be remembered as a server failure.
+	fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	server, err := c.TTS.Voices(ctx)
+	server, err := c.TTS.Voices(fetchCtx)
 	if err != nil {
 		c.err, c.failed = fmt.Errorf("TTS server: %w", err), time.Now()
 		return assumed(), c.err
 	}
+	// Server-only voices in a stable order, so pool picks stay the same.
+	slices.SortFunc(server, func(a, b tts.Voice) int { return strings.Compare(a.ID, b.ID) })
 	c.err = nil
 	have := map[string]bool{}
 	for _, v := range server {

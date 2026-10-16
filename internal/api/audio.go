@@ -33,7 +33,7 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(
 				`narratorVoice must be a voice like "af_heart" or a mix like "bf_emma(2)+af_bella(1)"`))}, nil
 		}
-		fields["NarratorVoice"] = voice
+		fields["NarratorVoice"] = strings.Join(strings.Fields(voice), "")
 	}
 	if v := req.Body.NarratorSpeed; v != nil {
 		if *v < 0.5 || *v > 2 {

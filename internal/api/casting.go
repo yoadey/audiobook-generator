@@ -76,7 +76,7 @@ func (s *Server) toCasting(ctx context.Context, b *store.Book) (Casting, error) 
 	if err != nil {
 		return Casting{}, err
 	}
-	chars, err := s.Store.BookCharacters(ctx, b.ID)
+	chars, err := s.Store.VoicedCharacters(ctx, b.ID)
 	if err != nil {
 		return Casting{}, err
 	}

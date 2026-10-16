@@ -19,8 +19,11 @@ type Part struct {
 // Recipe is a weighted blend of base voices; weights sum to 1.
 type Recipe []Part
 
-// MaxParts bounds the base voices of a recipe.
-const MaxParts = 4
+// MaxParts bounds the base voices of a recipe, maxRecipeLen its text.
+const (
+	MaxParts     = 4
+	maxRecipeLen = 200
+)
 
 var partRe = regexp.MustCompile(`^([a-z]{2}_[a-z0-9]+)(?:\(([0-9]+(?:\.[0-9]+)?)\))?$`)
 
@@ -32,7 +35,7 @@ var ErrRecipe = errors.New(`a voice must look like "af_heart" or a mix like "bf_
 // added up.
 func ParseRecipe(s string) (Recipe, error) {
 	s = strings.TrimSpace(s)
-	if s == "" {
+	if s == "" || len(s) > maxRecipeLen {
 		return nil, ErrRecipe
 	}
 	var r Recipe
@@ -69,15 +72,7 @@ func ParseRecipe(s string) (Recipe, error) {
 // hundredths that still sum to 1.
 func (r Recipe) normalized() Recipe {
 	out := slices.Clone(r)
-	slices.SortStableFunc(out, func(a, b Part) int {
-		if a.Weight != b.Weight {
-			if a.Weight > b.Weight {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(a.Voice, b.Voice)
-	})
+	slices.SortStableFunc(out, byWeight)
 	sum := 0.0
 	for i := range out {
 		out[i].Weight = math.Round(out[i].Weight*100) / 100
@@ -86,8 +81,20 @@ func (r Recipe) normalized() Recipe {
 	out = slices.DeleteFunc(out, func(p Part) bool { return p.Weight <= 0 })
 	if len(out) > 0 {
 		out[0].Weight = math.Round((out[0].Weight+1-sum)*100) / 100
+		// The correction may reorder near-equal parts.
+		slices.SortStableFunc(out, byWeight)
 	}
 	return out
+}
+
+func byWeight(a, b Part) int {
+	if a.Weight != b.Weight {
+		if a.Weight > b.Weight {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(a.Voice, b.Voice)
 }
 
 // String formats the recipe for Kokoro ("af_heart",
@@ -120,13 +127,17 @@ func (r Recipe) weight(voice string) float64 {
 	return 0
 }
 
+// maxSpeedShare caps what a speed difference adds to Distance: a voice
+// spoken faster is still recognisably the same voice.
+const maxSpeedShare = 0.15
+
 // Distance tells how differently two voices sound, roughly: the share of
 // blend weight they do not have in common (0 same blend, 1 nothing in
-// common) plus their difference in speed.
+// common) plus their difference in speed (at most maxSpeedShare).
 func Distance(a Recipe, aSpeed float64, b Recipe, bSpeed float64) float64 {
 	shared := 0.0
 	for _, p := range a {
 		shared += min(p.Weight, b.weight(p.Voice))
 	}
-	return 1 - shared + math.Abs(aSpeed-bSpeed)
+	return 1 - shared + min(math.Abs(aSpeed-bSpeed), maxSpeedShare)
 }

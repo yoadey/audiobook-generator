@@ -146,5 +146,7 @@ func attributionRe(name string, aliases []string) *regexp.Regexp {
 	}
 	who := `(?:` + strings.Join(quoted, "|") + `)`
 	verb := `(?i:` + speechVerbs + `)`
-	return regexp.MustCompile(`(?:\b` + who + `\s+(?:\w+ly\s+)?` + verb + `\b)|(?:\b` + verb + `\s+` + who + `\b)`)
+	// Names may start or end with non-ASCII letters, which \b does not know.
+	const before, after = `(?:^|[^\p{L}\p{N}])`, `(?:$|[^\p{L}\p{N}])`
+	return regexp.MustCompile(`(?:` + before + who + `\s+(?:\w+ly\s+)?` + verb + `\b)|(?:\b` + verb + `\s+` + who + after + `)`)
 }

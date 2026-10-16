@@ -390,6 +390,10 @@ func (s *Store) MergeCharacters(ctx context.Context, targetID int64, sourceIDs .
 // signals (importance, speaks).
 func mergeProfile(dst, src *Character) {
 	if dst.Gender == GenderUnknown || dst.Gender == "" {
+		if dst.Gender != src.Gender && !dst.VoiceManual {
+			// A voice cast for an unknown gender may not fit the known one.
+			dst.VoiceRecipe, dst.VoiceSpeed, dst.VoiceNote = "", 1, ""
+		}
 		dst.Gender = src.Gender
 	}
 	if dst.AgeGroup == AgeUnknown || dst.AgeGroup == "" {
@@ -410,7 +414,8 @@ func mergeProfile(dst, src *Character) {
 	// The merged character keeps a voice: its own, else a hand-picked or
 	// cast one of a source; a main character stays main.
 	if dst.VoiceRecipe == "" || (!dst.VoiceManual && src.VoiceManual) {
-		if src.VoiceRecipe != "" {
+		// A cast voice only fits a character of the same gender.
+		if src.VoiceRecipe != "" && (src.VoiceManual || src.Gender == dst.Gender) {
 			dst.VoiceRecipe, dst.VoiceSpeed, dst.VoiceManual, dst.VoiceNote =
 				src.VoiceRecipe, src.VoiceSpeed, src.VoiceManual, src.VoiceNote
 		}
@@ -421,6 +426,10 @@ func mergeProfile(dst, src *Character) {
 		dst.Tier, dst.TierManual = src.Tier, true
 	case src.Tier == TierMain:
 		dst.Tier = TierMain
+	}
+	// Minor characters speak with pool voices unless one was chosen.
+	if dst.Tier != TierMain && !dst.VoiceManual {
+		dst.VoiceRecipe, dst.VoiceSpeed, dst.VoiceNote = "", 1, ""
 	}
 }
 

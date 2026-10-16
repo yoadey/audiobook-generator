@@ -96,6 +96,9 @@ func run() error {
 		Store: st, LLM: llmPool, Jobs: runner, BatchTokens: cfg.LLM.AnalysisBatchTokens, Log: log,
 	}
 	runner.Handle(analysis.JobType, analyzer.Handler())
+	if _, err := casting.ParseRecipe(cfg.TTS.DefaultVoice); err != nil {
+		return fmt.Errorf("ABG_TTS_DEFAULT_VOICE %q: %w", cfg.TTS.DefaultVoice, err)
+	}
 	voices := casting.NewCatalog(speech)
 	caster := &casting.Caster{
 		Store: st, LLM: llmPool, Jobs: runner, Catalog: voices, DefaultVoice: cfg.TTS.DefaultVoice,
