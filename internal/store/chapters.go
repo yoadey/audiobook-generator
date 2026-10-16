@@ -135,6 +135,17 @@ func (s *Store) MergeChapterWithNext(ctx context.Context, id int64) (*Chapter, e
 		if err := moveCharacterLinks(tx, c.BookID, next.ID, c.ID); err != nil {
 			return err
 		}
+		// The speakers move along; the chapter counts as attributed only
+		// if both parts were.
+		status := AttributionNone
+		if c.AttributionStatus == AttributionDone && next.AttributionStatus == AttributionDone {
+			status = AttributionDone
+		}
+		if err := tx.Model(&Chapter{ID: c.ID}).Updates(map[string]any{
+			"attribution_status": status, "attribution_part": 0, "voice_rev": gorm.Expr("voice_rev + 1"),
+		}).Error; err != nil {
+			return err
+		}
 		if err := tx.Delete(&Chapter{}, next.ID).Error; err != nil {
 			return err
 		}
@@ -220,6 +231,19 @@ func (s *Store) SplitChapter(ctx context.Context, id, paragraphID int64, title s
 		// appear in is unknown) and its narration.
 		if err := copyCharacterLinks(tx, c.BookID, c.ID, created.ID); err != nil {
 			return err
+		}
+		// The speakers stay with their quotes; a chapter not completely
+		// attributed is attributed again (its parts no longer match).
+		status := AttributionNone
+		if c.AttributionStatus == AttributionDone {
+			status = AttributionDone
+		}
+		for _, id := range []int64{c.ID, created.ID} {
+			if err := tx.Model(&Chapter{ID: id}).Updates(map[string]any{
+				"attribution_status": status, "attribution_part": 0, "voice_rev": gorm.Expr("voice_rev + 1"),
+			}).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.Model(&Chapter{ID: created.ID}).Updates(map[string]any{
 			"narration": c.Narration, "pov_character_id": c.POVCharacterID,

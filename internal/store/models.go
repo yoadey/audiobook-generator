@@ -103,6 +103,20 @@ type Chapter struct {
 	// AudioVoice is the voice key (recipe@speed) the audio was rendered with.
 	AudioVoice     string `gorm:"not null;default:''"`
 	AudioUpdatedAt *time.Time
+	// VoiceRev counts changes to who speaks the chapter's quotes with which
+	// voice (attribution, speaker edits, character voices); AudioVoiceRev
+	// is the revision the audio was rendered at.
+	VoiceRev      int `gorm:"not null;default:0"`
+	AudioVoiceRev int `gorm:"not null;default:0"`
+
+	// Speaker attribution (see AttributionStatus). AttributionPart is the
+	// number of parts of the chapter already attributed (a long chapter
+	// is sent in parts; a resumed job continues there).
+	AttributionStatus AttributionStatus `gorm:"not null;default:'none'"`
+	AttributionError  string            `gorm:"not null;default:''"`
+	AttributionPrompt string            `gorm:"not null;default:''"`
+	AttributionPart   int               `gorm:"not null;default:0"`
+	AttributedAt      *time.Time
 
 	// Narration (first/third person) and point-of-view character, from
 	// the character analysis.
@@ -154,6 +168,13 @@ type Segment struct {
 	// pieces of one quotation share the number.
 	QuoteRef int    `gorm:"not null;default:0"`
 	Text     string `gorm:"not null"`
+	// Speaker of a quote (nil: narrator voice — not attributed yet, or an
+	// unknown speaker), how it is said and how sure the attribution is
+	// (0..1). SpeakerManual protects a speaker the user chose.
+	SpeakerCharacterID *int64  `gorm:"index"`
+	Emotion            string  `gorm:"not null;default:''"`
+	Confidence         float64 `gorm:"not null;default:0"`
+	SpeakerManual      bool    `gorm:"not null;default:false"`
 }
 
 // JobStatus is the state of a job.
@@ -274,6 +295,18 @@ const (
 	AnalysisPaused  AnalysisStatus = "paused"
 	AnalysisDone    AnalysisStatus = "done"
 	AnalysisFailed  AnalysisStatus = "failed"
+)
+
+// AttributionStatus is the state of a chapter's speaker attribution.
+type AttributionStatus string
+
+// Attribution states.
+const (
+	AttributionNone    AttributionStatus = "none"
+	AttributionQueued  AttributionStatus = "queued"
+	AttributionRunning AttributionStatus = "running"
+	AttributionDone    AttributionStatus = "done"
+	AttributionFailed  AttributionStatus = "failed"
 )
 
 // CastingStatus is the state of a book's voice casting.

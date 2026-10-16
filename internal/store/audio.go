@@ -15,6 +15,8 @@ type ChapterAudio struct {
 	DurationMs int64
 	Size       int64
 	Voice      string
+	// VoiceRev is the chapter's voice revision the audio was rendered at.
+	VoiceRev int
 }
 
 // SetAudioStatus sets the audio state (and error message) of chapters.
@@ -35,6 +37,7 @@ func (s *Store) SetChapterAudio(ctx context.Context, chapterID int64, a ChapterA
 		"audio_duration_ms": a.DurationMs,
 		"audio_size":        a.Size,
 		"audio_voice":       a.Voice,
+		"audio_voice_rev":   a.VoiceRev,
 		"audio_error":       "",
 		"audio_updated_at":  now,
 	}).Error
@@ -111,4 +114,10 @@ func (s *Store) PendingBookJob(ctx context.Context, jobType string, bookID int64
 		return nil, nil
 	}
 	return &j, err
+}
+
+// PendingChapterJob returns the queued or running job of a type for a
+// chapter.
+func (s *Store) PendingChapterJob(ctx context.Context, jobType string, chapterID int64) (*Job, error) {
+	return s.PendingRenderJob(ctx, jobType, chapterID)
 }

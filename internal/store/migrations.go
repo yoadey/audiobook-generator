@@ -335,6 +335,70 @@ var migrations = []*gormigrate.Migration{
 			return nil
 		},
 	},
+	{
+		ID: "202610190001_attribution",
+		Migrate: func(tx *gorm.DB) error {
+			type Chapter struct {
+				VoiceRev          int    `gorm:"not null;default:0"`
+				AudioVoiceRev     int    `gorm:"not null;default:0"`
+				AttributionStatus string `gorm:"not null;default:'none'"`
+				AttributionError  string `gorm:"not null;default:''"`
+				AttributionPrompt string `gorm:"not null;default:''"`
+				AttributionPart   int    `gorm:"not null;default:0"`
+				AttributedAt      *time.Time
+			}
+			for _, col := range []string{"VoiceRev", "AudioVoiceRev", "AttributionStatus", "AttributionError",
+				"AttributionPrompt", "AttributionPart", "AttributedAt"} {
+				if err := tx.Migrator().AddColumn(&Chapter{}, col); err != nil {
+					return fmt.Errorf("chapters.%s: %w", col, err)
+				}
+			}
+			type Segment struct {
+				SpeakerCharacterID *int64  `gorm:"index"`
+				Emotion            string  `gorm:"not null;default:''"`
+				Confidence         float64 `gorm:"not null;default:0"`
+				SpeakerManual      bool    `gorm:"not null;default:false"`
+			}
+			for _, col := range []string{"SpeakerCharacterID", "Emotion", "Confidence", "SpeakerManual"} {
+				if err := tx.Migrator().AddColumn(&Segment{}, col); err != nil {
+					return fmt.Errorf("segments.%s: %w", col, err)
+				}
+			}
+			return tx.Migrator().CreateIndex(&Segment{}, "SpeakerCharacterID")
+		},
+		Rollback: func(tx *gorm.DB) error {
+			type Segment struct {
+				SpeakerCharacterID *int64 `gorm:"index"`
+				Emotion            string
+				Confidence         float64
+				SpeakerManual      bool
+			}
+			if err := tx.Migrator().DropIndex(&Segment{}, "SpeakerCharacterID"); err != nil {
+				return err
+			}
+			for _, col := range []string{"SpeakerCharacterID", "Emotion", "Confidence", "SpeakerManual"} {
+				if err := tx.Migrator().DropColumn(&Segment{}, col); err != nil {
+					return err
+				}
+			}
+			type Chapter struct {
+				VoiceRev          int
+				AudioVoiceRev     int
+				AttributionStatus string
+				AttributionError  string
+				AttributionPrompt string
+				AttributionPart   int
+				AttributedAt      *time.Time
+			}
+			for _, col := range []string{"VoiceRev", "AudioVoiceRev", "AttributionStatus", "AttributionError",
+				"AttributionPrompt", "AttributionPart", "AttributedAt"} {
+				if err := tx.Migrator().DropColumn(&Chapter{}, col); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

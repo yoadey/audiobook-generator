@@ -56,6 +56,9 @@ type LLM struct {
 	// AnalysisBatchTokens is the input size of one character analysis
 	// request (fewer, larger requests save daily request quota).
 	AnalysisBatchTokens int `env:"ANALYSIS_BATCH_TOKENS" envDefault:"30000"`
+	// AttributionTokens is the input size of one speaker attribution
+	// request (longer chapters are sent in parts).
+	AttributionTokens int `env:"ATTRIBUTION_TOKENS" envDefault:"12000"`
 }
 
 // Casting configures the voice casting.
@@ -132,6 +135,9 @@ func (c Config) Validate() error {
 	}
 	if c.Casting.MainCharacters < 1 || c.Casting.MainCharacters > 500 {
 		errs = append(errs, fmt.Errorf("ABG_CASTING_MAIN_CHARACTERS must be between 1 and 500, got %d", c.Casting.MainCharacters))
+	}
+	if c.LLM.AttributionTokens < 1000 {
+		errs = append(errs, fmt.Errorf("ABG_LLM_ATTRIBUTION_TOKENS must be at least 1000, got %d", c.LLM.AttributionTokens))
 	}
 	if c.LLM.AnalysisBatchTokens < 1000 {
 		errs = append(errs, fmt.Errorf("ABG_LLM_ANALYSIS_BATCH_TOKENS must be at least 1000, got %d", c.LLM.AnalysisBatchTokens))

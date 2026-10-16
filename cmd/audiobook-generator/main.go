@@ -18,6 +18,7 @@ import (
 
 	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/api"
+	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
 	"github.com/yoadey/audiobook-generator/internal/casting"
@@ -81,6 +82,11 @@ func run() error {
 	runner := jobs.New(st, log)
 	imp := &importer.Importer{Store: st, DataDir: cfg.DataDir, Log: log}
 	runner.Handle(importer.JobType, imp.Handler())
+	voices := casting.NewCatalog(speech)
+	attributor := &attribution.Attributor{
+		Store: st, LLM: llmPool, Jobs: runner, PartTokens: cfg.LLM.AttributionTokens, Log: log,
+	}
+	runner.Handle(attribution.JobType, attributor.Handler())
 	renderer := &render.Renderer{
 		Store:        st,
 		TTS:          speech,
@@ -88,6 +94,8 @@ func run() error {
 		DataDir:      cfg.DataDir,
 		Concurrency:  cfg.TTS.Concurrency,
 		DefaultVoice: cfg.TTS.DefaultVoice,
+		Voices:       voices,
+		Attribution:  attributor,
 		Metrics:      render.NewMetrics(reg),
 		Log:          log,
 	}
@@ -99,7 +107,6 @@ func run() error {
 	if _, err := casting.ParseRecipe(cfg.TTS.DefaultVoice); err != nil {
 		return fmt.Errorf("ABG_TTS_DEFAULT_VOICE %q: %w", cfg.TTS.DefaultVoice, err)
 	}
-	voices := casting.NewCatalog(speech)
 	caster := &casting.Caster{
 		Store: st, LLM: llmPool, Jobs: runner, Catalog: voices, DefaultVoice: cfg.TTS.DefaultVoice,
 		MainCharacters: cfg.Casting.MainCharacters, Log: log,
@@ -135,6 +142,7 @@ func run() error {
 				LLM:            llmPool,
 				Analyzer:       analyzer,
 				Caster:         caster,
+				Attributor:     attributor,
 				Voices:         voices,
 				DefaultVoice:   cfg.TTS.DefaultVoice,
 				DataDir:        cfg.DataDir,

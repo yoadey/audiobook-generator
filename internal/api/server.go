@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yoadey/audiobook-generator/internal/analysis"
+	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
 	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/llm"
@@ -37,6 +38,7 @@ type Options struct {
 	LLM            *llm.Pool
 	Analyzer       *analysis.Analyzer
 	Caster         *casting.Caster
+	Attributor     *attribution.Attributor
 	Voices         *casting.Catalog
 	DefaultVoice   string
 	DataDir        string

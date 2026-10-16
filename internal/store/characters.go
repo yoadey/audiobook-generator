@@ -135,6 +135,16 @@ func (s *Store) BookAliases(ctx context.Context, bookID int64) ([]CharacterAlias
 	return as, err
 }
 
+// GetCharacters loads characters by ID (missing ones are skipped).
+func (s *Store) GetCharacters(ctx context.Context, ids ...int64) ([]Character, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var cs []Character
+	err := s.db.WithContext(ctx).Where("id IN ?", ids).Find(&cs).Error
+	return cs, err
+}
+
 // BookCharacters returns all characters of a book (for analysis).
 func (s *Store) BookCharacters(ctx context.Context, bookID int64) ([]Character, error) {
 	var cs []Character
@@ -288,6 +298,15 @@ func (s *Store) DeleteCharacter(ctx context.Context, id int64) error {
 			Update("pov_character_id", nil).Error; err != nil {
 			return err
 		}
+		// Its quotes are read by the narrator from now on.
+		if err := tx.TouchCharacterVoices(ctx, id); err != nil {
+			return err
+		}
+		if err := db.Model(&Segment{}).Where("speaker_character_id = ?", id).Updates(map[string]any{
+			"speaker_character_id": nil, "speaker_manual": false, "confidence": 0,
+		}).Error; err != nil {
+			return err
+		}
 		res := db.Delete(&Character{}, id)
 		if res.Error != nil {
 			return res.Error
@@ -344,6 +363,14 @@ func (s *Store) MergeCharacters(ctx context.Context, targetID int64, sourceIDs .
 		}
 		if err := db.Model(&Chapter{}).Where("pov_character_id IN ?", srcIDs).
 			Update("pov_character_id", target.ID).Error; err != nil {
+			return err
+		}
+		// The sources' quotes are spoken by the merged character now.
+		if err := tx.TouchCharacterVoices(ctx, append(srcIDs, target.ID)...); err != nil {
+			return err
+		}
+		if err := db.Model(&Segment{}).Where("speaker_character_id IN ?", srcIDs).
+			Update("speaker_character_id", target.ID).Error; err != nil {
 			return err
 		}
 		// "X is not Y" still holds for the merged character.
@@ -633,6 +660,18 @@ func (s *Store) ResetAnalysis(ctx context.Context, bookID int64) error {
 }
 
 func deleteAnalysis(tx *gorm.DB, bookID int64) error {
+	chapters := tx.Session(&gorm.Session{NewDB: true}).Model(&Chapter{}).Select("id").Where("book_id = ?", bookID)
+	if err := tx.Model(&Segment{}).Where("chapter_id IN (?) AND speaker_character_id IS NOT NULL", chapters).
+		Updates(map[string]any{"speaker_character_id": nil, "speaker_manual": false, "confidence": 0, "emotion": ""}).
+		Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&Chapter{}).Where("book_id = ?", bookID).Updates(map[string]any{
+		"attribution_status": AttributionNone, "attribution_error": "", "attribution_part": 0,
+		"attributed_at": nil, "voice_rev": gorm.Expr("voice_rev + 1"),
+	}).Error; err != nil {
+		return err
+	}
 	for _, m := range []any{&AnalysisBatch{}, &CharacterDistinct{}, &CharacterChapter{}, &CharacterAlias{}, &Character{}} {
 		if err := tx.Where("book_id = ?", bookID).Delete(m).Error; err != nil {
 			return err

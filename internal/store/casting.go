@@ -27,8 +27,11 @@ func (s *Store) ResetCasting(ctx context.Context, bookID int64) error {
 			Update("tier", TierMinor).Error; err != nil {
 			return err
 		}
-		return db.Model(&Character{}).Where("book_id = ? AND voice_manual = ?", bookID, false).
-			Updates(map[string]any{"voice_recipe": "", "voice_speed": 1, "voice_note": ""}).Error
+		if err := db.Model(&Character{}).Where("book_id = ? AND voice_manual = ?", bookID, false).
+			Updates(map[string]any{"voice_recipe": "", "voice_speed": 1, "voice_note": ""}).Error; err != nil {
+			return err
+		}
+		return tx.TouchBookVoices(ctx, bookID)
 	})
 }
 
@@ -50,7 +53,10 @@ func (s *Store) AssignVoice(ctx context.Context, id int64, gender Gender, recipe
 		Where("id = ? AND tier = ? AND voice_recipe = '' AND voice_manual = ? AND gender = ?",
 			id, TierMain, false, gender).
 		Updates(map[string]any{"voice_recipe": recipe, "voice_speed": speed, "voice_note": CleanText(note)})
-	return res.RowsAffected == 1, res.Error
+	if res.Error != nil || res.RowsAffected == 0 {
+		return false, res.Error
+	}
+	return true, s.TouchCharacterVoices(ctx, id)
 }
 
 // VoicedCharacters returns a book's characters with a recipe of their own.

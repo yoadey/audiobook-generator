@@ -36,9 +36,10 @@ const (
 	priorityLookahead = 100
 )
 
-// current reports whether a chapter's audio matches the book's narrator.
+// current reports whether a chapter's audio matches the book's narrator
+// and the chapter's speakers and their voices.
 func current(c *store.Chapter, voiceKey string) bool {
-	return c.AudioStatus == store.AudioReady && c.AudioVoice == voiceKey
+	return c.AudioStatus == store.AudioReady && c.AudioVoice == voiceKey && c.AudioVoiceRev == c.VoiceRev
 }
 
 // Pending reports whether a chapter waits for or is being rendered.
@@ -51,7 +52,7 @@ func (s *Scheduler) Stale(b *store.Book, c *store.Chapter) bool {
 	if c.AudioStatus != store.AudioReady {
 		return false
 	}
-	return c.AudioVoice != VoiceKey(NarratorVoice(b, s.DefaultVoice))
+	return !current(c, VoiceKey(NarratorVoice(b, s.DefaultVoice)))
 }
 
 // RenderChapter queues a chapter unless a render is already pending.

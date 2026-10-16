@@ -23,6 +23,8 @@ const (
 	maxQuote = 400
 	// quoteChapters bounds the chapters searched.
 	quoteChapters = 40
+	// confidentQuote is the attribution confidence a quote needs.
+	confidentQuote = 0.6
 )
 
 // speechVerbs mark who says a quote ("…," said Erin / Erin asked).
@@ -35,16 +37,39 @@ const speechVerbs = `said|says|asked|asks|replied|replies|answered|shouted|yelle
 // speaker attribution exists this is a heuristic; it may pick a wrong
 // quote now and then, which is fine for a preview.
 func Quotes(ctx context.Context, st *store.Store, c *store.Character, aliases []string, limit int) ([]Quote, error) {
-	re := attributionRe(c.Name, aliases)
-	if re == nil {
-		return nil, nil
-	}
 	chapters, err := st.CharacterChapters(ctx, c.ID)
 	if err != nil {
 		return nil, err
 	}
 	var out []Quote
 	seen := map[string]bool{}
+	// Quotes attributed to the character come first.
+	spoken, err := st.SpokenQuotes(ctx, c.ID, confidentQuote, limit)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[int64]store.Chapter{}
+	for _, ch := range chapters {
+		byID[ch.ID] = ch
+	}
+	for _, q := range spoken {
+		text := strings.TrimSpace(q.Text)
+		n := utf8.RuneCountInString(text)
+		ch, ok := byID[q.ChapterID]
+		if !ok {
+			if got, err := st.GetChapter(ctx, q.ChapterID); err == nil {
+				ch, ok = *got, true
+			}
+		}
+		if ok && !ch.Excluded && n >= minQuote && n <= maxQuote && !seen[text] && len(out) < limit {
+			seen[text] = true
+			out = append(out, Quote{Text: text, Chapter: ch})
+		}
+	}
+	re := attributionRe(c.Name, aliases)
+	if re == nil || len(out) >= limit {
+		return out, nil
+	}
 	for i, ch := range chapters {
 		if i >= quoteChapters || len(out) >= limit {
 			break

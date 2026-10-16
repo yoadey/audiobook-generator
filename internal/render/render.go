@@ -20,7 +20,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/audio"
+	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -38,6 +40,16 @@ type Synthesizer interface {
 	Synthesize(ctx context.Context, s tts.Speech) ([]byte, error)
 }
 
+// VoiceCatalog lists the base voices pool voices are chosen from.
+type VoiceCatalog interface {
+	Voices(ctx context.Context) ([]casting.BaseVoice, error)
+}
+
+// Attributor queues speaker attributions.
+type Attributor interface {
+	Start(ctx context.Context, b *store.Book, c *store.Chapter, force bool, priority int) error
+}
+
 // Renderer renders chapters.
 type Renderer struct {
 	Store   *store.Store
@@ -47,9 +59,17 @@ type Renderer struct {
 	// Concurrency is the number of parallel synthesis requests.
 	Concurrency  int
 	DefaultVoice string
-	Metrics      *Metrics
-	Log          *slog.Logger
+	// Voices and Attribution enable character voices (both optional:
+	// without them everything is narrated).
+	Voices      VoiceCatalog
+	Attribution Attributor
+	Metrics     *Metrics
+	Log         *slog.Logger
 }
+
+// AttributionPriority orders attributions a render waits for before those
+// queued ahead of time.
+const AttributionPriority = 150
 
 // Pauses between pieces of speech.
 const (
@@ -117,11 +137,16 @@ func (r *Renderer) Handler() jobs.Handler {
 // item is one synthesis request plus the pause that follows it.
 type item struct {
 	text  string
+	voice string
+	speed float64
 	pause time.Duration
 }
 
+// voiceFunc returns the voice of a segment.
+type voiceFunc func(s *store.Segment) (string, float64)
+
 // plan lists what to say, in order.
-func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment) []item {
+func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voiceOf voiceFunc) []item {
 	byPara := map[int64][]store.Segment{}
 	for _, s := range segs {
 		byPara[s.ParagraphID] = append(byPara[s.ParagraphID], s)
@@ -132,9 +157,14 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment) []it
 			items[len(items)-1].pause = max(items[len(items)-1].pause, d)
 		}
 	}
+	narrator, narratorSpeed := voiceOf(nil)
+	say := func(text, voice string, speed float64) {
+		items = append(items, item{text: text, voice: voice, speed: speed, pause: withinPara})
+	}
 	if len(paras) == 0 || paras[0].Kind != store.ParagraphHeading {
 		if t := speakable(ch.Title); t != "" {
-			items = append(items, item{t, afterHeading})
+			say(t, narrator, narratorSpeed)
+			items[len(items)-1].pause = afterHeading
 		}
 	}
 	for _, p := range paras {
@@ -145,14 +175,16 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment) []it
 		case store.ParagraphHeading:
 			for _, s := range byPara[p.ID] {
 				if t := speakable(s.Text); t != "" {
-					items = append(items, item{t, withinPara})
+					say(t, narrator, narratorSpeed)
 				}
 			}
 			pauseLast(afterHeading)
 		default:
-			for _, s := range byPara[p.ID] {
+			for i := range byPara[p.ID] {
+				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
-					items = append(items, item{t, withinPara})
+					voice, speed := voiceOf(s)
+					say(t, voice, speed)
 				}
 			}
 			pauseLast(betweenParas)
@@ -202,6 +234,16 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return jobs.Permanent(err)
 	}
+	// Character voices need the speakers first.
+	if r.Attribution != nil && attribution.Needed(book, ch) {
+		if !attribution.Active(ch) {
+			err := r.Attribution.Start(ctx, book, ch, false, AttributionPriority)
+			if err != nil && !errors.Is(err, attribution.ErrNotReady) {
+				return err
+			}
+		}
+		return attribution.WaitError()
+	}
 	paras, segs, err := r.Store.ChapterText(ctx, ch.ID)
 	if err != nil {
 		return err
@@ -211,7 +253,11 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	}
 	voice, speed := NarratorVoice(book, r.DefaultVoice)
 	key := VoiceKey(voice, speed)
-	items := plan(ch, paras, segs)
+	voiceOf, err := r.speakerVoices(ctx, book, segs, voice, speed)
+	if err != nil {
+		return err
+	}
+	items := plan(ch, paras, segs, voiceOf)
 	text := fingerprint(paras, segs)
 	start := time.Now()
 
@@ -227,13 +273,13 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	g.SetLimit(max(r.Concurrency, 1))
 	progressCh := make(chan struct{}, len(items))
 	for i, it := range items {
-		files[i] = filepath.Join(cacheDir, fmt.Sprintf("%05d-%s.pcm", i, cacheKey(key, it.text)))
+		files[i] = filepath.Join(cacheDir, fmt.Sprintf("%05d-%s.pcm", i, cacheKey(VoiceKey(it.voice, it.speed), it.text)))
 		if _, err := os.Stat(files[i]); err == nil {
 			progressCh <- struct{}{}
 			continue
 		}
 		g.Go(func() error {
-			pcm, err := r.TTS.Synthesize(gctx, tts.Speech{Text: it.text, Voice: voice, Speed: speed, Format: "pcm"})
+			pcm, err := r.TTS.Synthesize(gctx, tts.Speech{Text: it.text, Voice: it.voice, Speed: it.speed, Format: "pcm"})
 			if err != nil {
 				var he *tts.HTTPError
 				if errors.As(err, &he) && he.Permanent() {
@@ -290,7 +336,7 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	}
 	duration := audio.Duration(pcmBytes)
 	if err := r.Store.SetChapterAudio(ctx, ch.ID, store.ChapterAudio{
-		Path: rel, DurationMs: duration.Milliseconds(), Size: st.Size(), Voice: key,
+		Path: rel, DurationMs: duration.Milliseconds(), Size: st.Size(), Voice: key, VoiceRev: ch.VoiceRev,
 	}); err != nil {
 		return err
 	}
@@ -302,6 +348,42 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	r.Log.Info("chapter rendered", "chapter", ch.ID, "audio", duration.Round(time.Second),
 		"took", elapsed.Round(time.Second), "realtime_factor", fmt.Sprintf("%.2f", duration.Seconds()/elapsed.Seconds()))
 	return nil
+}
+
+// speakerVoices resolves the voices of a chapter's speakers: their own
+// recipe or a pool voice (casting.Effective); narration, unknown speakers
+// and quotes not attributed yet are narrated.
+func (r *Renderer) speakerVoices(ctx context.Context, b *store.Book, segs []store.Segment, narrator string,
+	narratorSpeed float64,
+) (voiceFunc, error) {
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, s := range segs {
+		if id := s.SpeakerCharacterID; s.Kind == store.SegmentQuote && id != nil && !seen[*id] {
+			seen[*id] = true
+			ids = append(ids, *id)
+		}
+	}
+	chars, err := r.Store.GetCharacters(ctx, ids...)
+	if err != nil {
+		return nil, err
+	}
+	var base []casting.BaseVoice
+	if r.Voices != nil && len(chars) > 0 {
+		base, _ = r.Voices.Voices(ctx) // the catalogue is assumed when the server is down
+	}
+	voices := map[int64]casting.Voice{}
+	for i := range chars {
+		voices[chars[i].ID] = casting.Effective(&chars[i], base, narrator, narratorSpeed)
+	}
+	return func(s *store.Segment) (string, float64) {
+		if s != nil && s.Kind == store.SegmentQuote && s.SpeakerCharacterID != nil {
+			if v, ok := voices[*s.SpeakerCharacterID]; ok {
+				return v.Recipe, v.Speed
+			}
+		}
+		return narrator, narratorSpeed
+	}, nil
 }
 
 // checkUnchanged fails when the chapter is gone (permanently) or its text

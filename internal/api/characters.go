@@ -398,6 +398,13 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 	} else if err != nil {
 		return nil, err
 	}
+	// Audio of the chapters the character speaks in is outdated when its
+	// voice may have changed.
+	if u.Voice != nil || u.VoiceSpeed != nil || u.Tier != nil || u.Gender != nil || u.AgeGroup != nil {
+		if err := s.Store.TouchCharacterVoices(ctx, c.ID); err != nil {
+			return nil, err
+		}
+	}
 	// The change is saved; a casting that cannot be queued is not its error.
 	// A tier left to the casting again is ranked by it.
 	auto := u.Tier != nil && *u.Tier == CharacterUpdateTierAuto
