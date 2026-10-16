@@ -31,13 +31,25 @@ import { VoicePreviewButton } from './VoicePreviewButton';
 
 type TierChoice = 'auto' | 'main' | 'minor';
 
-const MAX_PARTS = 3;
+// As many base voices as the server accepts in a recipe.
+const MAX_PARTS = 4;
 
 const genderGroup: Record<Voice['gender'], string> = {
   female: 'Female',
   male: 'Male',
   unknown: 'Other',
 };
+
+/** Scales weights to sum to 1 (a mix like "a(2)+b(1)" may come from the narrator). */
+function normalize(parts: RecipePart[]): RecipePart[] {
+  const total = parts.reduce((sum, p) => sum + p.weight, 0);
+  return total > 0
+    ? parts.map((p) => ({
+        ...p,
+        weight: Math.max(0.05, Math.round((p.weight / total) * 100) / 100),
+      }))
+    : parts;
+}
 
 function voiceOptions(voices: Voice[], keep: string[]) {
   const usable = voices.filter(
@@ -62,16 +74,18 @@ function voiceOptions(voices: Voice[], keep: string[]) {
  */
 export function VoiceEditor({
   character: c,
+  castingActive = false,
   onSaved,
 }: {
   character: CharacterDetail;
+  castingActive?: boolean;
   onSaved: () => void;
 }) {
   const voices = useQuery(voicesQuery);
   const quotes = useQuery(quotesQuery(c.id));
   const preview = usePreview();
   const initialTier: TierChoice = c.tierManual ? c.tier : 'auto';
-  const initialParts = parseRecipe(c.voice) ?? [];
+  const initialParts = normalize(parseRecipe(c.voice) ?? []);
   const [tier, setTier] = useState<TierChoice>(initialTier);
   const [parts, setParts] = useState<RecipePart[]>(initialParts);
   const [speed, setSpeed] = useState(c.voiceSpeed);
@@ -110,15 +124,24 @@ export function VoiceEditor({
     voices.data ?? [],
     parts.map((p) => p.voice),
   );
+  // The next voice to add: one not in the recipe yet, of the character's
+  // gender where possible.
+  const used = new Set(parts.map((p) => p.voice));
+  const unused = (voices.data ?? []).filter(
+    (v) => v.available && v.language.startsWith('en-') && !used.has(v.id),
+  );
+  const nextVoice = (unused.find((v) => v.gender === c.gender) ?? unused[0])?.id;
 
   const source =
     c.voiceSource === 'own'
       ? c.voiceManual
         ? 'Chosen by you; the casting keeps it.'
         : `Cast automatically${c.voiceNote ? `: ${c.voiceNote}` : '.'}`
-      : c.voiceSource === 'pool'
-        ? 'A pool voice for minor characters of this gender and age. Change it to give the character a voice of its own.'
-        : 'No fitting voice is available; the narrator reads the lines.';
+      : c.tier === 'main' && castingActive
+        ? 'A voice of its own is being cast; until then it speaks with a pool voice.'
+        : c.voiceSource === 'pool'
+          ? 'A pool voice for minor characters of this gender and age. Change it to give the character a voice of its own.'
+          : 'No fitting voice is available; the narrator reads the lines.';
 
   return (
     <Card withBorder data-testid="voice-editor">
@@ -169,7 +192,7 @@ export function VoiceEditor({
                 value={p.weight}
                 onChange={(weight) => setPart(i, { weight })}
                 label={null}
-                aria-label={`Weight of ${p.voice}`}
+                thumbLabel={`Weight of ${p.voice}`}
               />
             </Stack>
             <Tooltip label="Remove">
@@ -190,10 +213,8 @@ export function VoiceEditor({
             variant="subtle"
             size="xs"
             leftSection={<IconPlus size={14} />}
-            disabled={parts.length >= MAX_PARTS || options.length === 0}
-            onClick={() =>
-              setParts([...parts, { voice: options[0]?.items[0]?.value ?? '', weight: 0.3 }])
-            }
+            disabled={parts.length >= MAX_PARTS || !nextVoice}
+            onClick={() => nextVoice && setParts([...parts, { voice: nextVoice, weight: 0.3 }])}
           >
             Add base voice
           </Button>
@@ -203,13 +224,13 @@ export function VoiceEditor({
             Speed: {speed.toFixed(2)}×
           </Text>
           <Slider
-            min={0.8}
-            max={1.25}
+            min={0.5}
+            max={2}
             step={0.01}
             value={speed}
             onChange={setSpeed}
             label={null}
-            aria-label="Speed"
+            thumbLabel="Speed"
           />
         </Stack>
 
@@ -257,7 +278,9 @@ export function VoiceEditor({
               variant="subtle"
               leftSection={<IconRotate size={16} />}
               loading={save.isPending}
-              onClick={() => save.mutate({ voice: '' })}
+              onClick={() =>
+                save.mutate(tier !== initialTier ? { voice: '', tier } : { voice: '' })
+              }
             >
               Back to the automatic voice
             </Button>

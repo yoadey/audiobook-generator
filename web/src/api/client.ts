@@ -182,7 +182,15 @@ export const castingQuery = (bookId: number) =>
   queryOptions({
     queryKey: ['books', bookId, 'casting'],
     queryFn: () => unwrap(api.GET('/books/{bookId}/casting', { params: { path: { bookId } } })),
-    refetchInterval: (q) => (castingActive(q.state.data?.status) ? 3000 : false),
+    // Fast while it runs, slowly while it waits for LLM quota.
+    refetchInterval: (q) => {
+      const c = q.state.data;
+      if (!castingActive(c?.status)) {
+        return false;
+      }
+      const waiting = c?.job?.notBefore && new Date(c.job.notBefore).getTime() > Date.now();
+      return waiting ? 30_000 : 3000;
+    },
   });
 
 export const quotesQuery = (characterId: number) =>
@@ -276,11 +284,17 @@ export const cancelJob = (jobId: number) =>
   unwrap(api.POST('/jobs/{jobId}/cancel', { params: { path: { jobId } } }));
 
 /** Synthesizes a sample and returns an object URL for an <audio> element. */
-export async function previewVoice(voice: string, speed: number, text?: string): Promise<string> {
+export async function previewVoice(
+  voice: string,
+  speed: number,
+  text?: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const response = await globalThis.fetch(`${baseUrl}/voices/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ voice, speed, text }),
+    signal,
   });
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => undefined);

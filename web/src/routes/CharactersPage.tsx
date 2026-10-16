@@ -38,6 +38,7 @@ import {
 } from '../api/client';
 import { AnchorLink } from '../components/links';
 import { VoicePreviewButton } from '../components/VoicePreviewButton';
+import { useCastingWatch } from '../lib/casting';
 import { usePreview } from '../lib/preview';
 import { formatNumber } from '../lib/format';
 import { notifyError, notifySuccess } from '../lib/notify';
@@ -126,10 +127,15 @@ export function CharactersPage() {
     charactersQuery(bookId, debounced, sort, pageNo, PAGE_SIZE, tier === 'all' ? undefined : tier),
   );
   const preview = usePreview();
-  // A real quote of the character, if one is found.
+  const casting = useCastingWatch(bookId);
+  // A real quote of the character if one is found, else a standard sentence.
   const sample = (id: number) => async () => {
-    const qs = await queryClient.fetchQuery(quotesQuery(id));
-    return qs.length > 0 ? qs[Math.floor(Math.random() * qs.length)]?.text : undefined;
+    try {
+      const qs = await queryClient.fetchQuery(quotesQuery(id));
+      return qs.length > 0 ? qs[Math.floor(Math.random() * qs.length)]?.text : undefined;
+    } catch {
+      return undefined;
+    }
   };
 
   const busy =
@@ -182,6 +188,11 @@ export function CharactersPage() {
           {formatNumber(total)} {debounced ? 'found' : 'in total'}
         </Text>
       </Group>
+      {(casting?.status === 'queued' || casting?.status === 'running') && (
+        <Alert color="blue" variant="light">
+          Voices are being cast; the list updates when the casting is done.
+        </Alert>
+      )}
       {busy && (
         <Alert color="blue" variant="light">
           The analysis is still running: the list grows as it goes. Merging is possible once it is

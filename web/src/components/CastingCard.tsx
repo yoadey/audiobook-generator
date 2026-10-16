@@ -54,8 +54,10 @@ function Warning({ bookId, w }: { bookId: number; w: CastingWarning }) {
       ) : (
         <>
           sounds like{' '}
-          {w.otherId !== undefined && (
+          {w.otherId !== undefined ? (
             <CharacterLink bookId={bookId} id={w.otherId} name={w.otherName ?? ''} />
+          ) : (
+            'another character'
           )}
         </>
       )}
@@ -66,9 +68,23 @@ function Warning({ bookId, w }: { bookId: number; w: CastingWarning }) {
 /** State and controls of a book's voice casting. */
 export function CastingCard({ book }: { book: Book }) {
   const queryClient = useQueryClient();
-  const casting = useQuery(castingQuery(book.id));
-  // A finished analysis starts the casting on the server.
-  const analysisStatus = useQuery(analysisQuery(book.id)).data?.status;
+  const analysis = useQuery(analysisQuery(book.id)).data;
+  const analysisStatus = analysis?.status;
+  // A finished analysis starts the casting on the server right after it
+  // reports "done": look again for a short while until it shows up.
+  const finishedAt = analysisStatus === 'done' ? analysis?.finishedAt : undefined;
+  const base = castingQuery(book.id);
+  const casting = useQuery({
+    ...base,
+    refetchInterval: (q) => {
+      const justFinished =
+        finishedAt !== undefined && Date.now() - new Date(finishedAt).getTime() < 60_000;
+      if (q.state.data?.status === 'none' && justFinished) {
+        return 3000;
+      }
+      return typeof base.refetchInterval === 'function' ? base.refetchInterval(q) : false;
+    },
+  });
   useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: ['books', book.id, 'casting'] });
   }, [analysisStatus, book.id, queryClient]);
@@ -180,6 +196,7 @@ export function CastingCard({ book }: { book: Book }) {
             <Button
               variant="subtle"
               leftSection={<IconRefresh size={16} />}
+              disabled={start.isPending}
               onClick={confirmRecast}
             >
               Recast all

@@ -35,6 +35,7 @@ import {
 } from '../api/client';
 import { AnchorLink } from '../components/links';
 import { VoiceEditor } from '../components/VoiceEditor';
+import { useCastingWatch } from '../lib/casting';
 import { formatNumber } from '../lib/format';
 import { notifyError, notifySuccess } from '../lib/notify';
 
@@ -216,6 +217,7 @@ export function CharacterPage() {
   const queryClient = useQueryClient();
   const book = useQuery(bookQuery(bookId));
   const { data: c, error, isPending } = useQuery(characterQuery(characterId));
+  const casting = useCastingWatch(bookId);
   const invalidate = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['characters'] }),
@@ -335,8 +337,36 @@ export function CharacterPage() {
         </Group>
       </Group>
 
-      <ProfileForm key={JSON.stringify(c)} character={c} onSaved={() => void invalidate()} />
-      <VoiceEditor key={JSON.stringify(c)} character={c} onSaved={() => void invalidate()} />
+      {/* Each form remounts only when the fields it edits change, so saving
+          one keeps unsaved edits in the other. */}
+      <ProfileForm
+        key={JSON.stringify([
+          c.name,
+          c.aliases,
+          c.gender,
+          c.ageGroup,
+          c.role,
+          c.description,
+          c.speechStyle,
+          c.importance,
+        ])}
+        character={c}
+        onSaved={() => void invalidate()}
+      />
+      <VoiceEditor
+        key={JSON.stringify([
+          c.tier,
+          c.tierManual,
+          c.voice,
+          c.voiceSpeed,
+          c.voiceSource,
+          c.voiceManual,
+          c.voiceNote,
+        ])}
+        character={c}
+        castingActive={casting?.status === 'queued' || casting?.status === 'running'}
+        onSaved={() => void invalidate()}
+      />
 
       <Card withBorder>
         <Text fw={600} mb="xs">
