@@ -1,0 +1,145 @@
+package render
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/yoadey/audiobook-generator/internal/audio"
+	"github.com/yoadey/audiobook-generator/internal/lexicon"
+	"github.com/yoadey/audiobook-generator/internal/store"
+)
+
+// Cue is when a segment is spoken in a chapter's audio. SegmentID 0 is the
+// chapter title read out before a chapter without a heading.
+type Cue struct {
+	SegmentID int64 `json:"s"`
+	StartMs   int64 `json:"a"`
+	EndMs     int64 `json:"b"`
+}
+
+// Timings are the cues of one render, stored next to its audio file.
+type Timings struct {
+	Cues []Cue `json:"cues"`
+}
+
+// TimingsPath is the timings file of an audio file (relative paths).
+func TimingsPath(audioPath string) string {
+	return strings.TrimSuffix(audioPath, ".m4a") + ".json"
+}
+
+// ReadTimings loads the timings of an audio file (relative to dataDir);
+// os.ErrNotExist when the render has none (made before timings existed).
+func ReadTimings(dataDir, audioPath string) (*Timings, error) {
+	data, err := os.ReadFile(filepath.Join(dataDir, TimingsPath(audioPath))) //nolint:gosec // data dir + stored path
+	if err != nil {
+		return nil, err
+	}
+	var t Timings
+	if err := json.Unmarshal(data, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// RemoveAudio deletes an audio file and its timings (relative to dataDir);
+// files already gone are no error.
+func RemoveAudio(dataDir, audioPath string) error {
+	var errs []error
+	for _, p := range []string{audioPath, TimingsPath(audioPath)} {
+		if err := os.Remove(filepath.Join(dataDir, p)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// cues lists when each item is spoken, given the PCM length of each piece
+// in bytes, in the layout writePCM produces.
+func cues(items []item, pieceBytes []int64) []Cue {
+	out := make([]Cue, 0, len(items))
+	at := leadIn
+	for i, it := range items {
+		d := pcmDuration(pieceBytes[i])
+		out = append(out, Cue{SegmentID: it.segmentID, StartMs: at.Milliseconds(), EndMs: (at + d).Milliseconds()})
+		at += d + it.pause
+	}
+	return out
+}
+
+func pcmDuration(n int64) time.Duration {
+	// 16-bit mono at the TTS sample rate.
+	return time.Duration(n&^1) * time.Second / time.Duration(2*audio.SampleRate)
+}
+
+// EstimateTimings spreads a chapter's audio duration over its segments by
+// their length, for renders made before timings were recorded. Pauses are
+// known exactly; only the speech in between is estimated.
+func EstimateTimings(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, duration time.Duration) *Timings {
+	items := plan(ch, paras, segs, func(*store.Segment) (string, float64) { return "", 1 }, lexicon.Compile(nil))
+	if len(items) == 0 {
+		return &Timings{Cues: []Cue{}}
+	}
+	pauses := leadIn
+	chars := 0
+	for _, it := range items {
+		pauses += it.pause
+		chars += utf8.RuneCountInString(it.text)
+	}
+	speech := duration - pauses
+	scale := 1.0
+	if speech <= 0 {
+		// Shorter than its pauses (should not happen): shrink everything.
+		speech = duration / 2
+		scale = float64(duration-speech) / float64(pauses)
+	}
+	out := make([]Cue, 0, len(items))
+	at := time.Duration(float64(leadIn) * scale)
+	for _, it := range items {
+		d := time.Duration(float64(speech) * float64(utf8.RuneCountInString(it.text)) / float64(max(chars, 1)))
+		out = append(out, Cue{SegmentID: it.segmentID, StartMs: at.Milliseconds(), EndMs: (at + d).Milliseconds()})
+		at += d + time.Duration(float64(it.pause)*scale)
+	}
+	return &Timings{Cues: out}
+}
+
+var versionRe = regexp.MustCompile(`^[0-9a-z]{1,20}$`)
+
+// KeptPath is the audio file of a chapter's render version while it is
+// kept, else the current one (relative paths).
+func KeptPath(dataDir string, c *store.Chapter, version *string) string {
+	if v := version; v != nil && versionRe.MatchString(*v) && *v != AudioVersion(c.AudioPath) {
+		old := VersionPath(c.BookID, c.ID, *v)
+		if _, err := os.Stat(filepath.Join(dataDir, old)); err == nil {
+			return old
+		}
+	}
+	return c.AudioPath
+}
+
+// LoadTimings loads the timings of a chapter's audio: of version while it
+// is kept, else of the current render (path is the audio they belong to).
+// A render without recorded timings gets an estimate (exact false).
+func LoadTimings(ctx context.Context, st *store.Store, dataDir string, c *store.Chapter, version *string) (
+	t *Timings, path string, exact bool, err error,
+) {
+	path = KeptPath(dataDir, c, version)
+	t, err = ReadTimings(dataDir, path)
+	if err == nil {
+		return t, path, true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, "", false, err
+	}
+	paras, segs, err := st.ChapterText(ctx, c.ID)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return EstimateTimings(c, paras, segs, time.Duration(c.AudioDurationMs)*time.Millisecond), path, false, nil
+}

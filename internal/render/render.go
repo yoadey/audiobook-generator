@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -115,7 +116,7 @@ func (r *Renderer) keepVersions(bookID, chapterID int64, keep ...string) {
 		if err != nil || slices.Contains(keep, rel) {
 			continue
 		}
-		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := RemoveAudio(r.DataDir, rel); err != nil {
 			r.Log.Warn("remove old audio", "chapter", chapterID, "err", err)
 		}
 	}
@@ -179,6 +180,8 @@ type item struct {
 	voice string
 	speed float64
 	pause time.Duration
+	// segmentID is the segment spoken (0: the chapter title).
+	segmentID int64
 }
 
 // voiceFunc returns the voice of a segment.
@@ -199,12 +202,14 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 		}
 	}
 	narrator, narratorSpeed := voiceOf(nil)
-	say := func(text, voice string, speed float64) {
-		items = append(items, item{text: lex.Apply(text), voice: voice, speed: speed, pause: withinPara})
+	say := func(segmentID int64, text, voice string, speed float64) {
+		items = append(items, item{
+			text: lex.Apply(text), voice: voice, speed: speed, pause: withinPara, segmentID: segmentID,
+		})
 	}
 	if len(paras) == 0 || paras[0].Kind != store.ParagraphHeading {
 		if t := speakable(ch.Title); t != "" {
-			say(t, narrator, narratorSpeed)
+			say(0, t, narrator, narratorSpeed)
 			items[len(items)-1].pause = afterHeading
 		}
 	}
@@ -216,7 +221,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 		case store.ParagraphHeading:
 			for _, s := range byPara[p.ID] {
 				if t := speakable(s.Text); t != "" {
-					say(t, narrator, narratorSpeed)
+					say(s.ID, t, narrator, narratorSpeed)
 				}
 			}
 			pauseLast(afterHeading)
@@ -225,7 +230,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
 					voice, speed := voiceOf(s)
-					say(t, voice, speed)
+					say(s.ID, t, voice, speed)
 				}
 			}
 			pauseLast(betweenParas)
@@ -352,8 +357,9 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	out := filepath.Join(r.DataDir, rel)
 	pr, pw := io.Pipe()
 	written := make(chan int64, 1)
+	pieces := make([]int64, len(files))
 	go func() {
-		n, err := writePCM(pw, files, items)
+		n, err := writePCM(pw, files, items, pieces)
 		written <- n
 		pw.CloseWithError(err)
 	}()
@@ -369,10 +375,20 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return err
 	}
+	// The cues are written before the audio is published: a player that
+	// sees the new version also finds its timings.
+	cueData, err := json.Marshal(Timings{Cues: cues(items, pieces)})
+	if err != nil {
+		return err
+	}
+	if err := writeAtomic(filepath.Join(r.DataDir, TimingsPath(rel)), cueData); err != nil {
+		_ = RemoveAudio(r.DataDir, rel)
+		return err
+	}
 	// 3. The chapter may have been merged, split or deleted meanwhile:
 	// never mark audio of the old text as ready.
 	if err := r.checkUnchanged(ctx, ch.ID, text); err != nil {
-		if rerr := os.Remove(out); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+		if rerr := RemoveAudio(r.DataDir, rel); rerr != nil {
 			r.Log.Warn("remove outdated audio", "chapter", ch.ID, "err", rerr)
 		}
 		return err
@@ -487,8 +503,9 @@ func (r *Renderer) checkUnchanged(ctx context.Context, chapterID int64, want str
 	return nil
 }
 
-// writePCM streams the lead-in, every cached piece and its pause.
-func writePCM(w io.Writer, files []string, items []item) (int64, error) {
+// writePCM streams the lead-in, every cached piece and its pause, and
+// records the length of each piece in pieces.
+func writePCM(w io.Writer, files []string, items []item, pieces []int64) (int64, error) {
 	var total int64
 	write := func(b []byte) error {
 		n, err := w.Write(b)
@@ -504,6 +521,7 @@ func writePCM(w io.Writer, files []string, items []item) (int64, error) {
 			return total, err
 		}
 		// Kokoro's PCM is 16-bit; never write half a sample.
+		pieces[i] = int64(len(data) &^ 1)
 		if err := write(data[:len(data)&^1]); err != nil {
 			return total, err
 		}

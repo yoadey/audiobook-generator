@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -52,6 +51,13 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg("lookahead must be between 0 and 50"))}, nil
 		}
 		fields["Lookahead"] = *v
+	}
+	if v := req.Body.PreviewText; v != nil {
+		text, msg := previewText(*v)
+		if msg != "" {
+			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
+		}
+		fields["PreviewText"] = text
 	}
 	if len(fields) > 0 {
 		if err := s.Store.UpdateBook(ctx, req.BookId, fields); err != nil {
@@ -98,7 +104,7 @@ func toProgress(p *store.ListenProgress) Progress {
 	if p == nil {
 		return Progress{}
 	}
-	return Progress{ChapterId: &p.ChapterID, PositionMs: p.PositionMs, UpdatedAt: &p.UpdatedAt}
+	return Progress{ChapterId: &p.ChapterID, PositionMs: p.PositionMs, SegmentId: p.SegmentID, UpdatedAt: &p.UpdatedAt}
 }
 
 // GetProgress returns the listening position.
@@ -129,6 +135,15 @@ func (s *Server) SaveProgress(ctx context.Context, req SaveProgressRequestObject
 	}
 	p := &store.ListenProgress{BookID: b.ID, UserID: auth.Subject(ctx), ChapterID: c.ID,
 		PositionMs: max(req.Body.PositionMs, 0)}
+	if id := req.Body.SegmentId; id != nil {
+		seg, err := s.Store.GetSegment(ctx, *id)
+		if isNotFound(err) || err == nil && seg.ChapterID != c.ID {
+			return SaveProgress400JSONResponse{ErrorJSONResponse(errMsg("segment not found in this chapter"))}, nil
+		} else if err != nil {
+			return nil, err
+		}
+		p.SegmentID = &seg.ID
+	}
 	if err := s.Store.SaveProgress(ctx, p); err != nil {
 		return nil, err
 	}
@@ -192,21 +207,13 @@ func (s *Server) GetChapterAudio(ctx context.Context, req GetChapterAudioRequest
 	} else if err != nil {
 		return nil, err
 	}
-	p := filepath.Join(s.DataDir, c.AudioPath)
 	// A version the player started with, while it is kept.
-	if v := req.Params.V; v != nil && versionRe.MatchString(*v) && *v != render.AudioVersion(c.AudioPath) {
-		old := filepath.Join(s.DataDir, render.VersionPath(c.BookID, c.ID, *v))
-		if _, err := os.Stat(old); err == nil {
-			p = old
-		}
-	}
+	p := filepath.Join(s.DataDir, render.KeptPath(s.DataDir, c, req.Params.V))
 	if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
 		return GetChapterAudio404JSONResponse{ErrorJSONResponse(errMsg("no audio"))}, nil
 	}
 	return audioFile{r: requestFrom(ctx), path: p, name: fmt.Sprintf("%d.m4a", c.ID)}, nil
 }
-
-var versionRe = regexp.MustCompile(`^[0-9a-z]{1,20}$`)
 
 // ListVoices lists the voice catalogue as the TTS server offers it.
 func (s *Server) ListVoices(ctx context.Context, _ ListVoicesRequestObject) (ListVoicesResponseObject, error) {
@@ -233,12 +240,18 @@ func (s *Server) PreviewVoice(ctx context.Context, req PreviewVoiceRequestObject
 	if _, err := casting.ParseRecipe(voice); err != nil {
 		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg(err.Error()))}, nil
 	}
-	text := defaultPreviewText
-	if req.Body.Text != nil && strings.TrimSpace(*req.Body.Text) != "" {
+	var text string
+	if req.Body.Text != nil {
 		text = strings.TrimSpace(*req.Body.Text)
 	}
-	if utf8.RuneCountInString(text) > 500 {
+	if utf8.RuneCountInString(text) > maxPreviewText {
 		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg("text must be at most 500 characters"))}, nil
+	}
+	if text == "" {
+		var err error
+		if text, err = s.samplePreviewText(ctx, req.Body.BookId); err != nil {
+			return nil, err
+		}
 	}
 	speed := 1.0
 	if req.Body.Speed != nil {

@@ -122,6 +122,27 @@ func TestRenderChapter(t *testing.T) {
 		assert.Equal(t, st.Size(), got.AudioSize)
 		assert.NoDirExists(t, filepath.Join(dir, "cache", "render", strconv.FormatInt(ch1.ID, 10)), "cache removed")
 
+		// When each segment is spoken: in order, 100 ms each, after the
+		// lead-in, ending before the audio does.
+		tm, err := render.ReadTimings(dir, got.AudioPath)
+		require.NoError(t, err)
+		require.Len(t, tm.Cues, 8)
+		_, segs, err := s.ChapterText(ctx, ch1.ID)
+		require.NoError(t, err)
+		segIDs := map[int64]bool{}
+		for _, sg := range segs {
+			segIDs[sg.ID] = true
+		}
+		assert.Equal(t, int64(300), tm.Cues[0].StartMs)
+		for i, q := range tm.Cues {
+			assert.True(t, segIDs[q.SegmentID], "cue %d names a segment of the chapter", i)
+			assert.Equal(t, int64(100), q.EndMs-q.StartMs)
+			if i > 0 {
+				assert.Greater(t, q.StartMs, tm.Cues[i-1].EndMs)
+			}
+		}
+		assert.Less(t, tm.Cues[7].EndMs, got.AudioDurationMs)
+
 		// A render again writes a new file and keeps the one it replaces
 		// (a listener may still stream it); older ones are removed.
 		first := got.AudioPath
@@ -136,6 +157,8 @@ func TestRenderChapter(t *testing.T) {
 		assert.FileExists(t, filepath.Join(dir, third.AudioPath))
 		assert.FileExists(t, filepath.Join(dir, second.AudioPath))
 		assert.NoFileExists(t, filepath.Join(dir, first))
+		assert.NoFileExists(t, filepath.Join(dir, render.TimingsPath(first)), "timings go with their audio")
+		assert.FileExists(t, filepath.Join(dir, render.TimingsPath(second.AudioPath)))
 		assert.Equal(t, render.VersionPath(b.ID, ch1.ID, render.AudioVersion(third.AudioPath)), third.AudioPath)
 
 		// Chapters without a heading paragraph get their title spoken first
@@ -144,6 +167,11 @@ func TestRenderChapter(t *testing.T) {
 		r.Concurrency = 1
 		require.NoError(t, r.Render(ctx, cs[0].ID, func(float64) {}))
 		assert.Equal(t, "Copyright", fake.texts[0])
+		c0, err := s.GetChapter(ctx, cs[0].ID)
+		require.NoError(t, err)
+		tm, err = render.ReadTimings(dir, c0.AudioPath)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), tm.Cues[0].SegmentID, "the spoken title has no segment")
 	})
 }
 

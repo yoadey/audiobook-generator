@@ -475,6 +475,49 @@ var migrations = []*gormigrate.Migration{
 		},
 		Rollback: func(tx *gorm.DB) error { return tx.Migrator().DropTable("downloads") },
 	},
+	{
+		ID: "202610230001_reading_previews",
+		Migrate: func(tx *gorm.DB) error {
+			type ListenProgress struct {
+				SegmentID *int64
+			}
+			type Book struct {
+				PreviewText string `gorm:"not null;default:''"`
+			}
+			type Character struct {
+				PreviewText string `gorm:"not null;default:''"`
+			}
+			type AppSetting struct {
+				Name  string `gorm:"primaryKey"`
+				Value string `gorm:"not null;default:''"`
+			}
+			if err := tx.Migrator().AddColumn(&ListenProgress{}, "SegmentID"); err != nil {
+				return err
+			}
+			if err := tx.Migrator().AddColumn(&Book{}, "PreviewText"); err != nil {
+				return err
+			}
+			if err := tx.Migrator().AddColumn(&Character{}, "PreviewText"); err != nil {
+				return err
+			}
+			return tx.Migrator().CreateTable(&AppSetting{})
+		},
+		Rollback: func(tx *gorm.DB) error {
+			type ListenProgress struct{ SegmentID *int64 }
+			type Book struct{ PreviewText string }
+			type Character struct{ PreviewText string }
+			if err := tx.Migrator().DropTable("app_settings"); err != nil {
+				return err
+			}
+			if err := tx.Migrator().DropColumn(&Character{}, "PreviewText"); err != nil {
+				return err
+			}
+			if err := tx.Migrator().DropColumn(&Book{}, "PreviewText"); err != nil {
+				return err
+			}
+			return tx.Migrator().DropColumn(&ListenProgress{}, "SegmentID")
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

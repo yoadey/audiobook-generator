@@ -3,6 +3,7 @@ package feed_test
 import (
 	"context"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -72,6 +73,10 @@ type rssDoc struct {
 				URL    string `xml:"url,attr"`
 				Length int64  `xml:"length,attr"`
 			} `xml:"enclosure"`
+			Transcript struct {
+				URL  string `xml:"url,attr"`
+				Type string `xml:"type,attr"`
+			} `xml:"transcript"`
 		} `xml:"item"`
 	} `xml:"channel"`
 }
@@ -141,6 +146,56 @@ func TestFeed(t *testing.T) {
 		body, _ := io.ReadAll(rw.Body)
 		assert.Equal(t, "ec", string(body))
 	})
+}
+
+func TestFeedTranscript(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir, b, cs := setup(t, s)
+		rel := writeAudio(t, s, dir, cs[1], 1, "first")
+		_, segs, err := s.ChapterText(ctx, cs[1].ID)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, render.TimingsPath(rel)), []byte(fmt.Sprintf(
+			`{"cues":[{"s":%d,"a":300,"b":1250},{"s":%d,"a":3723400,"b":3724000}]}`, segs[0].ID, segs[1].ID)), 0o600))
+		mux := http.NewServeMux()
+		(&feed.Handler{Store: s, Secret: secret, DataDir: dir, Log: slog.New(slog.DiscardHandler)}).Register(mux)
+
+		w := get(t, mux, "https://audio.example.org"+feed.Path(secret, b.ID))
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), `xmlns:podcast="https://podcastindex.org/namespace/1.0"`)
+		var doc rssDoc
+		require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc))
+		require.Len(t, doc.Channel.Items, 1)
+		tr := doc.Channel.Items[0].Transcript
+		assert.Equal(t, "text/vtt", tr.Type)
+		assert.Equal(t, strings.TrimSuffix(doc.Channel.Items[0].Enclosure.URL, ".m4a")+".vtt", tr.URL)
+
+		w = get(t, mux, strings.TrimPrefix(tr.URL, "https://audio.example.org"))
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "text/vtt; charset=utf-8", w.Header().Get("Content-Type"))
+		assert.Equal(t, "WEBVTT\n\n1\n00:00:00.300 --> 00:00:01.250\n"+segs[0].Text+
+			"\n\n2\n01:02:03.400 --> 01:02:04.000\n"+segs[1].Text+"\n", w.Body.String())
+
+		// Without recorded timings the transcript is estimated; a wrong
+		// token gets nothing.
+		require.NoError(t, os.Remove(filepath.Join(dir, render.TimingsPath(rel))))
+		w = get(t, mux, strings.TrimPrefix(tr.URL, "https://audio.example.org"))
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 8, strings.Count(w.Body.String(), " --> "), w.Body.String())
+		w = get(t, mux, fmt.Sprintf("/feed/%s/%d/%d/1.vtt", feed.Token([]byte("other"), b.ID), b.ID, cs[1].ID))
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+}
+
+func TestWebVTTEscapes(t *testing.T) {
+	c := &store.Chapter{Title: "One <b>"}
+	segs := []store.Segment{{ID: 4, Text: "Fish & chips -->\n\nnext"}}
+	out := feed.WebVTT(c, segs, &render.Timings{Cues: []render.Cue{
+		{SegmentID: 0, StartMs: 0, EndMs: 500}, {SegmentID: 4, StartMs: 500, EndMs: 900},
+		{SegmentID: 9, StartMs: 900, EndMs: 950}, // unknown segment: skipped
+	}})
+	assert.Equal(t, "WEBVTT\n\n1\n00:00:00.000 --> 00:00:00.500\nOne &lt;b&gt;\n\n"+
+		"2\n00:00:00.500 --> 00:00:00.900\nFish &amp; chips --&gt; next\n", string(out))
 }
 
 func TestFeedAuthorization(t *testing.T) {

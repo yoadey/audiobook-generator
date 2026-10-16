@@ -5,7 +5,7 @@ info:
     HTTP API of the audiobook-generator service. This file is the single source
     of truth: the Go server (internal/api) and the TypeScript client
     (web/src/api) are generated from it.
-  version: 0.4.0
+  version: 0.5.0
 servers:
   - url: /api
 paths:
@@ -520,6 +520,72 @@ paths:
                 type: string
                 format: binary
         "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/timings:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    get:
+      operationId: getChapterTimings
+      summary: When each segment is spoken in the chapter's audio (for reading along)
+      description: >-
+        With v (an audioVersion), the timings of that render while it is
+        kept. Renders made before timings were recorded get an estimate
+        (exact is false).
+      tags: [audio]
+      parameters:
+        - name: v
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 20
+      responses:
+        "200":
+          description: The timings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterTimings"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /settings:
+    get:
+      operationId: getSettings
+      summary: Settings of this instance
+      tags: [system]
+      responses:
+        "200":
+          description: The settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppSettings"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateSettings
+      summary: Change settings of this instance
+      tags: [system]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppSettingsUpdate"
+      responses:
+        "200":
+          description: The settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppSettings"
+        "400":
           $ref: "#/components/responses/Error"
         default:
           $ref: "#/components/responses/Error"
@@ -1400,6 +1466,7 @@ components:
         - narratorVoice
         - narratorSpeed
         - lookahead
+        - previewText
         - analysisStatus
         - castingStatus
         - createdAt
@@ -1437,6 +1504,9 @@ components:
         lookahead:
           type: integer
           description: Chapters after the listening position that are kept rendered
+        previewText:
+          type: string
+          description: Sample text of voice previews in this book (empty - the instance's)
         analysisStatus:
           $ref: "#/components/schemas/AnalysisStatus"
         analysisProgress:
@@ -1467,6 +1537,10 @@ components:
           type: integer
           minimum: 0
           maximum: 50
+        previewText:
+          type: string
+          maxLength: 500
+          description: Sample text of voice previews in this book; empty for the instance's
     BookPage:
       type: object
       required: [items, total]
@@ -1808,6 +1882,10 @@ components:
         positionMs:
           type: integer
           format: int64
+        segmentId:
+          type: integer
+          format: int64
+          description: The segment at the position (where reading along continues)
         updatedAt:
           type: string
           format: date-time
@@ -1822,6 +1900,59 @@ components:
           type: integer
           format: int64
           minimum: 0
+        segmentId:
+          type: integer
+          format: int64
+          description: >-
+            The segment at the position; when the chapter is read without
+            audio, positionMs is 0 and the segment marks the position
+    ChapterTimings:
+      type: object
+      required: [chapterId, version, exact, cues]
+      properties:
+        chapterId:
+          type: integer
+          format: int64
+        version:
+          type: string
+          description: The audioVersion the timings belong to
+        exact:
+          type: boolean
+          description: Recorded while rendering (false - estimated from the text length)
+        cues:
+          type: array
+          items:
+            $ref: "#/components/schemas/Cue"
+    Cue:
+      type: object
+      required: [segmentId, startMs, endMs]
+      properties:
+        segmentId:
+          type: integer
+          format: int64
+          description: The segment spoken (0 - the chapter title)
+        startMs:
+          type: integer
+          format: int64
+        endMs:
+          type: integer
+          format: int64
+    AppSettings:
+      type: object
+      required: [previewText, defaultPreviewText]
+      properties:
+        previewText:
+          type: string
+          description: Sample text of voice previews (empty - defaultPreviewText)
+        defaultPreviewText:
+          type: string
+          description: The built-in sample text
+    AppSettingsUpdate:
+      type: object
+      properties:
+        previewText:
+          type: string
+          maxLength: 500
 
     Voice:
       type: object
@@ -2351,7 +2482,7 @@ components:
       type: object
       required: [id, bookId, name, aliases, gender, ageGroup, role, description, speechStyle, importance,
         speaks, chapterCount, firstChapterIdx, userEdited, tier, tierManual, voice, voiceSpeed, voiceSource,
-        voiceManual, voiceNote]
+        voiceManual, voiceNote, previewText]
       properties:
         id:
           type: integer
@@ -2410,6 +2541,9 @@ components:
         voiceNote:
           type: string
           description: Why the casting chose the recipe
+        previewText:
+          type: string
+          description: Sample text of the character's voice previews (empty - quotes from the book)
     CharacterPage:
       type: object
       required: [items, total]
@@ -2486,6 +2620,10 @@ components:
           type: number
           minimum: 0.5
           maximum: 2
+        previewText:
+          type: string
+          maxLength: 500
+          description: Sample text of the character's voice previews; empty for quotes from the book
     CharacterMerge:
       type: object
       required: [targetId, sourceIds]

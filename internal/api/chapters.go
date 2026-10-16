@@ -73,7 +73,9 @@ func (s *Server) dropAudio(ctx context.Context, chapterIDs ...int64) {
 		return
 	}
 	for _, p := range paths {
-		s.removeFile(ctx, p)
+		if err := render.RemoveAudio(s.DataDir, p); err != nil {
+			s.Log.WarnContext(ctx, "remove audio", "path", p, "err", err)
+		}
 	}
 }
 

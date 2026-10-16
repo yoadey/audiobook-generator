@@ -646,6 +646,20 @@ type AnalysisStart struct {
 // AnalysisStatus defines model for AnalysisStatus.
 type AnalysisStatus string
 
+// AppSettings defines model for AppSettings.
+type AppSettings struct {
+	// DefaultPreviewText The built-in sample text
+	DefaultPreviewText string `json:"defaultPreviewText"`
+
+	// PreviewText Sample text of voice previews (empty - defaultPreviewText)
+	PreviewText string `json:"previewText"`
+}
+
+// AppSettingsUpdate defines model for AppSettingsUpdate.
+type AppSettingsUpdate struct {
+	PreviewText *string `json:"previewText,omitempty"`
+}
+
 // AttributionStart defines model for AttributionStart.
 type AttributionStart struct {
 	// Force Attribute again, discarding automatic speakers
@@ -684,6 +698,9 @@ type Book struct {
 	// NarratorVoice Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)"
 	NarratorVoice string `json:"narratorVoice"`
 
+	// PreviewText Sample text of voice previews in this book (empty - the instance's)
+	PreviewText string `json:"previewText"`
+
 	// Progress Progress of the running import (0..1)
 	Progress  float32    `json:"progress"`
 	Status    BookStatus `json:"status"`
@@ -706,6 +723,9 @@ type BookUpdate struct {
 	Lookahead     *int     `json:"lookahead,omitempty"`
 	NarratorSpeed *float32 `json:"narratorSpeed,omitempty"`
 	NarratorVoice *string  `json:"narratorVoice,omitempty"`
+
+	// PreviewText Sample text of voice previews in this book; empty for the instance's
+	PreviewText *string `json:"previewText,omitempty"`
 }
 
 // Casting defines model for Casting.
@@ -879,6 +899,18 @@ type ChapterSplit struct {
 // ChapterStatus defines model for ChapterStatus.
 type ChapterStatus string
 
+// ChapterTimings defines model for ChapterTimings.
+type ChapterTimings struct {
+	ChapterId int64 `json:"chapterId"`
+	Cues      []Cue `json:"cues"`
+
+	// Exact Recorded while rendering (false - estimated from the text length)
+	Exact bool `json:"exact"`
+
+	// Version The audioVersion the timings belong to
+	Version string `json:"version"`
+}
+
 // ChapterUpdate defines model for ChapterUpdate.
 type ChapterUpdate struct {
 	Excluded *bool   `json:"excluded,omitempty"`
@@ -897,10 +929,13 @@ type Character struct {
 	Id              int64    `json:"id"`
 	Importance      int      `json:"importance"`
 	Name            string   `json:"name"`
-	Role            string   `json:"role"`
-	Speaks          bool     `json:"speaks"`
-	SpeechStyle     string   `json:"speechStyle"`
-	Tier            Tier     `json:"tier"`
+
+	// PreviewText Sample text of the character's voice previews (empty - quotes from the book)
+	PreviewText string `json:"previewText"`
+	Role        string `json:"role"`
+	Speaks      bool   `json:"speaks"`
+	SpeechStyle string `json:"speechStyle"`
+	Tier        Tier   `json:"tier"`
 
 	// TierManual The tier was chosen by hand; the casting keeps it
 	TierManual bool `json:"tierManual"`
@@ -938,10 +973,13 @@ type CharacterDetail struct {
 	Id              int64        `json:"id"`
 	Importance      int          `json:"importance"`
 	Name            string       `json:"name"`
-	Role            string       `json:"role"`
-	Speaks          bool         `json:"speaks"`
-	SpeechStyle     string       `json:"speechStyle"`
-	Tier            Tier         `json:"tier"`
+
+	// PreviewText Sample text of the character's voice previews (empty - quotes from the book)
+	PreviewText string `json:"previewText"`
+	Role        string `json:"role"`
+	Speaks      bool   `json:"speaks"`
+	SpeechStyle string `json:"speechStyle"`
+	Tier        Tier   `json:"tier"`
 
 	// TierManual The tier was chosen by hand; the casting keeps it
 	TierManual bool `json:"tierManual"`
@@ -998,8 +1036,11 @@ type CharacterUpdate struct {
 	Gender      *Gender   `json:"gender,omitempty"`
 	Importance  *int      `json:"importance,omitempty"`
 	Name        *string   `json:"name,omitempty"`
-	Role        *string   `json:"role,omitempty"`
-	SpeechStyle *string   `json:"speechStyle,omitempty"`
+
+	// PreviewText Sample text of the character's voice previews; empty for quotes from the book
+	PreviewText *string `json:"previewText,omitempty"`
+	Role        *string `json:"role,omitempty"`
+	SpeechStyle *string `json:"speechStyle,omitempty"`
 
 	// Tier main/minor fixes the tier; auto leaves it to the casting
 	Tier *CharacterUpdateTier `json:"tier,omitempty"`
@@ -1011,6 +1052,15 @@ type CharacterUpdate struct {
 
 // CharacterUpdateTier main/minor fixes the tier; auto leaves it to the casting
 type CharacterUpdateTier string
+
+// Cue defines model for Cue.
+type Cue struct {
+	EndMs int64 `json:"endMs"`
+
+	// SegmentId The segment spoken (0 - the chapter title)
+	SegmentId int64 `json:"segmentId"`
+	StartMs   int64 `json:"startMs"`
+}
 
 // DatabaseInfo defines model for DatabaseInfo.
 type DatabaseInfo struct {
@@ -1291,15 +1341,21 @@ type ParagraphKind string
 
 // Progress defines model for Progress.
 type Progress struct {
-	ChapterId  *int64     `json:"chapterId,omitempty"`
-	PositionMs int64      `json:"positionMs"`
-	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
+	ChapterId  *int64 `json:"chapterId,omitempty"`
+	PositionMs int64  `json:"positionMs"`
+
+	// SegmentId The segment at the position (where reading along continues)
+	SegmentId *int64     `json:"segmentId,omitempty"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
 }
 
 // ProgressUpdate defines model for ProgressUpdate.
 type ProgressUpdate struct {
 	ChapterId  int64 `json:"chapterId"`
 	PositionMs int64 `json:"positionMs"`
+
+	// SegmentId The segment at the position; when the chapter is read without audio, positionMs is 0 and the segment marks the position
+	SegmentId *int64 `json:"segmentId,omitempty"`
 }
 
 // Quote defines model for Quote.
@@ -1489,6 +1545,11 @@ type RenderChapterParams struct {
 	Force *bool `form:"force,omitempty" json:"force,omitempty"`
 }
 
+// GetChapterTimingsParams defines parameters for GetChapterTimings.
+type GetChapterTimingsParams struct {
+	V *string `form:"v,omitempty" json:"v,omitempty"`
+}
+
 // ListCharacterQuotesParams defines parameters for ListCharacterQuotes.
 type ListCharacterQuotesParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
@@ -1563,6 +1624,9 @@ type CreateLLMProviderJSONRequestBody = LLMProviderInput
 
 // UpdateLLMProviderJSONRequestBody defines body for UpdateLLMProvider for application/json ContentType.
 type UpdateLLMProviderJSONRequestBody = LLMProviderUpdate
+
+// UpdateSettingsJSONRequestBody defines body for UpdateSettings for application/json ContentType.
+type UpdateSettingsJSONRequestBody = AppSettingsUpdate
 
 // PreviewVoiceJSONRequestBody defines body for PreviewVoice for application/json ContentType.
 type PreviewVoiceJSONRequestBody = VoicePreview
@@ -1665,6 +1729,9 @@ type ServerInterface interface {
 	// SplitChapter Start a new chapter at the given paragraph
 	// (POST /chapters/{chapterId}/split)
 	SplitChapter(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
+	// GetChapterTimings When each segment is spoken in the chapter's audio (for reading along)
+	// (GET /chapters/{chapterId}/timings)
+	GetChapterTimings(w http.ResponseWriter, r *http.Request, chapterId ChapterId, params GetChapterTimingsParams)
 	// DeleteCharacter Delete a character (e.g. not a person)
 	// (DELETE /characters/{characterId})
 	DeleteCharacter(w http.ResponseWriter, r *http.Request, characterId CharacterId)
@@ -1719,6 +1786,12 @@ type ServerInterface interface {
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request)
+	// GetSettings Settings of this instance
+	// (GET /settings)
+	GetSettings(w http.ResponseWriter, r *http.Request)
+	// UpdateSettings Change settings of this instance
+	// (PATCH /settings)
+	UpdateSettings(w http.ResponseWriter, r *http.Request)
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(w http.ResponseWriter, r *http.Request)
@@ -2761,6 +2834,48 @@ func (siw *ServerInterfaceWrapper) SplitChapter(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GetChapterTimings operation middleware
+func (siw *ServerInterfaceWrapper) GetChapterTimings(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chapterId" -------------
+	var chapterId ChapterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chapterId", r.PathValue("chapterId"), &chapterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chapterId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetChapterTimingsParams
+
+	// ------------- Optional query parameter "v" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "v", r.URL.Query(), &params.V, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "v"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "v", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetChapterTimings(w, r, chapterId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteCharacter operation middleware
 func (siw *ServerInterfaceWrapper) DeleteCharacter(w http.ResponseWriter, r *http.Request) {
 
@@ -3231,6 +3346,34 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 	handler.ServeHTTP(w, r)
 }
 
+// GetSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSettings operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSystemInfo operation middleware
 func (siw *ServerInterfaceWrapper) GetSystemInfo(w http.ResponseWriter, r *http.Request) {
 
@@ -3414,6 +3557,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/chapters/{chapterId}/quotes/{quoteRef}", wrapper.UpdateQuote)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/render", wrapper.RenderChapter)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/chapters/{chapterId}/audio", wrapper.GetChapterAudio)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/chapters/{chapterId}/timings", wrapper.GetChapterTimings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/settings", wrapper.GetSettings)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/settings", wrapper.UpdateSettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/export", wrapper.ExportBook)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import", wrapper.ImportBook)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/downloads", wrapper.ListDownloads)
@@ -5423,6 +5569,60 @@ func (response SplitChapterdefaultJSONResponse) VisitSplitChapterResponse(w http
 	return err
 }
 
+type GetChapterTimingsRequestObject struct {
+	ChapterId ChapterId `json:"chapterId"`
+	Params    GetChapterTimingsParams
+}
+
+type GetChapterTimingsResponseObject interface {
+	VisitGetChapterTimingsResponse(w http.ResponseWriter) error
+}
+
+type GetChapterTimings200JSONResponse ChapterTimings
+
+func (response GetChapterTimings200JSONResponse) VisitGetChapterTimingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetChapterTimings404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetChapterTimings404JSONResponse) VisitGetChapterTimingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetChapterTimingsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetChapterTimingsdefaultJSONResponse) VisitGetChapterTimingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteCharacterRequestObject struct {
 	CharacterId CharacterId `json:"characterId"`
 }
@@ -6544,6 +6744,97 @@ func (response GetMedefaultJSONResponse) VisitGetMeResponse(w http.ResponseWrite
 	return err
 }
 
+type GetSettingsRequestObject struct {
+}
+
+type GetSettingsResponseObject interface {
+	VisitGetSettingsResponse(w http.ResponseWriter) error
+}
+
+type GetSettings200JSONResponse AppSettings
+
+func (response GetSettings200JSONResponse) VisitGetSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSettingsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetSettingsdefaultJSONResponse) VisitGetSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSettingsRequestObject struct {
+	Body *UpdateSettingsJSONRequestBody
+}
+
+type UpdateSettingsResponseObject interface {
+	VisitUpdateSettingsResponse(w http.ResponseWriter) error
+}
+
+type UpdateSettings200JSONResponse AppSettings
+
+func (response UpdateSettings200JSONResponse) VisitUpdateSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSettings400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateSettings400JSONResponse) VisitUpdateSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSettingsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response UpdateSettingsdefaultJSONResponse) VisitUpdateSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetSystemInfoRequestObject struct {
 }
 
@@ -6805,6 +7096,9 @@ type StrictServerInterface interface {
 	// SplitChapter Start a new chapter at the given paragraph
 	// (POST /chapters/{chapterId}/split)
 	SplitChapter(ctx context.Context, request SplitChapterRequestObject) (SplitChapterResponseObject, error)
+	// GetChapterTimings When each segment is spoken in the chapter's audio (for reading along)
+	// (GET /chapters/{chapterId}/timings)
+	GetChapterTimings(ctx context.Context, request GetChapterTimingsRequestObject) (GetChapterTimingsResponseObject, error)
 	// DeleteCharacter Delete a character (e.g. not a person)
 	// (DELETE /characters/{characterId})
 	DeleteCharacter(ctx context.Context, request DeleteCharacterRequestObject) (DeleteCharacterResponseObject, error)
@@ -6859,6 +7153,12 @@ type StrictServerInterface interface {
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+	// GetSettings Settings of this instance
+	// (GET /settings)
+	GetSettings(ctx context.Context, request GetSettingsRequestObject) (GetSettingsResponseObject, error)
+	// UpdateSettings Change settings of this instance
+	// (PATCH /settings)
+	UpdateSettings(ctx context.Context, request UpdateSettingsRequestObject) (UpdateSettingsResponseObject, error)
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(ctx context.Context, request GetSystemInfoRequestObject) (GetSystemInfoResponseObject, error)
@@ -7839,6 +8139,33 @@ func (sh *strictHandler) SplitChapter(w http.ResponseWriter, r *http.Request, ch
 	}
 }
 
+// GetChapterTimings operation middleware
+func (sh *strictHandler) GetChapterTimings(w http.ResponseWriter, r *http.Request, chapterId ChapterId, params GetChapterTimingsParams) {
+	var request GetChapterTimingsRequestObject
+
+	request.ChapterId = chapterId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetChapterTimings(ctx, request.(GetChapterTimingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetChapterTimings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetChapterTimingsResponseObject); ok {
+		if err := validResponse.VisitGetChapterTimingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // DeleteCharacter operation middleware
 func (sh *strictHandler) DeleteCharacter(w http.ResponseWriter, r *http.Request, characterId CharacterId) {
 	var request DeleteCharacterRequestObject
@@ -8340,6 +8667,61 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetMeResponseObject); ok {
 		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSettings operation middleware
+func (sh *strictHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	var request GetSettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSettings(ctx, request.(GetSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSettingsResponseObject); ok {
+		if err := validResponse.VisitGetSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateSettings operation middleware
+func (sh *strictHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var request UpdateSettingsRequestObject
+
+	var body UpdateSettingsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateSettings(ctx, request.(UpdateSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateSettingsResponseObject); ok {
+		if err := validResponse.VisitUpdateSettingsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

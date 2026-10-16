@@ -317,6 +317,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/chapters/{chapterId}/timings': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    /**
+     * When each segment is spoken in the chapter's audio (for reading along)
+     * @description With v (an audioVersion), the timings of that render while it is kept. Renders made before timings were recorded get an estimate (exact is false).
+     */
+    get: operations['getChapterTimings'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/settings': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Settings of this instance */
+    get: operations['getSettings'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Change settings of this instance */
+    patch: operations['updateSettings'];
+    trace?: never;
+  };
   '/books/{bookId}/export': {
     parameters: {
       query?: never;
@@ -833,6 +873,8 @@ export interface components {
       narratorSpeed: number;
       /** @description Chapters after the listening position that are kept rendered */
       lookahead: number;
+      /** @description Sample text of voice previews in this book (empty - the instance's) */
+      previewText: string;
       analysisStatus: components['schemas']['AnalysisStatus'];
       /** @description Share of analysed batches (0..1) once the analysis is planned */
       analysisProgress?: number;
@@ -848,6 +890,8 @@ export interface components {
       narratorVoice?: string;
       narratorSpeed?: number;
       lookahead?: number;
+      /** @description Sample text of voice previews in this book; empty for the instance's */
+      previewText?: string;
     };
     BookPage: {
       items: components['schemas']['Book'][];
@@ -1055,6 +1099,11 @@ export interface components {
       chapterId?: number;
       /** Format: int64 */
       positionMs: number;
+      /**
+       * Format: int64
+       * @description The segment at the position (where reading along continues)
+       */
+      segmentId?: number;
       /** Format: date-time */
       updatedAt?: string;
     };
@@ -1063,6 +1112,40 @@ export interface components {
       chapterId: number;
       /** Format: int64 */
       positionMs: number;
+      /**
+       * Format: int64
+       * @description The segment at the position; when the chapter is read without audio, positionMs is 0 and the segment marks the position
+       */
+      segmentId?: number;
+    };
+    ChapterTimings: {
+      /** Format: int64 */
+      chapterId: number;
+      /** @description The audioVersion the timings belong to */
+      version: string;
+      /** @description Recorded while rendering (false - estimated from the text length) */
+      exact: boolean;
+      cues: components['schemas']['Cue'][];
+    };
+    Cue: {
+      /**
+       * Format: int64
+       * @description The segment spoken (0 - the chapter title)
+       */
+      segmentId: number;
+      /** Format: int64 */
+      startMs: number;
+      /** Format: int64 */
+      endMs: number;
+    };
+    AppSettings: {
+      /** @description Sample text of voice previews (empty - defaultPreviewText) */
+      previewText: string;
+      /** @description The built-in sample text */
+      defaultPreviewText: string;
+    };
+    AppSettingsUpdate: {
+      previewText?: string;
     };
     Voice: {
       id: string;
@@ -1400,6 +1483,8 @@ export interface components {
       voiceManual: boolean;
       /** @description Why the casting chose the recipe */
       voiceNote: string;
+      /** @description Sample text of the character's voice previews (empty - quotes from the book) */
+      previewText: string;
     };
     CharacterPage: {
       items: components['schemas']['Character'][];
@@ -1432,6 +1517,8 @@ export interface components {
       /** @description A recipe like "bf_emma(0.7)+af_bella(0.3)" (chosen by hand, kept by the casting); empty to leave the voice to the casting again */
       voice?: string;
       voiceSpeed?: number;
+      /** @description Sample text of the character's voice previews; empty for quotes from the book */
+      previewText?: string;
     };
     CharacterMerge: {
       /** Format: int64 */
@@ -2023,6 +2110,79 @@ export interface operations {
         };
       };
       404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getChapterTimings: {
+    parameters: {
+      query?: {
+        v?: string;
+      };
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The timings */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterTimings'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The settings */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AppSettings'];
+        };
+      };
+      default: components['responses']['Error'];
+    };
+  };
+  updateSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AppSettingsUpdate'];
+      };
+    };
+    responses: {
+      /** @description The settings */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AppSettings'];
+        };
+      };
+      400: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };

@@ -48,7 +48,7 @@ func (fakeTTS) Voices(context.Context) ([]tts.Voice, error) {
 }
 func (fakeTTS) Synthesize(_ context.Context, s tts.Speech) ([]byte, error) {
 	if s.Format == "mp3" {
-		return []byte("ID3fake"), nil
+		return []byte("ID3" + s.Text), nil // the text, so tests can tell what was said
 	}
 	return make([]byte, 4800), nil
 }

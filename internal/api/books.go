@@ -22,6 +22,7 @@ func (s *Server) toBook(b *store.Book) Book {
 		NarratorVoice:  voice,
 		NarratorSpeed:  float32(speed),
 		Lookahead:      b.Lookahead,
+		PreviewText:    b.PreviewText,
 		Id:             b.ID,
 		Title:          b.Title,
 		Author:         b.Author,

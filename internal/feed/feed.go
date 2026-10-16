@@ -1,5 +1,6 @@
 // Package feed serves a podcast RSS feed per book, so any podcast app can
-// play the rendered chapters. Podcast apps cannot log in: a feed and its
+// play the rendered chapters, with a transcript (WebVTT) per episode for
+// apps that show the text along. Podcast apps cannot log in: a feed and its
 // enclosures are authorized by a token (an HMAC of the book ID under a
 // server secret) in the URL instead of a session.
 package feed
@@ -64,7 +65,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 var (
 	feedFile  = regexp.MustCompile(`^([0-9]{1,18})\.xml$`)
-	audioFile = regexp.MustCompile(`^([0-9a-z]{1,20})\.m4a$`)
+	audioFile = regexp.MustCompile(`^([0-9a-z]{1,20})\.(m4a|vtt)$`)
 )
 
 // authorized reports whether token belongs to the book.
@@ -120,12 +121,12 @@ func (h *Handler) serveAudio(w http.ResponseWriter, r *http.Request) {
 	}
 	// The version the feed listed while it is kept, else the current one
 	// (an app holding an older feed still gets the chapter).
-	p := filepath.Join(h.DataDir, c.AudioPath)
-	if v := m[1]; v != render.AudioVersion(c.AudioPath) {
-		if old := filepath.Join(h.DataDir, render.VersionPath(bookID, chapterID, v)); exists(old) {
-			p = old
-		}
+	version := m[1]
+	if m[2] == "vtt" {
+		h.serveTranscript(w, r, c, version)
+		return
 	}
+	p := filepath.Join(h.DataDir, render.KeptPath(h.DataDir, c, &version))
 	f, err := os.Open(p) //nolint:gosec // data dir + IDs + a version matching [0-9a-z]+
 	if errors.Is(err, os.ErrNotExist) {
 		http.NotFound(w, r)
@@ -162,11 +163,6 @@ func (h *Handler) serveCover(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath.Join(h.DataDir, b.CoverPath))
 }
 
-func exists(p string) bool {
-	_, err := os.Stat(p) //nolint:gosec // data dir + IDs + a version matching [0-9a-z]+
-	return err == nil
-}
-
 func playable(c *store.Chapter) bool {
 	return !c.Excluded && c.AudioPath != "" && c.AudioStatus != store.AudioNone
 }
@@ -182,6 +178,7 @@ type rss struct {
 	XMLName xml.Name `xml:"rss"`
 	Version string   `xml:"version,attr"`
 	ITunes  string   `xml:"xmlns:itunes,attr"`
+	Podcast string   `xml:"xmlns:podcast,attr"`
 	Channel channel  `xml:"channel"`
 }
 
@@ -202,13 +199,21 @@ type image struct {
 }
 
 type item struct {
-	Title     string    `xml:"title"`
-	GUID      guid      `xml:"guid"`
-	PubDate   string    `xml:"pubDate"`
-	Enclosure enclosure `xml:"enclosure"`
-	Duration  string    `xml:"itunes:duration,omitempty"`
-	Episode   int       `xml:"itunes:episode"`
-	Season    int       `xml:"itunes:season,omitempty"`
+	Title      string      `xml:"title"`
+	GUID       guid        `xml:"guid"`
+	PubDate    string      `xml:"pubDate"`
+	Enclosure  enclosure   `xml:"enclosure"`
+	Duration   string      `xml:"itunes:duration,omitempty"`
+	Episode    int         `xml:"itunes:episode"`
+	Season     int         `xml:"itunes:season,omitempty"`
+	Transcript *transcript `xml:"podcast:transcript,omitempty"`
+}
+
+// transcript is the Podcasting 2.0 transcript tag.
+type transcript struct {
+	URL      string `xml:"url,attr"`
+	Type     string `xml:"type,attr"`
+	Language string `xml:"language,attr,omitempty"`
 }
 
 type guid struct {
@@ -272,6 +277,10 @@ func (h *Handler) build(ctx context.Context, b *store.Book, base string) ([]byte
 				Type:   "audio/mp4",
 			},
 			Episode: c.Idx + 1,
+			Transcript: &transcript{
+				URL:  fmt.Sprintf("%s/%d/%d/%s.vtt", base, b.ID, c.ID, version),
+				Type: "text/vtt", Language: b.Language,
+			},
 		}
 		if c.AudioDurationMs > 0 {
 			it.Duration = strconv.FormatInt((c.AudioDurationMs+500)/1000, 10)
@@ -282,7 +291,8 @@ func (h *Handler) build(ctx context.Context, b *store.Book, base string) ([]byte
 		ch.Items = append(ch.Items, it)
 	}
 	out, err := xml.MarshalIndent(rss{
-		Version: "2.0", ITunes: "http://www.itunes.com/dtds/podcast-1.0.dtd", Channel: ch,
+		Version: "2.0", ITunes: "http://www.itunes.com/dtds/podcast-1.0.dtd",
+		Podcast: "https://podcastindex.org/namespace/1.0", Channel: ch,
 	}, "", "  ")
 	if err != nil {
 		return nil, err

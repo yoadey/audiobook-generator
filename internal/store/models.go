@@ -38,6 +38,9 @@ type Book struct {
 	// Lookahead is how many chapters after the listening position are kept
 	// rendered.
 	Lookahead int `gorm:"not null;default:3"`
+	// PreviewText is what voice previews in this book say ("" = the
+	// instance's sample text).
+	PreviewText string `gorm:"not null;default:''"`
 
 	// Character analysis (see AnalysisStatus); the progress is counted
 	// from the analysis batches.
@@ -249,7 +252,16 @@ type ListenProgress struct {
 	UserID     string `gorm:"not null;default:'';uniqueIndex:idx_listen_progress_book_user,priority:2"`
 	ChapterID  int64  `gorm:"not null"`
 	PositionMs int64  `gorm:"not null;default:0"`
-	UpdatedAt  time.Time
+	// SegmentID is the segment at the position: where reading along
+	// continues (the only position of a chapter read without audio).
+	SegmentID *int64
+	UpdatedAt time.Time
+}
+
+// AppSetting is a setting of the instance changed in the UI.
+type AppSetting struct {
+	Name  string `gorm:"primaryKey"`
+	Value string `gorm:"not null;default:''"`
 }
 
 // LexiconEntry tells how a book's word (a fantasy name) is pronounced:
@@ -441,6 +453,9 @@ type Character struct {
 	VoiceSpeed  float64 `gorm:"not null;default:1"`
 	VoiceManual bool    `gorm:"not null;default:false"`
 	VoiceNote   string  `gorm:"not null;default:''"`
+	// PreviewText is what the voice previews say ("" = quotes of the
+	// character).
+	PreviewText string `gorm:"not null;default:''"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
