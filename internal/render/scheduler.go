@@ -121,7 +121,7 @@ func (s *Scheduler) EnsureAhead(ctx context.Context, b *store.Book) (int, error)
 		return 0, nil
 	}
 	from := 0
-	p, err := s.Store.GetProgress(ctx, b.ID)
+	p, err := s.Store.LatestProgress(ctx, b.ID)
 	if err != nil {
 		return 0, err
 	}

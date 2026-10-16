@@ -531,6 +531,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/books/{bookId}/lexicon': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** The book's pronunciation lexicon */
+    get: operations['listLexicon'];
+    put?: never;
+    /** Add a pronunciation (chapters containing the term become outdated) */
+    post: operations['createLexiconEntry'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/lexicon/{entryId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entryId: number;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Remove a pronunciation */
+    delete: operations['deleteLexiconEntry'];
+    options?: never;
+    head?: never;
+    /** Change a pronunciation */
+    patch: operations['updateLexiconEntry'];
+    trace?: never;
+  };
   '/books/{bookId}/characters': {
     parameters: {
       query?: never;
@@ -923,7 +963,34 @@ export interface components {
       /** @description Described by the built-in catalogue (otherwise only known to the server) */
       inCatalog: boolean;
     };
+    LexiconEntry: {
+      /** Format: int64 */
+      id: number;
+      /** Format: int64 */
+      bookId: number;
+      /** @description Word or name as written in the book (whole words, any case) */
+      term: string;
+      /** @description What is said instead, or phonemes when phonemes is true */
+      replacement: string;
+      /** @description The replacement is a pronunciation in Kokoro's phoneme notation (IPA) */
+      phonemes: boolean;
+    };
+    LexiconEntryInput: {
+      term: string;
+      replacement: string;
+      phonemes?: boolean;
+    };
+    LexiconEntryUpdate: {
+      term?: string;
+      replacement?: string;
+      phonemes?: boolean;
+    };
     VoicePreview: {
+      /**
+       * Format: int64
+       * @description Apply this book's pronunciation lexicon to the text
+       */
+      bookId?: number;
       voice: string;
       speed?: number;
       text?: string;
@@ -2185,6 +2252,112 @@ export interface operations {
           'application/json': components['schemas']['Casting'];
         };
       };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listLexicon: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Entries by term */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LexiconEntry'][];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  createLexiconEntry: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LexiconEntryInput'];
+      };
+    };
+    responses: {
+      /** @description The entry */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LexiconEntry'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  deleteLexiconEntry: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entryId: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  updateLexiconEntry: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entryId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LexiconEntryUpdate'];
+      };
+    };
+    responses: {
+      /** @description The entry */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LexiconEntry'];
+        };
+      };
+      400: components['responses']['Error'];
       404: components['responses']['Error'];
       409: components['responses']['Error'];
       default: components['responses']['Error'];

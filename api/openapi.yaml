@@ -852,6 +852,97 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /books/{bookId}/lexicon:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listLexicon
+      summary: The book's pronunciation lexicon
+      tags: [lexicon]
+      responses:
+        "200":
+          description: Entries by term
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LexiconEntry"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createLexiconEntry
+      summary: Add a pronunciation (chapters containing the term become outdated)
+      tags: [lexicon]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LexiconEntryInput"
+      responses:
+        "201":
+          description: The entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LexiconEntry"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /lexicon/{entryId}:
+    parameters:
+      - name: entryId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    patch:
+      operationId: updateLexiconEntry
+      summary: Change a pronunciation
+      tags: [lexicon]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LexiconEntryUpdate"
+      responses:
+        "200":
+          description: The entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LexiconEntry"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteLexiconEntry
+      summary: Remove a pronunciation
+      tags: [lexicon]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /books/{bookId}/characters:
     parameters:
       - $ref: "#/components/parameters/BookId"
@@ -1613,10 +1704,60 @@ components:
         inCatalog:
           type: boolean
           description: Described by the built-in catalogue (otherwise only known to the server)
+    LexiconEntry:
+      type: object
+      required: [id, bookId, term, replacement, phonemes]
+      properties:
+        id:
+          type: integer
+          format: int64
+        bookId:
+          type: integer
+          format: int64
+        term:
+          type: string
+          description: Word or name as written in the book (whole words, any case)
+        replacement:
+          type: string
+          description: What is said instead, or phonemes when phonemes is true
+        phonemes:
+          type: boolean
+          description: The replacement is a pronunciation in Kokoro's phoneme notation (IPA)
+    LexiconEntryInput:
+      type: object
+      required: [term, replacement]
+      properties:
+        term:
+          type: string
+          minLength: 1
+          maxLength: 100
+        replacement:
+          type: string
+          minLength: 1
+          maxLength: 200
+        phonemes:
+          type: boolean
+    LexiconEntryUpdate:
+      type: object
+      properties:
+        term:
+          type: string
+          minLength: 1
+          maxLength: 100
+        replacement:
+          type: string
+          minLength: 1
+          maxLength: 200
+        phonemes:
+          type: boolean
     VoicePreview:
       type: object
       required: [voice]
       properties:
+        bookId:
+          type: integer
+          format: int64
+          description: Apply this book's pronunciation lexicon to the text
         voice:
           type: string
           maxLength: 200

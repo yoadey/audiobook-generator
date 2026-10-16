@@ -73,21 +73,33 @@ func (s *Store) ChaptersAhead(ctx context.Context, bookID int64, from, n int) ([
 	return cs, err
 }
 
-// GetProgress returns the listening position of a book (nil when none).
-func (s *Store) GetProgress(ctx context.Context, bookID int64) (*ListenProgress, error) {
+// GetProgress returns a user's listening position in a book (nil when
+// none; user "" without authentication).
+func (s *Store) GetProgress(ctx context.Context, bookID int64, user string) (*ListenProgress, error) {
 	var p ListenProgress
-	err := s.db.WithContext(ctx).Where("book_id = ?", bookID).Take(&p).Error
+	err := s.db.WithContext(ctx).Where("book_id = ? AND user_id = ?", bookID, user).Take(&p).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return &p, err
 }
 
-// SaveProgress upserts the listening position of a book.
+// LatestProgress returns the most recent listening position in a book of
+// any user (nil when none): the lookahead follows it.
+func (s *Store) LatestProgress(ctx context.Context, bookID int64) (*ListenProgress, error) {
+	var p ListenProgress
+	err := s.db.WithContext(ctx).Where("book_id = ?", bookID).Order("updated_at DESC, id DESC").Take(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &p, err
+}
+
+// SaveProgress upserts a user's listening position in a book.
 func (s *Store) SaveProgress(ctx context.Context, p *ListenProgress) error {
 	p.UpdatedAt = time.Now().UTC()
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "book_id"}},
+		Columns:   []clause.Column{{Name: "book_id"}, {Name: "user_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"chapter_id", "position_ms", "updated_at"}),
 	}).Create(p).Error
 }

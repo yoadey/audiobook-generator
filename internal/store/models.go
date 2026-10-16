@@ -212,11 +212,26 @@ type Job struct {
 
 // ListenProgress is the playback position in a book.
 type ListenProgress struct {
-	ID         int64 `gorm:"primaryKey"`
-	BookID     int64 `gorm:"not null;uniqueIndex"`
-	ChapterID  int64 `gorm:"not null"`
-	PositionMs int64 `gorm:"not null;default:0"`
+	ID     int64 `gorm:"primaryKey"`
+	BookID int64 `gorm:"not null;uniqueIndex:idx_listen_progress_book_user,priority:1"`
+	// UserID is the OIDC subject ("" without authentication).
+	UserID     string `gorm:"not null;default:'';uniqueIndex:idx_listen_progress_book_user,priority:2"`
+	ChapterID  int64  `gorm:"not null"`
+	PositionMs int64  `gorm:"not null;default:0"`
 	UpdatedAt  time.Time
+}
+
+// LexiconEntry tells how a book's word (a fantasy name) is pronounced:
+// replaced by other text ("Ryoka" → "Ree-oh-ka"), or by phonemes in
+// Kokoro's notation.
+type LexiconEntry struct {
+	ID          int64  `gorm:"primaryKey"`
+	BookID      int64  `gorm:"not null;index"`
+	Term        string `gorm:"not null"`
+	Replacement string `gorm:"not null"`
+	IsPhonemes  bool   `gorm:"not null;default:false"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Structured-output modes of an LLM provider.

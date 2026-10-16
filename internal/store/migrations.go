@@ -410,6 +410,51 @@ var migrations = []*gormigrate.Migration{
 		},
 		Rollback: func(*gorm.DB) error { return nil },
 	},
+	{
+		ID: "202610210001_lexicon_and_user_progress",
+		Migrate: func(tx *gorm.DB) error {
+			type LexiconEntry struct {
+				ID          int64  `gorm:"primaryKey"`
+				BookID      int64  `gorm:"not null;index"`
+				Term        string `gorm:"not null"`
+				Replacement string `gorm:"not null"`
+				IsPhonemes  bool   `gorm:"not null;default:false"`
+				CreatedAt   time.Time
+				UpdatedAt   time.Time
+			}
+			if err := tx.Migrator().CreateTable(&LexiconEntry{}); err != nil {
+				return err
+			}
+			// Listening progress per user (OIDC): unique per book and user.
+			type ListenProgress struct {
+				BookID int64  `gorm:"not null;uniqueIndex:idx_listen_progress_book_user,priority:1"`
+				UserID string `gorm:"not null;default:'';uniqueIndex:idx_listen_progress_book_user,priority:2"`
+			}
+			if err := tx.Migrator().AddColumn(&ListenProgress{}, "UserID"); err != nil {
+				return err
+			}
+			if err := tx.Migrator().DropIndex(&ListenProgress{}, "idx_listen_progresses_book_id"); err != nil {
+				return err
+			}
+			return tx.Migrator().CreateIndex(&ListenProgress{}, "idx_listen_progress_book_user")
+		},
+		Rollback: func(tx *gorm.DB) error {
+			type ListenProgress struct {
+				BookID int64  `gorm:"not null;uniqueIndex"`
+				UserID string `gorm:"uniqueIndex:idx_listen_progress_book_user,priority:2"`
+			}
+			if err := tx.Migrator().DropIndex(&ListenProgress{}, "idx_listen_progress_book_user"); err != nil {
+				return err
+			}
+			if err := tx.Migrator().DropColumn(&ListenProgress{}, "UserID"); err != nil {
+				return err
+			}
+			if err := tx.Migrator().CreateIndex(&ListenProgress{}, "BookID"); err != nil {
+				return err
+			}
+			return tx.Migrator().DropTable("lexicon_entries")
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

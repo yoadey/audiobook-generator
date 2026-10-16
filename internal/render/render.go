@@ -26,6 +26,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/lexicon"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 )
@@ -183,8 +184,10 @@ type item struct {
 // voiceFunc returns the voice of a segment.
 type voiceFunc func(s *store.Segment) (string, float64)
 
-// plan lists what to say, in order.
-func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voiceOf voiceFunc) []item {
+// plan lists what to say, in order, with the book's pronunciations applied.
+func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voiceOf voiceFunc,
+	lex *lexicon.Lexicon,
+) []item {
 	byPara := map[int64][]store.Segment{}
 	for _, s := range segs {
 		byPara[s.ParagraphID] = append(byPara[s.ParagraphID], s)
@@ -197,7 +200,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 	}
 	narrator, narratorSpeed := voiceOf(nil)
 	say := func(text, voice string, speed float64) {
-		items = append(items, item{text: text, voice: voice, speed: speed, pause: withinPara})
+		items = append(items, item{text: lex.Apply(text), voice: voice, speed: speed, pause: withinPara})
 	}
 	if len(paras) == 0 || paras[0].Kind != store.ParagraphHeading {
 		if t := speakable(ch.Title); t != "" {
@@ -293,7 +296,11 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return err
 	}
-	items := plan(ch, paras, segs, voiceOf)
+	entries, err := r.Store.ListLexicon(ctx, book.ID)
+	if err != nil {
+		return err
+	}
+	items := plan(ch, paras, segs, voiceOf, lexicon.Compile(entries))
 	text := fingerprint(paras, segs)
 	start := time.Now()
 

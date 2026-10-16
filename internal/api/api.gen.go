@@ -1178,6 +1178,35 @@ type LLMUsageDay struct {
 	Requests     int64              `json:"requests"`
 }
 
+// LexiconEntry defines model for LexiconEntry.
+type LexiconEntry struct {
+	BookId int64 `json:"bookId"`
+	Id     int64 `json:"id"`
+
+	// Phonemes The replacement is a pronunciation in Kokoro's phoneme notation (IPA)
+	Phonemes bool `json:"phonemes"`
+
+	// Replacement What is said instead, or phonemes when phonemes is true
+	Replacement string `json:"replacement"`
+
+	// Term Word or name as written in the book (whole words, any case)
+	Term string `json:"term"`
+}
+
+// LexiconEntryInput defines model for LexiconEntryInput.
+type LexiconEntryInput struct {
+	Phonemes    *bool  `json:"phonemes,omitempty"`
+	Replacement string `json:"replacement"`
+	Term        string `json:"term"`
+}
+
+// LexiconEntryUpdate defines model for LexiconEntryUpdate.
+type LexiconEntryUpdate struct {
+	Phonemes    *bool   `json:"phonemes,omitempty"`
+	Replacement *string `json:"replacement,omitempty"`
+	Term        *string `json:"term,omitempty"`
+}
+
 // Narration defines model for Narration.
 type Narration string
 
@@ -1308,9 +1337,11 @@ type VoiceGender string
 
 // VoicePreview defines model for VoicePreview.
 type VoicePreview struct {
-	Speed *float32 `json:"speed,omitempty"`
-	Text  *string  `json:"text,omitempty"`
-	Voice string   `json:"voice"`
+	// BookId Apply this book's pronunciation lexicon to the text
+	BookId *int64   `json:"bookId,omitempty"`
+	Speed  *float32 `json:"speed,omitempty"`
+	Text   *string  `json:"text,omitempty"`
+	Voice  string   `json:"voice"`
 }
 
 // Volume defines model for Volume.
@@ -1416,6 +1447,9 @@ type StartCastingJSONRequestBody = CastingStart
 // MergeCharactersJSONRequestBody defines body for MergeCharacters for application/json ContentType.
 type MergeCharactersJSONRequestBody = CharacterMerge
 
+// CreateLexiconEntryJSONRequestBody defines body for CreateLexiconEntry for application/json ContentType.
+type CreateLexiconEntryJSONRequestBody = LexiconEntryInput
+
 // SaveProgressJSONRequestBody defines body for SaveProgress for application/json ContentType.
 type SaveProgressJSONRequestBody = ProgressUpdate
 
@@ -1439,6 +1473,9 @@ type UpdateCharacterJSONRequestBody = CharacterUpdate
 
 // SplitCharacterJSONRequestBody defines body for SplitCharacter for application/json ContentType.
 type SplitCharacterJSONRequestBody = CharacterSplit
+
+// UpdateLexiconEntryJSONRequestBody defines body for UpdateLexiconEntry for application/json ContentType.
+type UpdateLexiconEntryJSONRequestBody = LexiconEntryUpdate
 
 // ListLLMModelsJSONRequestBody defines body for ListLLMModels for application/json ContentType.
 type ListLLMModelsJSONRequestBody = LLMModelsRequest
@@ -1496,6 +1533,12 @@ type ServerInterface interface {
 	// GetBookCover The book's cover image
 	// (GET /books/{bookId}/cover)
 	GetBookCover(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// ListLexicon The book's pronunciation lexicon
+	// (GET /books/{bookId}/lexicon)
+	ListLexicon(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// CreateLexiconEntry Add a pronunciation (chapters containing the term become outdated)
+	// (POST /books/{bookId}/lexicon)
+	CreateLexiconEntry(w http.ResponseWriter, r *http.Request, bookId BookId)
 	// GetProgress The listening position
 	// (GET /books/{bookId}/progress)
 	GetProgress(w http.ResponseWriter, r *http.Request, bookId BookId)
@@ -1556,6 +1599,12 @@ type ServerInterface interface {
 	// RetryJob Queue a failed or canceled job again
 	// (POST /jobs/{jobId}/retry)
 	RetryJob(w http.ResponseWriter, r *http.Request, jobId JobId)
+	// DeleteLexiconEntry Remove a pronunciation
+	// (DELETE /lexicon/{entryId})
+	DeleteLexiconEntry(w http.ResponseWriter, r *http.Request, entryId int64)
+	// UpdateLexiconEntry Change a pronunciation
+	// (PATCH /lexicon/{entryId})
+	UpdateLexiconEntry(w http.ResponseWriter, r *http.Request, entryId int64)
 	// ListLLMModels Models offered by an OpenAI-compatible server (GET /models)
 	// (POST /llm/models)
 	ListLLMModels(w http.ResponseWriter, r *http.Request)
@@ -2080,6 +2129,58 @@ func (siw *ServerInterfaceWrapper) GetBookCover(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBookCover(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListLexicon operation middleware
+func (siw *ServerInterfaceWrapper) ListLexicon(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLexicon(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateLexiconEntry operation middleware
+func (siw *ServerInterfaceWrapper) CreateLexiconEntry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateLexiconEntry(w, r, bookId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2712,6 +2813,58 @@ func (siw *ServerInterfaceWrapper) RetryJob(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteLexiconEntry operation middleware
+func (siw *ServerInterfaceWrapper) DeleteLexiconEntry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "entryId" -------------
+	var entryId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entryId", r.PathValue("entryId"), &entryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entryId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteLexiconEntry(w, r, entryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateLexiconEntry operation middleware
+func (siw *ServerInterfaceWrapper) UpdateLexiconEntry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "entryId" -------------
+	var entryId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entryId", r.PathValue("entryId"), &entryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entryId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateLexiconEntry(w, r, entryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListLLMModels operation middleware
 func (siw *ServerInterfaceWrapper) ListLLMModels(w http.ResponseWriter, r *http.Request) {
 
@@ -3030,6 +3183,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/analysis/pause", wrapper.PauseAnalysis)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/casting", wrapper.GetCasting)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/casting", wrapper.StartCasting)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/lexicon", wrapper.ListLexicon)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/lexicon", wrapper.CreateLexiconEntry)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/lexicon/{entryId}", wrapper.DeleteLexiconEntry)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/lexicon/{entryId}", wrapper.UpdateLexiconEntry)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/characters", wrapper.ListCharacters)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/characters/merge", wrapper.MergeCharacters)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/characters/{characterId}", wrapper.DeleteCharacter)
@@ -3865,6 +4022,141 @@ type GetBookCoverdefaultJSONResponse struct {
 }
 
 func (response GetBookCoverdefaultJSONResponse) VisitGetBookCoverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListLexiconRequestObject struct {
+	BookId BookId `json:"bookId"`
+}
+
+type ListLexiconResponseObject interface {
+	VisitListLexiconResponse(w http.ResponseWriter) error
+}
+
+type ListLexicon200JSONResponse []LexiconEntry
+
+func (response ListLexicon200JSONResponse) VisitListLexiconResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListLexicon404JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListLexicon404JSONResponse) VisitListLexiconResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListLexicondefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListLexicondefaultJSONResponse) VisitListLexiconResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateLexiconEntryRequestObject struct {
+	BookId BookId `json:"bookId"`
+	Body   *CreateLexiconEntryJSONRequestBody
+}
+
+type CreateLexiconEntryResponseObject interface {
+	VisitCreateLexiconEntryResponse(w http.ResponseWriter) error
+}
+
+type CreateLexiconEntry201JSONResponse LexiconEntry
+
+func (response CreateLexiconEntry201JSONResponse) VisitCreateLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateLexiconEntry400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateLexiconEntry400JSONResponse) VisitCreateLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateLexiconEntry404JSONResponse Error
+
+func (response CreateLexiconEntry404JSONResponse) VisitCreateLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateLexiconEntry409JSONResponse Error
+
+func (response CreateLexiconEntry409JSONResponse) VisitCreateLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateLexiconEntrydefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CreateLexiconEntrydefaultJSONResponse) VisitCreateLexiconEntryResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -5130,6 +5422,135 @@ func (response RetryJobdefaultJSONResponse) VisitRetryJobResponse(w http.Respons
 	return err
 }
 
+type DeleteLexiconEntryRequestObject struct {
+	EntryId int64 `json:"entryId"`
+}
+
+type DeleteLexiconEntryResponseObject interface {
+	VisitDeleteLexiconEntryResponse(w http.ResponseWriter) error
+}
+
+type DeleteLexiconEntry204Response struct {
+}
+
+func (response DeleteLexiconEntry204Response) VisitDeleteLexiconEntryResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteLexiconEntry404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteLexiconEntry404JSONResponse) VisitDeleteLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteLexiconEntrydefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response DeleteLexiconEntrydefaultJSONResponse) VisitDeleteLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateLexiconEntryRequestObject struct {
+	EntryId int64 `json:"entryId"`
+	Body    *UpdateLexiconEntryJSONRequestBody
+}
+
+type UpdateLexiconEntryResponseObject interface {
+	VisitUpdateLexiconEntryResponse(w http.ResponseWriter) error
+}
+
+type UpdateLexiconEntry200JSONResponse LexiconEntry
+
+func (response UpdateLexiconEntry200JSONResponse) VisitUpdateLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateLexiconEntry400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateLexiconEntry400JSONResponse) VisitUpdateLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateLexiconEntry404JSONResponse Error
+
+func (response UpdateLexiconEntry404JSONResponse) VisitUpdateLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateLexiconEntry409JSONResponse Error
+
+func (response UpdateLexiconEntry409JSONResponse) VisitUpdateLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateLexiconEntrydefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response UpdateLexiconEntrydefaultJSONResponse) VisitUpdateLexiconEntryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListLLMModelsRequestObject struct {
 	Body *ListLLMModelsJSONRequestBody
 }
@@ -5719,6 +6140,12 @@ type StrictServerInterface interface {
 	// GetBookCover The book's cover image
 	// (GET /books/{bookId}/cover)
 	GetBookCover(ctx context.Context, request GetBookCoverRequestObject) (GetBookCoverResponseObject, error)
+	// ListLexicon The book's pronunciation lexicon
+	// (GET /books/{bookId}/lexicon)
+	ListLexicon(ctx context.Context, request ListLexiconRequestObject) (ListLexiconResponseObject, error)
+	// CreateLexiconEntry Add a pronunciation (chapters containing the term become outdated)
+	// (POST /books/{bookId}/lexicon)
+	CreateLexiconEntry(ctx context.Context, request CreateLexiconEntryRequestObject) (CreateLexiconEntryResponseObject, error)
 	// GetProgress The listening position
 	// (GET /books/{bookId}/progress)
 	GetProgress(ctx context.Context, request GetProgressRequestObject) (GetProgressResponseObject, error)
@@ -5779,6 +6206,12 @@ type StrictServerInterface interface {
 	// RetryJob Queue a failed or canceled job again
 	// (POST /jobs/{jobId}/retry)
 	RetryJob(ctx context.Context, request RetryJobRequestObject) (RetryJobResponseObject, error)
+	// DeleteLexiconEntry Remove a pronunciation
+	// (DELETE /lexicon/{entryId})
+	DeleteLexiconEntry(ctx context.Context, request DeleteLexiconEntryRequestObject) (DeleteLexiconEntryResponseObject, error)
+	// UpdateLexiconEntry Change a pronunciation
+	// (PATCH /lexicon/{entryId})
+	UpdateLexiconEntry(ctx context.Context, request UpdateLexiconEntryRequestObject) (UpdateLexiconEntryResponseObject, error)
 	// ListLLMModels Models offered by an OpenAI-compatible server (GET /models)
 	// (POST /llm/models)
 	ListLLMModels(ctx context.Context, request ListLLMModelsRequestObject) (ListLLMModelsResponseObject, error)
@@ -6245,6 +6678,65 @@ func (sh *strictHandler) GetBookCover(w http.ResponseWriter, r *http.Request, bo
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetBookCoverResponseObject); ok {
 		if err := validResponse.VisitGetBookCoverResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListLexicon operation middleware
+func (sh *strictHandler) ListLexicon(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request ListLexiconRequestObject
+
+	request.BookId = bookId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListLexicon(ctx, request.(ListLexiconRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListLexicon")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListLexiconResponseObject); ok {
+		if err := validResponse.VisitListLexiconResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateLexiconEntry operation middleware
+func (sh *strictHandler) CreateLexiconEntry(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request CreateLexiconEntryRequestObject
+
+	request.BookId = bookId
+
+	var body CreateLexiconEntryJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateLexiconEntry(ctx, request.(CreateLexiconEntryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateLexiconEntry")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateLexiconEntryResponseObject); ok {
+		if err := validResponse.VisitCreateLexiconEntryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -6828,6 +7320,65 @@ func (sh *strictHandler) RetryJob(w http.ResponseWriter, r *http.Request, jobId 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RetryJobResponseObject); ok {
 		if err := validResponse.VisitRetryJobResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteLexiconEntry operation middleware
+func (sh *strictHandler) DeleteLexiconEntry(w http.ResponseWriter, r *http.Request, entryId int64) {
+	var request DeleteLexiconEntryRequestObject
+
+	request.EntryId = entryId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteLexiconEntry(ctx, request.(DeleteLexiconEntryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteLexiconEntry")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteLexiconEntryResponseObject); ok {
+		if err := validResponse.VisitDeleteLexiconEntryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateLexiconEntry operation middleware
+func (sh *strictHandler) UpdateLexiconEntry(w http.ResponseWriter, r *http.Request, entryId int64) {
+	var request UpdateLexiconEntryRequestObject
+
+	request.EntryId = entryId
+
+	var body UpdateLexiconEntryJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateLexiconEntry(ctx, request.(UpdateLexiconEntryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateLexiconEntry")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateLexiconEntryResponseObject); ok {
+		if err := validResponse.VisitUpdateLexiconEntryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -69,6 +69,9 @@ func (s *Store) DeleteBook(ctx context.Context, id int64) error {
 		if err := tx.Where("book_id = ?", id).Delete(&ListenProgress{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("book_id = ?", id).Delete(&LexiconEntry{}).Error; err != nil {
+			return err
+		}
 		res := tx.Delete(&Book{}, id)
 		if res.Error != nil {
 			return res.Error

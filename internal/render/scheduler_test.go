@@ -60,7 +60,7 @@ func TestEnsureAhead(t *testing.T) {
 		assert.Equal(t, 1, n)
 		assert.Equal(t, cs[3].ID, *q.jobs[2].ChapterID)
 
-		p, err := s.GetProgress(ctx, b.ID)
+		p, err := s.GetProgress(ctx, b.ID, "")
 		require.NoError(t, err)
 		assert.EqualValues(t, 5000, p.PositionMs)
 	})

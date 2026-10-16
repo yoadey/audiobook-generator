@@ -13,7 +13,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/attribution"
+	"github.com/yoadey/audiobook-generator/internal/auth"
 	"github.com/yoadey/audiobook-generator/internal/casting"
+	"github.com/yoadey/audiobook-generator/internal/lexicon"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
@@ -76,7 +78,7 @@ func (s *Server) RenderBookChapters(ctx context.Context, req RenderBookChaptersR
 			return RenderBookChapters404JSONResponse{ErrorJSONResponse(errMsg("chapter not found in this book"))}, nil
 		}
 		from = c.Idx
-	} else if p, err := s.Store.GetProgress(ctx, b.ID); err != nil {
+	} else if p, err := s.Store.GetProgress(ctx, b.ID, auth.Subject(ctx)); err != nil {
 		return nil, err
 	} else if p != nil {
 		if c, err := s.Store.GetChapter(ctx, p.ChapterID); err == nil {
@@ -104,7 +106,7 @@ func (s *Server) GetProgress(ctx context.Context, req GetProgressRequestObject) 
 	} else if err != nil {
 		return nil, err
 	}
-	p, err := s.Store.GetProgress(ctx, req.BookId)
+	p, err := s.Store.GetProgress(ctx, req.BookId, auth.Subject(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +125,8 @@ func (s *Server) SaveProgress(ctx context.Context, req SaveProgressRequestObject
 	if err != nil || c.BookID != b.ID {
 		return SaveProgress400JSONResponse{ErrorJSONResponse(errMsg("chapter not found in this book"))}, nil
 	}
-	p := &store.ListenProgress{BookID: b.ID, ChapterID: c.ID, PositionMs: max(req.Body.PositionMs, 0)}
+	p := &store.ListenProgress{BookID: b.ID, UserID: auth.Subject(ctx), ChapterID: c.ID,
+		PositionMs: max(req.Body.PositionMs, 0)}
 	if err := s.Store.SaveProgress(ctx, p); err != nil {
 		return nil, err
 	}
@@ -238,6 +241,13 @@ func (s *Server) PreviewVoice(ctx context.Context, req PreviewVoiceRequestObject
 	speed := 1.0
 	if req.Body.Speed != nil {
 		speed = min(max(float64(*req.Body.Speed), 0.5), 2)
+	}
+	if req.Body.BookId != nil {
+		entries, err := s.Store.ListLexicon(ctx, *req.Body.BookId)
+		if err != nil {
+			return nil, err
+		}
+		text = lexicon.Compile(entries).Apply(text)
 	}
 	key := previewKey(voice, speed, text)
 	data, ok := s.previews.get(key)

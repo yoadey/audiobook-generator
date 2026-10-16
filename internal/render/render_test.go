@@ -96,11 +96,13 @@ func TestRenderChapter(t *testing.T) {
 		}
 		var progress []float64
 		var mu sync.Mutex
+		require.NoError(t, s.SaveLexiconEntry(ctx, &store.LexiconEntry{BookID: b.ID, Term: "anna", Replacement: "Ah-na"}))
 		require.NoError(t, r.Render(ctx, ch1.ID, func(p float64) { mu.Lock(); progress = append(progress, p); mu.Unlock() }))
 
-		// Quotes are spoken without their marks; the scene break adds no text.
+		// Quotes are spoken without their marks; the scene break adds no
+		// text; the lexicon applies.
 		assert.ElementsMatch(t, []string{
-			"Chapter 1", "Good morning,", "said Anna.", "Is it raining?", "Tom looked outside.",
+			"Chapter 1", "Good morning,", "said Ah-na.", "Is it raining?", "Tom looked outside.",
 			"It was raining earlier,", "but it has stopped now.", "Later that day, nothing happened.",
 		}, fake.texts)
 		assert.Equal(t, "af_heart@1.00", fake.voices[0])
