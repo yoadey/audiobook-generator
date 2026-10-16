@@ -1,25 +1,24 @@
 import {
   ActionIcon,
   Alert,
+  Anchor,
   Box,
   Breadcrumbs,
-  Button,
-  Card,
   Center,
+  Drawer,
   Group,
   Loader,
-  ScrollArea,
-  Select,
+  Menu,
+  Popover,
+  SegmentedControl,
   Slider,
   Stack,
-  Tabs,
   Text,
-  Title,
   UnstyledButton,
 } from '@mantine/core';
 import {
-  IconBook,
-  IconList,
+  IconLetterCase,
+  IconListDetails,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
   IconPlayerSkipBack,
@@ -46,7 +45,7 @@ import {
 } from '../api/client';
 import { AudioBadge } from '../components/AudioBadge';
 import { AnchorLink } from '../components/links';
-import { Reader } from '../components/Reader';
+import { Reader, type ReaderPrefs } from '../components/Reader';
 import { formatDuration } from '../lib/format';
 import { notifyError } from '../lib/notify';
 import { resumeAt as resumePosition, segmentAt, startOf } from '../lib/reading';
@@ -54,7 +53,7 @@ import { resumeAt as resumePosition, segmentAt, startOf } from '../lib/reading';
 const SAVE_EVERY_MS = 15_000;
 const RATES = ['0.8', '0.9', '1', '1.1', '1.25', '1.5', '1.75', '2'];
 const RATE_KEY = 'abg.playbackRate';
-const TAB_KEY = 'abg.listenTab';
+const PREFS_KEY = 'abg.readerPrefs';
 
 function stored(key: string, fallback: string): string {
   try {
@@ -70,6 +69,24 @@ function store(key: string, value: string) {
   } catch {
     // Storage unavailable (private mode): the choice only lasts this visit.
   }
+}
+
+function storedPrefs(): ReaderPrefs {
+  try {
+    const p = JSON.parse(stored(PREFS_KEY, '{}')) as Partial<ReaderPrefs>;
+    return {
+      size: p.size && ['S', 'M', 'L', 'XL'].includes(p.size) ? p.size : 'M',
+      font: p.font === 'sans' ? 'sans' : 'serif',
+    };
+  } catch {
+    return { size: 'M', font: 'serif' };
+  }
+}
+
+/** Whether a key press belongs to a form control rather than the player. */
+function typing(e: KeyboardEvent): boolean {
+  const t = e.target as HTMLElement | null;
+  return !!t && (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName) || t.isContentEditable);
 }
 
 export function ListenPage() {
@@ -141,7 +158,8 @@ function Player({
   // The render a playing chapter started with (see the <audio> src).
   const [pinned, setPinned] = useState<{ id: number; version?: string } | null>(null);
   const [rate, setRate] = useState(() => stored(RATE_KEY, '1'));
-  const [tab, setTab] = useState(() => stored(TAB_KEY, 'text'));
+  const [prefs, setPrefs] = useState<ReaderPrefs>(storedPrefs);
+  const [chaptersOpen, setChaptersOpen] = useState(false);
   // The page's first chapter was left: its stored position is outdated.
   const [leftStart, setLeftStart] = useState(false);
   // Where reading stopped (the stored position, then the reader's).
@@ -324,247 +342,320 @@ function Player({
     [currentId, persist],
   );
 
+  // Keyboard: space plays and pauses, the arrows skip.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === ' ') {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === 'ArrowLeft') {
+        seek(-15);
+      } else if (e.key === 'ArrowRight') {
+        seek(30);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [togglePlay, seek]);
+
+  useEffect(() => store(PREFS_KEY, JSON.stringify(prefs)), [prefs]);
+
   if (!current) {
     return <Alert title="Nothing to play">This book has no narrated chapters.</Alert>;
   }
 
+  const status =
+    current.audioStatus === 'failed'
+      ? (current.audioError ?? 'Rendering failed.')
+      : current.audioStatus === 'none'
+        ? 'No audio yet; your reading position is kept.'
+        : 'Preparing the audio; it starts as soon as it is ready.';
+  const total = duration || (current.audioDurationMs ?? 0);
+
   return (
-    <Stack maw={900}>
-      <Breadcrumbs>
-        <AnchorLink to="/library" size="sm">
-          Library
-        </AnchorLink>
-        <AnchorLink to="/books/$bookId" params={{ bookId: String(bookId) }} size="sm">
-          {book.title}
-        </AnchorLink>
-        <Text size="sm">Listen</Text>
-      </Breadcrumbs>
+    <Stack gap={0} mih="calc(100dvh - 92px)">
+      <Group justify="space-between" wrap="nowrap" mb="md">
+        <Breadcrumbs separatorMargin={6} style={{ minWidth: 0 }}>
+          <AnchorLink to="/library" size="sm" c="dimmed">
+            Library
+          </AnchorLink>
+          <AnchorLink
+            to="/books/$bookId"
+            params={{ bookId: String(bookId) }}
+            size="sm"
+            c="dimmed"
+            truncate
+          >
+            {book.title}
+          </AnchorLink>
+        </Breadcrumbs>
+        <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+          {index + 1} / {narrated.length}
+        </Text>
+      </Group>
 
-      <Card withBorder padding="lg">
-        <Stack gap="sm">
-          <Group justify="space-between" wrap="nowrap">
-            <Box style={{ minWidth: 0 }}>
-              <Text size="sm" c="dimmed">
-                Chapter {index + 1} of {narrated.length}
-              </Text>
-              <Title order={3} lineClamp={2}>
-                {current.title}
-              </Title>
-            </Box>
-            <AudioBadge chapter={current} />
-          </Group>
-
-          {ready ? (
-            <audio
-              key={current.id}
-              ref={audio}
-              // Once playing, stay on that render: a re-render must not swap
-              // the file under seeks and rebuffering.
-              src={audioUrl(
-                current.id,
-                pinned?.id === current.id ? pinned.version : current.audioVersion,
-              )}
-
-              preload="metadata"
-              onLoadedMetadata={(e) => {
-                const a = e.currentTarget;
-                a.playbackRate = Number(rate);
-                setDuration(a.duration * 1000);
-                if (resumeAt.current !== null) {
-                  a.currentTime = resumeAt.current / 1000;
-                  resumeAt.current = null;
-                }
-                if (autoplay.current) {
-                  autoplay.current = false;
-                  void a.play();
-                }
-              }}
-              onTimeUpdate={(e) => {
-                const ms = e.currentTarget.currentTime * 1000;
-                setPosition(ms);
-                if (Date.now() - lastSaved.current > SAVE_EVERY_MS) persist(current.id, ms);
-              }}
-              onPlay={() => {
-                setPlaying(true);
-                if (pinned?.id !== current.id) {
-                  setPinned({ id: current.id, version: current.audioVersion });
-                }
-              }}
-              onPause={(e) => {
-                setPlaying(false);
-                persist(current.id, e.currentTarget.currentTime * 1000);
-              }}
-              onEnded={() => goTo(narrated[index + 1], true)}
-            />
-          ) : (
-            <Alert color={current.audioStatus === 'failed' ? 'red' : 'blue'}>
-              <Group justify="space-between">
-                <Text size="sm">
-                  {current.audioStatus === 'failed'
-                    ? (current.audioError ?? 'Rendering failed.')
-                    : current.audioStatus === 'none'
-                      ? 'This chapter has no audio yet.'
-                      : 'This chapter is being prepared; it starts as soon as it is ready.'}
-                </Text>
-                {(current.audioStatus === 'none' || current.audioStatus === 'failed') && (
-                  <Button
-                    size="xs"
-                    onClick={() => render.mutate(current.id)}
-                    loading={render.isPending}
-                  >
-                    Render now
-                  </Button>
-                )}
-              </Group>
-            </Alert>
+      {ready && (
+        <audio
+          key={current.id}
+          ref={audio}
+          // Once playing, stay on that render: a re-render must not swap
+          // the file under seeks and rebuffering.
+          src={audioUrl(
+            current.id,
+            pinned?.id === current.id ? pinned.version : current.audioVersion,
           )}
+          preload="metadata"
+          onLoadedMetadata={(e) => {
+            const a = e.currentTarget;
+            a.playbackRate = Number(rate);
+            setDuration(a.duration * 1000);
+            if (resumeAt.current !== null) {
+              a.currentTime = resumeAt.current / 1000;
+              resumeAt.current = null;
+            }
+            if (autoplay.current) {
+              autoplay.current = false;
+              void a.play();
+            }
+          }}
+          onTimeUpdate={(e) => {
+            const ms = e.currentTarget.currentTime * 1000;
+            setPosition(ms);
+            if (Date.now() - lastSaved.current > SAVE_EVERY_MS) persist(current.id, ms);
+          }}
+          onPlay={() => {
+            setPlaying(true);
+            if (pinned?.id !== current.id) {
+              setPinned({ id: current.id, version: current.audioVersion });
+            }
+          }}
+          onPause={(e) => {
+            setPlaying(false);
+            persist(current.id, e.currentTarget.currentTime * 1000);
+          }}
+          onEnded={() => goTo(narrated[index + 1], true)}
+        />
+      )}
 
-          <Slider
-            value={duration ? (position / duration) * 100 : 0}
-            onChange={(v) => {
-              if (audio.current && duration)
-                audio.current.currentTime = ((v / 100) * duration) / 1000;
-            }}
-            label={null}
-            disabled={!ready || !duration}
-            aria-label="Position"
-          />
-          <Group justify="space-between">
-            <Text size="xs" c="dimmed">
-              {formatDuration(position)}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {formatDuration(duration || (current.audioDurationMs ?? 0))}
-            </Text>
-          </Group>
+      <Box style={{ flex: 1 }}>
+        <Reader
+          key={current.id}
+          chapter={current}
+          cues={cues}
+          settled={!ready || !timings.isPending}
+          positionMs={position}
+          playing={playing}
+          prefs={prefs}
+          startSegment={
+            readSeg?.chapter === current.id
+              ? readSeg.segment
+              : !leftStart && current.id === startId && cues && progress.positionMs > 0
+                ? segmentAt(cues, progress.positionMs)
+                : undefined
+          }
+          onSeek={seekTo}
+          onRead={readAt}
+          next={narrated[index + 1]}
+          onNext={() => goTo(narrated[index + 1], playing)}
+        />
+      </Box>
 
-          <Group justify="center" gap="md">
-            <ActionIcon
-              variant="subtle"
-              size="lg"
-              disabled={index <= 0}
-              onClick={() => goTo(narrated[index - 1], playing)}
-              aria-label="Previous chapter"
-            >
-              <IconPlayerSkipBack />
-            </ActionIcon>
-            <ActionIcon
-              variant="subtle"
-              size="lg"
-              disabled={!ready}
-              onClick={() => seek(-15)}
-              aria-label="Back 15 seconds"
-            >
-              <IconRewindBackward15 />
-            </ActionIcon>
-            <ActionIcon
-              size={56}
-              radius="xl"
-              disabled={!ready}
-              onClick={togglePlay}
-              aria-label={playing ? 'Pause' : 'Play'}
-            >
-              {playing ? <IconPlayerPauseFilled size={28} /> : <IconPlayerPlayFilled size={28} />}
-            </ActionIcon>
-            <ActionIcon
-              variant="subtle"
-              size="lg"
-              disabled={!ready}
-              onClick={() => seek(30)}
-              aria-label="Forward 30 seconds"
-            >
-              <IconRewindForward30 />
-            </ActionIcon>
-            <ActionIcon
-              variant="subtle"
-              size="lg"
-              disabled={index >= narrated.length - 1}
-              onClick={() => goTo(narrated[index + 1], playing)}
-              aria-label="Next chapter"
-            >
-              <IconPlayerSkipForward />
-            </ActionIcon>
-          </Group>
-          <Group justify="center">
-            <Select
-              size="xs"
-              w={110}
-              data={RATES.map((r) => ({ value: r, label: `${r}×` }))}
-              value={rate}
-              onChange={(v) => v && setRate(v)}
-              aria-label="Playback speed"
-              allowDeselect={false}
-            />
+      {/* The player: a quiet bar that stays at the bottom while reading. */}
+      <Box
+        pos="sticky"
+        bottom={0}
+        mt="xl"
+        mx="calc(var(--mantine-spacing-md) * -1)"
+        mb="calc(var(--mantine-spacing-md) * -1)"
+        px="md"
+        pt={6}
+        pb={10}
+        bg="var(--mantine-color-body)"
+        style={{ borderTop: '1px solid var(--mantine-color-default-border)', zIndex: 2 }}
+        data-testid="player"
+      >
+        <Stack gap={4} maw={760} mx="auto">
+          {ready ? (
+            <Group gap="xs" wrap="nowrap">
+              <Text size="xs" c="dimmed" w={44} ta="right" ff="monospace">
+                {formatDuration(position)}
+              </Text>
+              <Slider
+                style={{ flex: 1 }}
+                size="xs"
+                value={total ? (position / total) * 100 : 0}
+                onChange={(v) => {
+                  if (audio.current && total)
+                    audio.current.currentTime = ((v / 100) * total) / 1000;
+                }}
+                label={null}
+                disabled={!duration}
+                aria-label="Position"
+              />
+              <Text size="xs" c="dimmed" w={44} ff="monospace">
+                {formatDuration(total)}
+              </Text>
+            </Group>
+          ) : (
+            <Group justify="center" gap="xs" mih={22}>
+              <Text size="xs" c={current.audioStatus === 'failed' ? 'red' : 'dimmed'} lineClamp={1}>
+                {status}
+              </Text>
+              {(current.audioStatus === 'none' || current.audioStatus === 'failed') && (
+                <Anchor component="button" size="xs" onClick={() => render.mutate(current.id)}>
+                  Render now
+                </Anchor>
+              )}
+            </Group>
+          )}
+          <Group justify="space-between" wrap="nowrap">
+            <Text size="sm" fw={500} truncate style={{ flex: 1, minWidth: 0 }} visibleFrom="sm">
+              {current.title}
+            </Text>
+            <Group gap={4} wrap="nowrap" justify="center" style={{ flex: 'none' }}>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                disabled={index <= 0}
+                onClick={() => goTo(narrated[index - 1], playing)}
+                aria-label="Previous chapter"
+              >
+                <IconPlayerSkipBack size={18} />
+              </ActionIcon>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                disabled={!ready}
+                onClick={() => seek(-15)}
+                aria-label="Back 15 seconds"
+              >
+                <IconRewindBackward15 size={20} />
+              </ActionIcon>
+              <ActionIcon
+                size={44}
+                radius="xl"
+                disabled={!ready}
+                onClick={togglePlay}
+                aria-label={playing ? 'Pause' : 'Play'}
+              >
+                {playing ? <IconPlayerPauseFilled size={22} /> : <IconPlayerPlayFilled size={22} />}
+              </ActionIcon>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                disabled={!ready}
+                onClick={() => seek(30)}
+                aria-label="Forward 30 seconds"
+              >
+                <IconRewindForward30 size={20} />
+              </ActionIcon>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                disabled={index >= narrated.length - 1}
+                onClick={() => goTo(narrated[index + 1], playing)}
+                aria-label="Next chapter"
+              >
+                <IconPlayerSkipForward size={18} />
+              </ActionIcon>
+            </Group>
+            <Group gap={2} wrap="nowrap" justify="flex-end" style={{ flex: 1 }}>
+              <Menu position="top" withinPortal>
+                <Menu.Target>
+                  <UnstyledButton
+                    aria-label="Playback speed"
+                    px={6}
+                    fz="sm"
+                    c="dimmed"
+                    ff="monospace"
+                  >
+                    {rate}×
+                  </UnstyledButton>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {RATES.map((r) => (
+                    <Menu.Item key={r} onClick={() => setRate(r)} fw={r === rate ? 600 : undefined}>
+                      {r}×
+                    </Menu.Item>
+                  ))}
+                </Menu.Dropdown>
+              </Menu>
+              <Popover position="top-end" withinPortal shadow="md">
+                <Popover.Target>
+                  <ActionIcon variant="subtle" color="gray" aria-label="Text settings">
+                    <IconLetterCase size={18} />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <Stack gap="xs">
+                    <SegmentedControl
+                      size="xs"
+                      value={prefs.size}
+                      onChange={(v) => setPrefs({ ...prefs, size: v as ReaderPrefs['size'] })}
+                      data={['S', 'M', 'L', 'XL']}
+                      aria-label="Text size"
+                    />
+                    <SegmentedControl
+                      size="xs"
+                      value={prefs.font}
+                      onChange={(v) => setPrefs({ ...prefs, font: v as ReaderPrefs['font'] })}
+                      data={[
+                        { value: 'serif', label: 'Serif' },
+                        { value: 'sans', label: 'Sans' },
+                      ]}
+                      aria-label="Font"
+                    />
+                  </Stack>
+                </Popover.Dropdown>
+              </Popover>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                onClick={() => setChaptersOpen(true)}
+                aria-label="Chapters"
+              >
+                <IconListDetails size={18} />
+              </ActionIcon>
+            </Group>
           </Group>
         </Stack>
-      </Card>
+      </Box>
 
-      <Tabs
-        value={tab}
-        onChange={(v) => {
-          if (!v) return;
-          setTab(v);
-          store(TAB_KEY, v);
-        }}
-        keepMounted={false}
+      <Drawer
+        opened={chaptersOpen}
+        onClose={() => setChaptersOpen(false)}
+        position="right"
+        title="Chapters"
+        size="sm"
       >
-        <Tabs.List>
-          <Tabs.Tab value="text" leftSection={<IconBook size={16} />}>
-            Read along
-          </Tabs.Tab>
-          <Tabs.Tab value="chapters" leftSection={<IconList size={16} />}>
-            Chapters
-          </Tabs.Tab>
-        </Tabs.List>
-        <Tabs.Panel value="text" pt="sm">
-          <Card withBorder padding={0}>
-            <Reader
-              key={current.id}
-              chapter={current}
-              cues={cues}
-              settled={!ready || !timings.isPending}
-              hasAudio={ready}
-              positionMs={position}
-              playing={playing}
-              startSegment={
-                readSeg?.chapter === current.id
-                  ? readSeg.segment
-                  : !leftStart && current.id === startId && cues && progress.positionMs > 0
-                    ? segmentAt(cues, progress.positionMs)
-                    : undefined
-              }
-              onSeek={seekTo}
-              onRead={readAt}
-              next={narrated[index + 1]}
-              onNext={() => goTo(narrated[index + 1], playing)}
-            />
-          </Card>
-        </Tabs.Panel>
-        <Tabs.Panel value="chapters" pt="sm">
-          <Card withBorder padding={0}>
-            <ScrollArea h={360}>
-              {narrated.map((c, i) => (
-                <UnstyledButton
-                  key={c.id}
-                  onClick={() => goTo(c, true)}
-                  w="100%"
-                  px="md"
-                  py={8}
-                  bg={c.id === current.id ? 'var(--mantine-color-default-hover)' : undefined}
-                  style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
-                >
-                  <Group justify="space-between" wrap="nowrap">
-                    <Text size="sm" fw={c.id === current.id ? 600 : 400} truncate>
-                      {i + 1}. {c.title}
-                    </Text>
-                    <AudioBadge chapter={c} />
-                  </Group>
-                </UnstyledButton>
-              ))}
-            </ScrollArea>
-          </Card>
-        </Tabs.Panel>
-      </Tabs>
+        <Stack gap={0}>
+          {narrated.map((c, i) => (
+            <UnstyledButton
+              key={c.id}
+              onClick={() => {
+                setChaptersOpen(false);
+                goTo(c, playing);
+              }}
+              px="xs"
+              py={8}
+              bg={c.id === current.id ? 'var(--mantine-color-default-hover)' : undefined}
+              style={{ borderRadius: 'var(--mantine-radius-sm)' }}
+              aria-current={c.id === current.id ? 'true' : undefined}
+            >
+              <Group justify="space-between" wrap="nowrap" gap="xs">
+                <Text size="sm" fw={c.id === current.id ? 600 : 400} truncate>
+                  <Text span c="dimmed" size="xs" mr={6}>
+                    {i + 1}
+                  </Text>
+                  {c.title}
+                </Text>
+                <AudioBadge chapter={c} />
+              </Group>
+            </UnstyledButton>
+          ))}
+        </Stack>
+      </Drawer>
     </Stack>
   );
 }

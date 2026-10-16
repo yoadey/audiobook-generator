@@ -317,10 +317,13 @@ describe('App', () => {
       'PUT /api/books/1/progress': { chapterId: 12, positionMs: 5000 },
     });
     renderAt('/books/1/listen');
-    expect(await screen.findByRole('heading', { name: 'Chapter 2' })).toBeInTheDocument();
-    expect(screen.getByText('Chapter 2 of 2')).toBeInTheDocument();
-    expect(screen.getByText('This chapter has no audio yet.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Render now' })).toBeInTheDocument();
+    const player = await screen.findByTestId('player');
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+    expect(within(player).getByText('Chapter 2')).toBeInTheDocument();
+    expect(
+      within(player).getByText('No audio yet; your reading position is kept.'),
+    ).toBeInTheDocument();
+    expect(within(player).getByRole('button', { name: 'Render now' })).toBeInTheDocument();
     // Entering the chapter stores the position (which queues the lookahead).
     await vi.waitFor(() =>
       expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PUT')).toBe(
@@ -337,7 +340,8 @@ describe('App', () => {
       'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
     });
     const { container } = renderAt('/books/1/listen');
-    expect(await screen.findByRole('heading', { name: 'Chapter 1' })).toBeInTheDocument();
+    const player = await screen.findByTestId('player');
+    expect(within(player).getByText('Chapter 1')).toBeInTheDocument();
     const audio = container.querySelector('audio');
     expect(audio).toHaveAttribute('src', expect.stringContaining('/api/chapters/10/audio'));
     expect(screen.getByRole('button', { name: 'Play' })).toBeEnabled();
@@ -418,11 +422,6 @@ describe('App', () => {
       'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
     });
     renderAt('/books/1/listen');
-    expect(await screen.findByRole('tab', { name: 'Read along' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
-    await screen.findByText(/Click a passage to listen from there/);
     fireEvent.click(await screen.findByText('“Come in,”'));
     await vi.waitFor(async () => {
       const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
@@ -450,7 +449,7 @@ describe('App', () => {
     renderAt('/books/1/listen');
     await screen.findByText(/No audio yet; your reading position is kept/);
     // The stored position is marked and kept when the chapter is entered.
-    expect((await screen.findByText('“Come in,”')).style.background).not.toBe('');
+    expect((await screen.findByText('“Come in,”')).style.background).toContain('yellow');
     await vi.waitFor(async () => {
       const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
       expect(bodies).toContainEqual({ chapterId: 12, positionMs: 0, segmentId: 202 });
@@ -460,7 +459,7 @@ describe('App', () => {
       const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
       expect(bodies).toContainEqual({ chapterId: 12, positionMs: 0, segmentId: 203 });
     });
-    expect(screen.getByText('she said.').style.background).not.toBe('');
+    expect(screen.getByText('she said.').style.background).toContain('yellow');
   });
 
   it('lists jobs', async () => {

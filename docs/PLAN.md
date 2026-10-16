@@ -155,8 +155,13 @@ an optional later feature (M8), not a requirement.
 
 - Split paragraphs into **narration** and **quoted speech** with a state
   machine over quote characters; the quote style is detected per book from
-  statistics (`“…”` vs. `"…"` vs. British `‘…’`). Multi-paragraph quotes
-  (a paragraph without a closing mark) continue correctly.
+  statistics (`“…”`, `"…"`, British `‘…’`, `'…'`, guillemets `«…»`/`»…«`,
+  `„…“`, or dash dialogue). Multi-paragraph quotes (a paragraph without a
+  closing mark) continue correctly.
+- Italics from the EPUB are kept per segment. Italic runs of a few words,
+  and runs in single marks in books whose speech uses double ones, are
+  **thoughts**: segments of their own with a quote number, attributed by
+  the LLM to the thinking character (marked `*…*` in the prompt).
 - Every quote gets a stable ID (`q<n>` per chapter).
 - Long narration is split at sentence boundaries into TTS-sized pieces
   (Kokoro works best with ≤ ~400 characters per call).
@@ -684,7 +689,7 @@ Every milestone ends with an installable chart.
 | **M5** | Casting + voice catalogue + voice editor + previews | every main character has a recipe |
 | **M6** | Speaker attribution + multi-voice rendering + chapter editor | **A multi-voice audiobook** |
 | **M7** | Pronunciation lexicon, podcast RSS, OIDC, metrics/ServiceMonitor, Litestream, export/import, M4B per volume | feature-complete v1.0 |
-| **M8** | Reading along: segment timings recorded while rendering, a reader that follows the voice and shares its position with the player, WebVTT transcripts in the podcast feed; custom sample texts for voice previews (instance, book, character) | read and listen at once |
+| **M8** | Reading along: segment timings recorded while rendering, a reader (page scrolling, sticky player bar, sentence marking) that follows the voice and shares its position with the player, WebVTT transcripts per sentence in the podcast feed; more quotation styles (single, guillemets, low-high, dash dialogue), italics kept and italic/single-quoted thoughts attributed and voiced; spoken-text cleanup; custom sample texts for voice previews (instance, book, character) | read and listen at once |
 | **M9** (optional) | segment cache, emotions/thoughts, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
 
 Integration into the cluster repo (`HelmRelease`, Zitadel client via

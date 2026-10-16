@@ -41,7 +41,7 @@ import {
   updateChapter,
 } from '../api/client';
 import { AudioBadge } from '../components/AudioBadge';
-import { AttributionBar, QuoteSpan } from '../components/ChapterSpeakers';
+import { AttributionBar, Emphasized, QuoteSpan } from '../components/ChapterSpeakers';
 import { AnchorLink } from '../components/links';
 import { confirmMerge } from '../lib/confirm';
 import { formatListeningTime, formatNumber } from '../lib/format';
@@ -87,7 +87,7 @@ const ParagraphView = memo(function ParagraphView({
         {p.segments.map((s, i) => (
           <span key={s.id}>
             {i > 0 && ' '}
-            {s.kind === 'quote' ? (
+            {s.kind !== 'narration' ? (
               <QuoteSpan
                 chapter={chapter}
                 segment={s}
@@ -95,7 +95,7 @@ const ParagraphView = memo(function ParagraphView({
                 names={names}
               />
             ) : (
-              s.text
+              <Emphasized text={s.text} emphasis={s.emphasis} />
             )}
           </span>
         ))}
