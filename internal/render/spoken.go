@@ -20,16 +20,38 @@ var (
 	dashesRe = regexp.MustCompile(`-{2,}`)
 	dotsRe   = regexp.MustCompile(`\.{3,}`)
 	spaceRe  = regexp.MustCompile(`\s{2,}`)
-	// "Chapter XII", "Book IV": Roman numbers after a part's name.
-	romanRe = regexp.MustCompile(`\b(?i:(chapter|book|part|volume|act|scene|canto|section|interlude))\s+([IVXLCDM]+)\b`)
+	// "Chapter XII", "Book IV:": Roman numbers after a capitalized part's
+	// name, at the end or before punctuation or a capitalized word (not
+	// "the best part I ever played").
+	romanRe = regexp.MustCompile(`\b(Chapter|CHAPTER|Book|BOOK|Part|PART|Volume|VOLUME|Act|ACT|Scene|SCENE|Canto|CANTO|` +
+		`Section|SECTION|Interlude|INTERLUDE)\s+([IVXLCDM]+)($|[:.,;!?)\-–—]|\s+[^\p{Ll}\s'’])`)
+	// Kokoro's pronunciation syntax from the lexicon: [word](/phonemes/).
+	phonemeRe = regexp.MustCompile(`\[[^\]]*\]\(/[^)]*/\)`)
+	// Quotation marks are not spoken (apostrophes stay).
+	quoteMarks = strings.NewReplacer("“", "", "”", "", "„", "", "‟", "", "«", "", "»", "", "‹", "", "›", "", "\"", "", "‘", "")
 	// Words in capitals: two or more in a row, or one before "!", are
 	// shouting, which Kokoro would spell out letter by letter.
 	pronounIRe = regexp.MustCompile(`\bi\b`)
-	capsRunRe  = regexp.MustCompile(`\b[A-Z][A-Z'’]*(?:[\s,]+[A-Z][A-Z'’]*)+\b|\b[A-Z][A-Z'’]+\b(?:!)`)
+	capsRunRe  = regexp.MustCompile(`\b[A-Z][A-Z'’]*(?:[\s,]+[A-Z][A-Z'’]*)+\b!?|\b[A-Z][A-Z'’]+\b!`)
 )
 
-// spoken prepares a segment's text for synthesis.
+// spoken prepares a segment's text for synthesis; Kokoro pronunciations
+// from the lexicon are left as they are.
 func spoken(s string) string {
+	var b strings.Builder
+	at := 0
+	for _, m := range phonemeRe.FindAllStringIndex(s, -1) {
+		b.WriteString(cleanup(s[at:m[0]]))
+		b.WriteString(" " + s[m[0]:m[1]] + " ")
+		at = m[1]
+	}
+	b.WriteString(cleanup(s[at:]))
+	return tidySpaces(b.String())
+}
+
+// cleanup rewrites the plain text between pronunciations.
+func cleanup(s string) string {
+	s = quoteMarks.Replace(s)
 	s = refMarkRe.ReplaceAllString(s, "")
 	s = bracketRe.ReplaceAllString(s, " ")
 	s = numberRe.ReplaceAllString(s, "number $1")
@@ -46,32 +68,33 @@ func spoken(s string) string {
 		sub := romanRe.FindStringSubmatch(m)
 		// A lone letter other than I, V, X is more likely a name ("Part D").
 		if n := roman(sub[2]); n > 0 && (len(sub[2]) > 1 || sub[2] == "I" || sub[2] == "V" || sub[2] == "X") {
-			return sub[1] + " " + itoa(n)
+			return sub[1] + " " + itoa(n) + sub[3]
 		}
 		return m
 	})
-	s = capsRunRe.ReplaceAllStringFunc(s, shout)
+	return capsRunRe.ReplaceAllStringFunc(s, shout)
+}
+
+func tidySpaces(s string) string {
 	s = spaceRe.ReplaceAllString(s, " ")
 	// Spaces left before punctuation by removed markers.
 	s = strings.NewReplacer(" ,", ",", " .", ".", " !", "!", " ?", "?", " ;", ";", " :", ":").Replace(s)
 	return strings.TrimSpace(s)
 }
 
-// shout writes capitals as a sentence ("STOP RIGHT THERE" → "Stop right
-// there"), keeping "I" and short acronyms of a single word alone.
+// shout writes shouted capitals as a sentence ("STOP RIGHT THERE" →
+// "Stop right there"). Acronyms (words of up to three letters: FBI, BBC
+// TV, US) stay: shouting needs two words of four letters or more, or one
+// before "!".
 func shout(m string) string {
 	long := 0
 	for _, w := range strings.FieldsFunc(m, func(r rune) bool { return r == ' ' || r == ',' || r == '!' }) {
-		if len([]rune(w)) >= 2 {
+		if len([]rune(w)) >= 4 {
 			long++
 		}
 	}
-	single := !strings.ContainsAny(strings.TrimSpace(m), " ,")
-	switch {
-	case single && len([]rune(strings.TrimRight(m, "!"))) <= 2:
-		return m // "OK!", "NO!" are read fine
-	case !single && long < 2:
-		return m // "I A" and the like: no shouting
+	if long < 2 && (long < 1 || !strings.HasSuffix(m, "!")) {
+		return m
 	}
 	lower := []rune(strings.ToLower(m))
 	lower[0] = unicode.ToUpper(lower[0])

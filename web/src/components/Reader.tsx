@@ -141,7 +141,9 @@ export function Reader({
   // A new chapter starts at the top, or where reading stopped.
   useEffect(() => {
     if (!text.data || !settled || placed.current === chapter.id) return;
-    const target = active ?? startSegment;
+    // Where reading stopped wins: the audio's position may not be
+    // restored yet (it still says 0, the chapter's heading).
+    const target = startSegment ?? active;
     if (target === undefined || !scrollTo(target, false)) {
       ownScroll.current = true;
       window.scrollTo?.({ top: 0 });
@@ -156,10 +158,22 @@ export function Reader({
   }, [playing, follow, active, scrollTo]);
 
   // The user scrolls: while playing, stop following; while paused, the
-  // first segment in view becomes the position once scrolling rests.
+  // first segment in view becomes the position once scrolling rests. A
+  // scroll counts as the user's after their own input (wheel, touch,
+  // keys, a press on the scrollbar), also during a scroll of ours.
   useEffect(() => {
+    let input = 0;
+    const touched = () => (input = Date.now());
+    const keyed = (e: KeyboardEvent) => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key))
+        touched();
+    };
     const done = () => (ownScroll.current = false);
     const onScroll = () => {
+      if (Date.now() - input < 1000) {
+        ownScroll.current = false;
+        clearTimeout(ownTimer.current);
+      }
       if (ownScroll.current) return;
       if (latest.current.playing) {
         setFollow(false);
@@ -177,9 +191,14 @@ export function Reader({
         }
       }, READ_DELAY_MS);
     };
+    const inputs = ['wheel', 'touchstart', 'touchmove', 'mousedown'] as const;
+    for (const ev of inputs) window.addEventListener(ev, touched, { passive: true });
+    window.addEventListener('keydown', keyed);
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('scrollend', done);
     return () => {
+      for (const ev of inputs) window.removeEventListener(ev, touched);
+      window.removeEventListener('keydown', keyed);
       window.removeEventListener('scroll', onScroll);
       window.removeEventListener('scrollend', done);
       clearTimeout(readTimer.current);

@@ -102,7 +102,8 @@ func (c *StyleCounter) Style() Style {
 			best, most = st, c.n[st]
 		}
 	}
-	if c.n[Dash] > 2*most && c.n[Dash] >= 3 {
+	// Epigraph attributions ("—Mark Twain") also open with a dash.
+	if c.n[Dash] > 2*most && c.n[Dash] >= 10 {
 		return Dash
 	}
 	return best
@@ -271,8 +272,9 @@ func (s *Segmenter) dashes(runes []rune) []piece {
 	return append(pieces, piece{kind: kind, from: start, to: len(runes)})
 }
 
-// thoughts splits thoughts out of the narration: italic runs of a few
-// words, and runs in single marks when speech uses double ones.
+// thoughts splits thoughts out of the narration: italic runs that read
+// like a thought (see isThought), and runs in single marks when speech
+// uses double ones.
 func (s *Segmenter) thoughts(runes []rune, pieces []piece, emph []Span) []piece {
 	var out []piece
 	for _, p := range pieces {
@@ -283,8 +285,8 @@ func (s *Segmenter) thoughts(runes []rune, pieces []piece, emph []Span) []piece 
 		var found []Span
 		for _, e := range emph {
 			e = Span{max(e.Start, p.from), min(e.End, p.to)}
-			if e.End > e.Start && isThought(runes[e.Start:e.End]) {
-				found = append(found, e)
+			if e.End > e.Start && isThought(runes, e) {
+				found = append(found, Span{e.Start, swallowPunct(runes, e.End, p.to)})
 			}
 		}
 		found = append(found, s.singleQuoted(runes, p.from, p.to)...)
@@ -299,13 +301,91 @@ func (s *Segmenter) thoughts(runes []rune, pieces []piece, emph []Span) []piece 
 	return out
 }
 
-// singleQuoted finds runs in single marks within [from, to) when speech
-// uses double marks: thoughts or quoted phrases of more than one word.
+// maxThoughtWords: longer runs in italics (letters, flashbacks, whole
+// italic paragraphs) stay narration.
+const maxThoughtWords = 40
+
+// thoughtTags follow a thought: "*I hate this place*, she thought".
+var thoughtTags = []string{
+	"thought", "thinks", "think", "wondered", "wonders", "mused", "realized", "realised", "decided",
+	"knew", "hoped", "wished", "reminded", "told", "figured", "reflected", "considered", "prayed",
+}
+
+// isThought: an italic run is a thought when it reads like one: it starts
+// a sentence or clause (a capital), has two to maxThoughtWords words, and
+// ends a clause itself or is followed by a tag like "she thought". Stress
+// on words ("she had *never in her life* seen") and titles ("*Queen Mary
+// II*") are not.
+func isThought(runes []rune, e Span) bool {
+	r := runes[e.Start:e.End]
+	n := words(r)
+	if n < 2 || n > maxThoughtWords || !startsCapital(r) {
+		return false
+	}
+	if endsClause(r) {
+		return true
+	}
+	// A tag among the next few words.
+	next := strings.Fields(string(runes[e.End:min(len(runes), e.End+40)]))
+	for k, w := range next {
+		if k >= 4 {
+			break
+		}
+		w = strings.ToLower(strings.TrimFunc(w, func(c rune) bool { return !unicode.IsLetter(c) }))
+		for _, t := range thoughtTags {
+			if w == t {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// startsCapital: the first letter (after marks) is a capital.
+func startsCapital(r []rune) bool {
+	for _, c := range r {
+		if unicode.IsLetter(c) {
+			return unicode.IsUpper(c)
+		}
+		if unicode.IsDigit(c) {
+			return false
+		}
+	}
+	return false
+}
+
+// endsClause: the last character before closing marks ends a sentence or
+// clause.
+func endsClause(r []rune) bool {
+	t := []rune(strings.TrimRight(string(r), " ”’\"')»›"))
+	return len(t) > 0 && strings.ContainsRune(".!?…,;:—–", t[len(t)-1])
+}
+
+// swallowPunct extends a thought over punctuation right after it ("*I
+// hate this place*, she thought"), up to limit; an apostrophe before a
+// letter ("’s") is not punctuation.
+func swallowPunct(runes []rune, end, limit int) int {
+	for end < limit && strings.ContainsRune(",.;:!?…—–)”’\"'»›", runes[end]) {
+		if (runes[end] == '’' || runes[end] == '\'') && end+1 < len(runes) && unicode.IsLetter(runes[end+1]) {
+			break
+		}
+		end++
+	}
+	return end
+}
+
+// singleQuoted finds thoughts in single marks within [from, to) when
+// speech uses double marks: a capitalized run of several words that ends
+// a clause before its closing mark ("‘I should go,’ he thought"). Scare
+// quotes (‘big bad wolf’), names (‘Royal Oak’), elisions (‘90s, ‘fraid)
+// and possessives (the boys’ band) are not.
 func (s *Segmenter) singleQuoted(runes []rune, from, to int) []Span {
 	var open, close rune
 	switch s.style {
-	case CurlyDouble, StraightDouble, LowHigh:
+	case CurlyDouble, LowHigh:
 		open, close = '‘', '’'
+	case StraightDouble:
+		open, close = '\'', '\''
 	case Guillemets, GuillemetsReversed:
 		open, close = '‹', '›'
 	default:
@@ -313,31 +393,24 @@ func (s *Segmenter) singleQuoted(runes []rune, from, to int) []Span {
 	}
 	var out []Span
 	for i := from; i < to; i++ {
-		if runes[i] != open || !opensAfter(runes, i) || isElision(runes, i) {
+		if runes[i] != open || !opensAfter(runes, i) || isElision(runes, i) ||
+			i+1 >= to || !unicode.IsUpper(runes[i+1]) {
 			continue
 		}
 		for j := i + 1; j < to; j++ {
-			if runes[j] == close && (j+1 == len(runes) || !unicode.IsLetter(runes[j+1])) {
-				if words(runes[i:j+1]) >= 2 {
-					out = append(out, Span{i, j + 1})
-				}
-				i = j
-				break
+			if runes[j] != close || (j+1 < len(runes) && unicode.IsLetter(runes[j+1])) {
+				continue
 			}
+			// The first closing candidate decides; a possessive (boys’)
+			// does not end a clause, so nothing is taken.
+			if r := runes[i : j+1]; words(r) >= 2 && words(r) <= maxThoughtWords && endsClause(r) {
+				out = append(out, Span{i, j + 1})
+			}
+			i = j
+			break
 		}
 	}
 	return out
-}
-
-// isThought: an italic run is a thought when it is more than stress on a
-// word or two: three words, or two that end a sentence.
-func isThought(r []rune) bool {
-	n := words(r)
-	if n >= 3 {
-		return true
-	}
-	last := []rune(strings.TrimRight(string(r), " ”’\"')"))
-	return n == 2 && len(last) > 0 && strings.ContainsRune(".!?…", last[len(last)-1])
 }
 
 // disjoint sorts spans and drops those overlapping an earlier one.

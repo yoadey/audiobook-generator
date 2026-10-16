@@ -209,14 +209,14 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 	}
 	narrator, narratorSpeed := voiceOf(nil)
 	say := func(segmentID int64, text, voice string, speed float64) {
-		// Cleaned up for the TTS before the book's pronunciations apply
-		// (they may use Kokoro's bracket syntax).
-		text = spoken(text)
+		// The book's pronunciations first (entries may name "AT&T"), then
+		// the cleanup for the TTS, which leaves Kokoro's syntax alone.
+		text = spoken(lex.Apply(text))
 		if speakable(text) == "" {
 			return
 		}
 		items = append(items, item{
-			text: lex.Apply(text), voice: voice, speed: speed, pause: withinPara, segmentID: segmentID,
+			text: text, voice: voice, speed: speed, pause: withinPara, segmentID: segmentID,
 		})
 	}
 	if len(paras) == 0 || paras[0].Kind != store.ParagraphHeading {
@@ -256,7 +256,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 // pause oddly) and drops text without anything to say.
 func speakable(s string) string {
 	s = strings.TrimSpace(s)
-	s = strings.Trim(s, "“”‘’\"'")
+	s = strings.Trim(s, "“”‘’\"'«»‹›„")
 	s = strings.TrimSpace(s)
 	if strings.IndexFunc(s, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0 {
 		return ""

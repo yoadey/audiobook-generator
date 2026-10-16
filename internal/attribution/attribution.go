@@ -473,12 +473,19 @@ func marked(paras []store.Paragraph, segs []store.Segment, ctxFrom, from, to int
 				refs = append(refs, s.QuoteRef)
 				fmt.Fprintf(b, "[q%d]", s.QuoteRef)
 			}
-			if s.Kind == store.SegmentThought {
-				// Thoughts have no marks of their own (see the prompt).
-				b.WriteString("*" + s.Text + "*")
+			if s.Kind != store.SegmentThought {
+				b.WriteString(s.Text)
 				continue
 			}
+			// Thoughts have no marks of their own (see the prompt): one
+			// pair of asterisks around all pieces of a thought.
+			if k == 0 || pieces[k-1].QuoteRef != s.QuoteRef {
+				b.WriteString("*")
+			}
 			b.WriteString(s.Text)
+			if k == len(pieces)-1 || pieces[k+1].QuoteRef != s.QuoteRef {
+				b.WriteString("*")
+			}
 		}
 		b.WriteString("\n\n")
 	}

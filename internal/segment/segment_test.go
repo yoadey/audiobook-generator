@@ -140,10 +140,42 @@ func TestThoughts(t *testing.T) {
 		q(1, "“Fine,”"), n("he said."), th(2, "‘I should go,’"), n("he thought. The ‘plan’ failed, ‘twas sad."),
 	}, s.Paragraph("“Fine,” he said. ‘I should go,’ he thought. The ‘plan’ failed, ‘twas sad."))
 
-	// Two stressed words that end a sentence are a thought; two that do
-	// not, and italics inside a quotation, are not.
-	assert.True(t, isThought([]rune("Not again!")))
-	assert.False(t, isThought([]rune("very much")))
+	// Stress, titles and sound effects without a clause end are not
+	// thoughts; a thought swallows the punctuation after it.
+	th3 := func(text string, emph Span) []Part {
+		return New(CurlyDouble).Paragraph(text, emph)
+	}
+	strip := func(ps []Part) []Part {
+		for i := range ps {
+			ps[i].Emphasis = nil
+		}
+		return ps
+	}
+	assert.Equal(t, []Part{n("She had never in her life seen such a thing.")},
+		strip(th3("She had never in her life seen such a thing.", Span{8, 25})))
+	assert.Equal(t, []Part{n("On the Queen Mary II’s deck.")},
+		strip(th3("On the Queen Mary II’s deck.", Span{7, 20})))
+	assert.Equal(t, []Part{th(1, "I hate this place,"), n("she thought, and left.")},
+		strip(th3("I hate this place, she thought, and left.", Span{0, 17})))
+	assert.Equal(t, []Part{th(1, "Not again!"), n("He sighed.")},
+		strip(th3("Not again! He sighed.", Span{0, 10})))
+	long := strings.Repeat("word ", 45) + "end."
+	assert.Equal(t, Narration, th3(long, Span{0, len([]rune(long))})[0].Kind, "a whole italic paragraph")
+
+	// Single marks: scare quotes, names, elisions and possessives are not
+	// thoughts.
+	for _, text := range []string{
+		"Back in the ‘90s, the boys’ band was huge.",
+		"The ‘big bad wolf’ came.",
+		"They drank at the ‘Royal Oak’ pub.",
+		"I’m ‘fraid so, the boys’ mother said.",
+	} {
+		ps := New(CurlyDouble).Paragraph(text)
+		assert.Equal(t, []Part{n(text)}, ps, text)
+	}
+	assert.Equal(t, []Part{q(1, `"Fine,"`), n("he said."), th(2, "'I should go,'"), n("he thought.")},
+		New(StraightDouble).Paragraph(`"Fine," he said. 'I should go,' he thought.`))
+
 	s = New(CurlyDouble)
 	text = "“Never ever again,” she said."
 	got = s.Paragraph(text, Span{1, 17})
@@ -157,7 +189,7 @@ func TestMoreStyleDetection(t *testing.T) {
 		Guillemets:         {"«Come,» she said. «Now.»"},
 		GuillemetsReversed: {"»Come,« she said. »Now.«"},
 		LowHigh:            {"„Komm“, sagte sie. „Jetzt.“"},
-		Dash:               {"—Hola —dijo.", "—Sí.", "—No.", "Narration."},
+		Dash:               {"—Hola —dijo.", "—Sí.", "—No.", "—Ya.", "—Bueno.", "—Vale.", "—Claro.", "—Pues.", "—Mira.", "—Oye.", "Narration."},
 	} {
 		var c StyleCounter
 		for _, x := range texts {
@@ -166,4 +198,13 @@ func TestMoreStyleDetection(t *testing.T) {
 		assert.Equal(t, want, c.Style(), want.String())
 		assert.Equal(t, want, ParseStyle(want.String()))
 	}
+}
+
+func TestEpigraphsAreNoDashDialogue(t *testing.T) {
+	var c StyleCounter
+	c.Add("“Hello,” she said.")
+	for range 3 {
+		c.Add("—Mark Twain")
+	}
+	assert.Equal(t, CurlyDouble, c.Style())
 }
