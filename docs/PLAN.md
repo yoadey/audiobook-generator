@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-16 · Status: **M0–M7 implemented** (feature-complete v1.0: multi-voice audiobook, lexicon, podcast RSS, M4B, OIDC, metrics, Litestream, export/import); M8 optional
+Last updated: 2026-10-16 · Status: **M0–M7 implemented** (feature-complete v1.0: multi-voice audiobook, lexicon, podcast RSS, M4B, OIDC, metrics, Litestream, export/import); from M8: reading along (also as podcast transcripts) and custom preview texts
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -347,6 +347,12 @@ As implemented in M6 (`internal/attribution`):
   the whole chapter (a few CPU minutes); a per-segment cache (Opus) is a
   later optimisation.
 - Storage for finished audio: ~22–29 MB/h ⇒ **~10–19 GB** per huge book.
+- While joining the pieces the render records when each segment is spoken
+  (exact, from the PCM lengths and the known pauses) in a small JSON file
+  next to the audio version. The reader follows the voice with it, and the
+  podcast feed serves it as a WebVTT transcript per episode
+  (`<podcast:transcript>`). Renders from before get an estimate from the
+  text length; a re-render makes them exact.
 
 ### 3.8 Scheduler and jobs
 
@@ -678,7 +684,8 @@ Every milestone ends with an installable chart.
 | **M5** | Casting + voice catalogue + voice editor + previews | every main character has a recipe |
 | **M6** | Speaker attribution + multi-voice rendering + chapter editor | **A multi-voice audiobook** |
 | **M7** | Pronunciation lexicon, podcast RSS, OIDC, metrics/ServiceMonitor, Litestream, export/import, M4B per volume | feature-complete v1.0 |
-| **M8** (optional) | segment cache, emotions/thoughts, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
+| **M8** | Reading along: segment timings recorded while rendering, a reader that follows the voice and shares its position with the player, WebVTT transcripts in the podcast feed; custom sample texts for voice previews (instance, book, character) | read and listen at once |
+| **M9** (optional) | segment cache, emotions/thoughts, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
 
 Integration into the cluster repo (`HelmRelease`, Zitadel client via
 Terraform, secrets via SOPS, Garage bucket for Litestream or a CNPG

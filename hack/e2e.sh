@@ -102,6 +102,10 @@ grep -q '"audioStatus":"ready"' <<<"$detail" || { echo "$detail" | head -c 600; 
 code="$(curl -sS -o /tmp/chapter.m4a -w '%{http_code}' -r 0-1023 "localhost:18080/api/chapters/$chapter/audio")"
 [[ "$code" == 206 ]]
 [[ "$(wc -c </tmp/chapter.m4a)" -eq 1024 ]]
+# Reading along: the render recorded when each segment is spoken.
+timings="$(curl -fsS "localhost:18080/api/chapters/$chapter/timings")"
+grep -q '"exact":true' <<<"$timings"
+grep -q '"segmentId"' <<<"$timings"
 
 # The configured LLM provider answers the structured-output test, with the
 # key from the Secret (the fake rejects anything else).
@@ -165,6 +169,16 @@ feed="$(curl -fsS "localhost:18080/api/books/$id" |
 rss="$(curl -fsS "localhost:18080$feed")"
 grep -q '<rss' <<<"$rss"
 grep -q '<enclosure' <<<"$rss"
+# Each episode links its transcript (WebVTT).
+transcript="$(python3 -c 'import re,sys; print(re.search(r"<podcast:transcript url=\"([^\"]+)\"", sys.stdin.read()).group(1))' <<<"$rss")"
+vtt="$(curl -fsS "localhost:18080/${transcript#*://*/}")"
+head -c 300 <<<"$vtt"; echo
+grep -q '^WEBVTT' <<<"$vtt"
+grep -q ' --> ' <<<"$vtt"
+
+# The sample text of voice previews.
+curl -fsS -X PATCH -H 'Content-Type: application/json' -d '{"previewText":"Call me Ishmael."}' \
+  localhost:18080/api/settings | grep -q '"previewText":"Call me Ishmael."'
 
 # M4B of the first volume (its missing chapters are rendered first).
 volume="$(curl -fsS "localhost:18080/api/books/$id/downloads" |

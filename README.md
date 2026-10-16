@@ -8,10 +8,10 @@ Go backend, React frontend, shipped as a self-contained Helm chart that
 brings the app, the [Kokoro](https://github.com/remsky/Kokoro-FastAPI) TTS
 server and storage.
 
-> **Status:** milestone M7 — **feature-complete v1.0**: a multi-voice
-> audiobook in which every character speaks with their own voice, plus
-> pronunciations, podcast feeds, M4B downloads, sign-in, backups and
-> export/import. EPUBs are split into volumes, chapters and narration/quote segments
+> **Status:** milestone M8 — a multi-voice audiobook in which every
+> character speaks with their own voice, to listen to and read along,
+> plus pronunciations, podcast feeds with transcripts, M4B downloads,
+> sign-in, backups and export/import. EPUBs are split into volumes, chapters and narration/quote segments
 > (a 3-million-word book imports in seconds) and can be reviewed in the UI;
 > chapters are rendered with a narrator voice of your choice (Kokoro, voice
 > mixes, speed, previews) and played in the built-in player, which resumes
@@ -32,7 +32,9 @@ server and storage.
 > podcast RSS feed for any podcast app and an M4B per volume with chapter
 > markers. Sign-in via OpenID Connect (e.g. Zitadel), Prometheus metrics,
 > Litestream backups of SQLite to S3 and an export/import of a book with
-> everything its analysis cost round it off. See
+> everything its analysis cost round it off. The player shows the text
+> along with the voice (also as a transcript in podcast apps), and voice
+> previews speak sample texts of your choice. See
 > [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Install
@@ -88,10 +90,22 @@ authorization on authentication" with a project role). Health probes,
 `/metrics` and the podcast feeds stay reachable without a session; feed
 URLs carry a token instead, so treat them like passwords.
 
-### Podcast feeds, downloads, backup
+### Reading along, podcast feeds, downloads, backup
 
+- **Reading along**: *Read along* on the listen page shows the chapter's
+  text and marks what is being spoken, following the voice. A click on a
+  passage listens from there; scrolling while paused moves the listening
+  position to what you read (also in chapters without audio yet), so
+  reading and listening continue at the same place.
 - **Podcast**: the book page shows a feed URL (button *Podcast*) that any
-  podcast app can subscribe to; rendered chapters are its episodes.
+  podcast app can subscribe to; rendered chapters are its episodes, each
+  with a WebVTT transcript (`podcast:transcript`) that apps such as Apple
+  Podcasts, Pocket Casts or AntennaPod show along the audio. Chapters
+  rendered before reading along existed get estimated timings until they
+  are rendered again.
+- **Sample texts**: voice previews say a text from *Settings*, a book's own
+  (narrator settings) or, for a character, quotes from the book or a text
+  of its own (voice editor).
 - **Downloads**: one M4B with chapter markers and cover per volume (card
   *Downloads*); missing chapters are rendered first.
 - **Backup**: with SQLite, `backup.litestream` (S3 endpoint, bucket and a
