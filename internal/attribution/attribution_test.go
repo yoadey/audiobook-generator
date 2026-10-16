@@ -515,7 +515,7 @@ func TestRenderDoesNotWaitForJobsThatCannotRun(t *testing.T) {
 	})
 }
 
-func TestFailedRerendersBackOffAndOldAudioIsReplaced(t *testing.T) {
+func TestFailedRerendersBackOff(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
 		ctx := context.Background()
 		f := setup(t, s)

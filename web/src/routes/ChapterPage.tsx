@@ -352,7 +352,7 @@ export function ChapterPage() {
             key={`${chapter.id}:${chapter.audioDurationMs}`}
             controls
             preload="none"
-            src={audioUrl(chapter.id)}
+            src={audioUrl(chapter.id, chapter.audioVersion)}
             style={{ height: 32, flex: 1 }}
           />
         )}

@@ -405,8 +405,8 @@ var migrations = []*gormigrate.Migration{
 		ID: "202610200001_outdate_narrated_audio",
 		Migrate: func(tx *gorm.DB) error {
 			return tx.Exec(`UPDATE chapters SET voice_rev = voice_rev + 1
-				WHERE audio_path <> '' AND quote_count > 0 AND excluded = ?
-				AND book_id IN (SELECT id FROM books WHERE analysis_status = 'done')`, false).Error
+				WHERE audio_path <> '' AND quote_count > 0
+				AND book_id IN (SELECT id FROM books WHERE analysis_status = 'done')`).Error
 		},
 		Rollback: func(*gorm.DB) error { return nil },
 	},

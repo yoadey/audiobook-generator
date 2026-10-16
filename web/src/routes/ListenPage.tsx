@@ -117,6 +117,8 @@ function Player({
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
+  // The render a playing chapter started with (see the <audio> src).
+  const [pinned, setPinned] = useState<{ id: number; version?: string } | null>(null);
   const [rate, setRate] = useState(storedRate);
   const lastSaved = useRef(0);
 
@@ -245,7 +247,13 @@ function Player({
             <audio
               key={current.id}
               ref={audio}
-              src={audioUrl(current.id)}
+              // Once playing, stay on that render: a re-render must not swap
+              // the file under seeks and rebuffering.
+              src={audioUrl(
+                current.id,
+                pinned?.id === current.id ? pinned.version : current.audioVersion,
+              )}
+
               preload="metadata"
               onLoadedMetadata={(e) => {
                 const a = e.currentTarget;
@@ -265,7 +273,12 @@ function Player({
                 setPosition(ms);
                 if (Date.now() - lastSaved.current > SAVE_EVERY_MS) persist(current.id, ms);
               }}
-              onPlay={() => setPlaying(true)}
+              onPlay={() => {
+                setPlaying(true);
+                if (pinned?.id !== current.id) {
+                  setPinned({ id: current.id, version: current.audioVersion });
+                }
+              }}
               onPause={(e) => {
                 setPlaying(false);
                 persist(current.id, e.currentTarget.currentTime * 1000);

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -148,7 +149,11 @@ func (s *Server) RenderChapter(ctx context.Context, req RenderChapterRequestObje
 	if err != nil {
 		return nil, err
 	}
-	return RenderChapter202JSONResponse(s.toChapter(b, c, true)), nil
+	pending, err := s.Store.PendingRenderJob(ctx, render.JobType, c.ID)
+	if err != nil {
+		return nil, err
+	}
+	return RenderChapter202JSONResponse(s.toChapter(b, c, pending != nil)), nil
 }
 
 // audioFile serves a file with Range support (http.ServeContent).
@@ -183,11 +188,20 @@ func (s *Server) GetChapterAudio(ctx context.Context, req GetChapterAudioRequest
 		return nil, err
 	}
 	p := filepath.Join(s.DataDir, c.AudioPath)
+	// A version the player started with, while it is kept.
+	if v := req.Params.V; v != nil && versionRe.MatchString(*v) && *v != render.AudioVersion(c.AudioPath) {
+		old := filepath.Join(s.DataDir, render.VersionPath(c.BookID, c.ID, *v))
+		if _, err := os.Stat(old); err == nil {
+			p = old
+		}
+	}
 	if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
 		return GetChapterAudio404JSONResponse{ErrorJSONResponse(errMsg("no audio"))}, nil
 	}
 	return audioFile{r: requestFrom(ctx), path: p, name: fmt.Sprintf("%d.m4a", c.ID)}, nil
 }
+
+var versionRe = regexp.MustCompile(`^[0-9a-z]{1,20}$`)
 
 // ListVoices lists the voice catalogue as the TTS server offers it.
 func (s *Server) ListVoices(ctx context.Context, _ ListVoicesRequestObject) (ListVoicesResponseObject, error) {

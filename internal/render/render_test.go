@@ -120,15 +120,21 @@ func TestRenderChapter(t *testing.T) {
 		assert.Equal(t, st.Size(), got.AudioSize)
 		assert.NoDirExists(t, filepath.Join(dir, "cache", "render", strconv.FormatInt(ch1.ID, 10)), "cache removed")
 
-		// A render again writes a new file and removes the previous one
-		// (a listener may still stream it until the switch).
+		// A render again writes a new file and keeps the one it replaces
+		// (a listener may still stream it); older ones are removed.
 		first := got.AudioPath
 		require.NoError(t, r.Render(ctx, ch1.ID, func(float64) {}))
-		again, err := s.GetChapter(ctx, ch1.ID)
+		second, err := s.GetChapter(ctx, ch1.ID)
 		require.NoError(t, err)
-		assert.NotEqual(t, first, again.AudioPath)
-		assert.FileExists(t, filepath.Join(dir, again.AudioPath))
+		assert.NotEqual(t, first, second.AudioPath)
+		assert.FileExists(t, filepath.Join(dir, first))
+		require.NoError(t, r.Render(ctx, ch1.ID, func(float64) {}))
+		third, err := s.GetChapter(ctx, ch1.ID)
+		require.NoError(t, err)
+		assert.FileExists(t, filepath.Join(dir, third.AudioPath))
+		assert.FileExists(t, filepath.Join(dir, second.AudioPath))
 		assert.NoFileExists(t, filepath.Join(dir, first))
+		assert.Equal(t, render.VersionPath(b.ID, ch1.ID, render.AudioVersion(third.AudioPath)), third.AudioPath)
 
 		// Chapters without a heading paragraph get their title spoken first
 		// (sequentially here, so the order of requests is the spoken order).

@@ -304,7 +304,10 @@ export interface paths {
       };
       cookie?: never;
     };
-    /** The chapter's audio (AAC in MP4); supports HTTP range requests */
+    /**
+     * The chapter's audio (AAC in MP4); supports HTTP range requests
+     * @description With v (the chapter's audioVersion), that render is served while it is kept (the current and the previous one), so a player keeps streaming the file it started with when the chapter is rendered again.
+     */
     get: operations['getChapterAudio'];
     put?: never;
     post?: never;
@@ -731,6 +734,8 @@ export interface components {
       audioStale: boolean;
       /** @description Existing audio (still playable) is being rendered again */
       audioRerendering: boolean;
+      /** @description Version of the current audio file (for the audio URL's v parameter) */
+      audioVersion?: string;
       attributionStatus: components['schemas']['AttributionStatus'];
       attributionError?: string;
       narration?: components['schemas']['Narration'];
@@ -1779,7 +1784,9 @@ export interface operations {
   };
   getChapterAudio: {
     parameters: {
-      query?: never;
+      query?: {
+        v?: string;
+      };
       header?: never;
       path: {
         chapterId: components['parameters']['ChapterId'];

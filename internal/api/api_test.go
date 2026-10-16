@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -349,6 +350,11 @@ func TestAudioFlow(t *testing.T) {
 		assert.Equal(t, http.StatusPartialContent, resp.StatusCode)
 		assert.Equal(t, "audio/mp4", resp.Header.Get("Content-Type"))
 		assert.Len(t, body, 100)
+		require.NotNil(t, d.AudioVersion)
+		for _, v := range []string{*d.AudioVersion, "zzz", "../x"} {
+			assert.Equal(t, http.StatusOK, c.do(http.MethodGet,
+				"/api/chapters/"+itoa(ch1.Id)+"/audio?v="+url.QueryEscape(v), nil, "", nil), v)
+		}
 
 		// A narrator change makes the audio stale.
 		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/books/"+id, map[string]any{"narratorVoice": "bm_george"}, nil))

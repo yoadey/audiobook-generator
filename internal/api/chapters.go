@@ -31,6 +31,7 @@ func (s *Server) toChapter(b *store.Book, c *store.Chapter, rendering bool) Chap
 		AudioStale:  b != nil && s.Scheduler != nil && s.Scheduler.Stale(b, c),
 
 		AudioRerendering: rendering && c.AudioStatus == store.AudioReady,
+		AudioVersion:     nonEmpty(render.AudioVersion(c.AudioPath)),
 
 		PovCharacterId: c.POVCharacterID,
 
@@ -194,7 +195,8 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		Id: ch.Id, BookId: ch.BookId, VolumeId: ch.VolumeId, Idx: ch.Idx, Title: ch.Title,
 		WordCount: ch.WordCount, QuoteCount: ch.QuoteCount, Excluded: ch.Excluded, Status: ch.Status,
 		AudioStatus: ch.AudioStatus, AudioDurationMs: ch.AudioDurationMs, AudioError: ch.AudioError,
-		AudioStale: ch.AudioStale, AudioRerendering: ch.AudioRerendering, Narration: ch.Narration,
+		AudioStale: ch.AudioStale, AudioRerendering: ch.AudioRerendering, AudioVersion: ch.AudioVersion,
+		Narration: ch.Narration,
 		PovCharacterId: ch.PovCharacterId, AttributionStatus: ch.AttributionStatus, AttributionError: ch.AttributionError,
 		Paragraphs: make([]Paragraph, 0, len(paras)),
 	}

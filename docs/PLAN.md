@@ -315,9 +315,13 @@ As implemented in M6 (`internal/attribution`):
   has speakers, for a pending casting (queued above attributions) — but
   not for jobs deferred more than two minutes (LLM quota, no provider):
   then it renders with the voices there are and is rendered again when
-  they change. A finished analysis marks all audio outdated (it was
-  narrated only). Outdated audio stays playable while it is re-rendered,
-  and a failed re-render keeps it. Cut-off answers, requests too large for every provider and
+  they change. A finished analysis marks the audio of chapters with
+  quotations outdated (it was narrated only). Outdated audio stays playable
+  while it is re-rendered, and a failed re-render keeps it (the lookahead
+  then backs off for 30 minutes). Every render is a new file; the one it
+  replaces is kept until the next render, and the player asks for the
+  version it started with (`?v=`), so a seek after a re-render still
+  reads the same file. Cut-off answers, requests too large for every provider and
   content-filter refusals split the part; a single paragraph still refused
   stays with the narrator.
 - Speakers chosen in the chapter editor are flags (`SpeakerManual`) an

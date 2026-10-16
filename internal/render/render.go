@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -86,8 +87,37 @@ const (
 // the data dir. Every render gets its own file (version): a listener may
 // still be streaming the previous one.
 func AudioPath(bookID, chapterID, version int64) string {
-	return filepath.Join(importer.BookDir(bookID), "audio",
-		strconv.FormatInt(chapterID, 10)+"-"+strconv.FormatInt(version, 36)+".m4a")
+	return VersionPath(bookID, chapterID, strconv.FormatInt(version, 36))
+}
+
+// VersionPath is the audio file of a version (as AudioVersion returns it).
+func VersionPath(bookID, chapterID int64, version string) string {
+	return filepath.Join(importer.BookDir(bookID), "audio", strconv.FormatInt(chapterID, 10)+"-"+version+".m4a")
+}
+
+// AudioVersion returns the version part of an audio path ("" for none).
+func AudioVersion(path string) string {
+	base := strings.TrimSuffix(filepath.Base(path), ".m4a")
+	if _, v, ok := strings.Cut(base, "-"); ok {
+		return v
+	}
+	return ""
+}
+
+// keepVersions removes a chapter's older audio files, keeping the current
+// one and the one it replaced (a listener may still stream that).
+func (r *Renderer) keepVersions(bookID, chapterID int64, keep ...string) {
+	dir := filepath.Join(r.DataDir, importer.BookDir(bookID), "audio")
+	files, _ := filepath.Glob(filepath.Join(dir, strconv.FormatInt(chapterID, 10)+"-*.m4a"))
+	for _, f := range files {
+		rel, err := filepath.Rel(r.DataDir, f)
+		if err != nil || slices.Contains(keep, rel) {
+			continue
+		}
+		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+			r.Log.Warn("remove old audio", "chapter", chapterID, "err", err)
+		}
+	}
 }
 
 // CacheDir holds the synthesized pieces of a chapter while it renders
@@ -350,11 +380,7 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	}); err != nil {
 		return err
 	}
-	if previous != "" && previous != rel {
-		if err := os.Remove(filepath.Join(r.DataDir, previous)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			r.Log.Warn("remove previous audio", "chapter", ch.ID, "err", err)
-		}
-	}
+	r.keepVersions(book.ID, ch.ID, rel, previous)
 	if err := os.RemoveAll(cacheDir); err != nil {
 		r.Log.Warn("remove render cache", "chapter", ch.ID, "err", err)
 	}

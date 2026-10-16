@@ -739,7 +739,10 @@ type Chapter struct {
 	// AudioStale The audio was rendered with other voices (narrator, speakers or their voices changed)
 	AudioStale  bool        `json:"audioStale"`
 	AudioStatus AudioStatus `json:"audioStatus"`
-	BookId      int64       `json:"bookId"`
+
+	// AudioVersion Version of the current audio file (for the audio URL's v parameter)
+	AudioVersion *string `json:"audioVersion,omitempty"`
+	BookId       int64   `json:"bookId"`
 
 	// Excluded Front/back matter that is not narrated
 	Excluded bool  `json:"excluded"`
@@ -792,7 +795,10 @@ type ChapterDetail struct {
 	// AudioStale The audio was rendered with other voices (narrator, speakers or their voices changed)
 	AudioStale  bool        `json:"audioStale"`
 	AudioStatus AudioStatus `json:"audioStatus"`
-	BookId      int64       `json:"bookId"`
+
+	// AudioVersion Version of the current audio file (for the audio URL's v parameter)
+	AudioVersion *string `json:"audioVersion,omitempty"`
+	BookId       int64   `json:"bookId"`
 
 	// Characters Characters appearing in the chapter, most important first
 	Characters *[]CharacterRef `json:"characters,omitempty"`
@@ -1371,6 +1377,11 @@ type ListCharactersParams struct {
 // ListCharactersParamsSort defines parameters for ListCharacters.
 type ListCharactersParamsSort string
 
+// GetChapterAudioParams defines parameters for GetChapterAudio.
+type GetChapterAudioParams struct {
+	V *string `form:"v,omitempty" json:"v,omitempty"`
+}
+
 // RenderChapterParams defines parameters for RenderChapter.
 type RenderChapterParams struct {
 	// Force Render even if the audio is current
@@ -1508,7 +1519,7 @@ type ServerInterface interface {
 	StartAttribution(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
 	// GetChapterAudio The chapter's audio (AAC in MP4); supports HTTP range requests
 	// (GET /chapters/{chapterId}/audio)
-	GetChapterAudio(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
+	GetChapterAudio(w http.ResponseWriter, r *http.Request, chapterId ChapterId, params GetChapterAudioParams)
 	// MergeChapterWithNext Append the following chapter to this one
 	// (POST /chapters/{chapterId}/merge-next)
 	MergeChapterWithNext(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
@@ -2275,8 +2286,24 @@ func (siw *ServerInterfaceWrapper) GetChapterAudio(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetChapterAudioParams
+
+	// ------------- Optional query parameter "v" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "v", r.URL.Query(), &params.V, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "v"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "v", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetChapterAudio(w, r, chapterId)
+		siw.Handler.GetChapterAudio(w, r, chapterId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4268,6 +4295,7 @@ func (response StartAttributiondefaultJSONResponse) VisitStartAttributionRespons
 
 type GetChapterAudioRequestObject struct {
 	ChapterId ChapterId `json:"chapterId"`
+	Params    GetChapterAudioParams
 }
 
 type GetChapterAudioResponseObject interface {
@@ -6438,10 +6466,11 @@ func (sh *strictHandler) StartAttribution(w http.ResponseWriter, r *http.Request
 }
 
 // GetChapterAudio operation middleware
-func (sh *strictHandler) GetChapterAudio(w http.ResponseWriter, r *http.Request, chapterId ChapterId) {
+func (sh *strictHandler) GetChapterAudio(w http.ResponseWriter, r *http.Request, chapterId ChapterId, params GetChapterAudioParams) {
 	var request GetChapterAudioRequestObject
 
 	request.ChapterId = chapterId
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.GetChapterAudio(ctx, request.(GetChapterAudioRequestObject))

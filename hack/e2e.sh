@@ -146,11 +146,14 @@ chapter2="$(curl -fsS "localhost:18080/api/books/$id/chapters" |
 curl -fsS -X POST "localhost:18080/api/chapters/$chapter2/render?force=true" >/dev/null
 for _ in $(seq 1 90); do
   detail="$(curl -fsS "localhost:18080/api/chapters/$chapter2")"
-  grep -q '"audioStatus":"ready"' <<<"$detail" && grep -q '"attributionStatus":"done"' <<<"$detail" && break
+  grep -q '"audioStatus":"ready"' <<<"$detail" && grep -q '"attributionStatus":"done"' <<<"$detail" &&
+    grep -q '"audioRerendering":false' <<<"$detail" && ! grep -q '"audioStale":true' <<<"$detail" && break
   sleep 1
 done
 echo "$detail" | head -c 2000; echo
 grep -q '"attributionStatus":"done"' <<<"$detail"
 grep -q '"speakerId"' <<<"$detail"
 grep -q '"audioStatus":"ready"' <<<"$detail"
+grep -q '"audioRerendering":false' <<<"$detail"
+if grep -q '"audioError"' <<<"$detail"; then exit 1; fi
 echo "e2e ($db) passed"

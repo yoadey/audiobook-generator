@@ -239,7 +239,9 @@ export const characterQuery = (characterId: number) =>
       unwrap(api.GET('/characters/{characterId}', { params: { path: { characterId } } })),
   });
 
-export const audioUrl = (chapterId: number) => `${baseUrl}/chapters/${chapterId}/audio`;
+/** The audio of a chapter; with version, that render (kept while a newer one replaces it). */
+export const audioUrl = (chapterId: number, version?: string) =>
+  `${baseUrl}/chapters/${chapterId}/audio${version ? `?v=${encodeURIComponent(version)}` : ''}`;
 
 export const coverUrl = (bookId: number) => `${baseUrl}/books/${bookId}/cover`;
 
