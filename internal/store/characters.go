@@ -615,3 +615,44 @@ func (s *Store) PauseStaleAnalysis(ctx context.Context, bookID int64, status Ana
 		Update("analysis_status", AnalysisPaused)
 	return res.RowsAffected == 1, res.Error
 }
+
+// TransitionAnalysis sets a book's analysis status to "to" only while it is
+// one of from (a concurrent pause or resume wins); extra columns are set
+// with it. It reports whether it changed the status.
+func (s *Store) TransitionAnalysis(ctx context.Context, bookID int64, to AnalysisStatus, extra map[string]any,
+	from ...AnalysisStatus,
+) (bool, error) {
+	fields := map[string]any{"analysis_status": to}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	res := s.db.WithContext(ctx).Model(&Book{}).Where("id = ? AND analysis_status IN ?", bookID, from).Updates(fields)
+	return res.RowsAffected == 1, res.Error
+}
+
+// AnalysisBatchParts returns the Parts of all of a book's batches.
+func (s *Store) AnalysisBatchParts(ctx context.Context, bookID int64) ([]string, error) {
+	var parts []string
+	err := s.db.WithContext(ctx).Model(&AnalysisBatch{}).Where("book_id = ?", bookID).Pluck("parts", &parts).Error
+	return parts, err
+}
+
+// LastChapterIdx returns the index of each character's last chapter.
+func (s *Store) LastChapterIdx(ctx context.Context, ids ...int64) (map[int64]int, error) {
+	out := map[int64]int{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		CharacterID int64
+		Last        int
+	}
+	err := s.db.WithContext(ctx).Table("character_chapters cc").
+		Select("cc.character_id, MAX(ch.idx) AS last").
+		Joins("JOIN chapters ch ON ch.id = cc.chapter_id").
+		Where("cc.character_id IN ?", ids).Group("cc.character_id").Scan(&rows).Error
+	for _, r := range rows {
+		out[r.CharacterID] = r.Last
+	}
+	return out, err
+}

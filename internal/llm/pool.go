@@ -122,6 +122,11 @@ func (e *RejectedError) TooLong() bool {
 			return true
 		}
 		body := strings.ToLower(he.Body)
+		// "… (N in the messages, 8192 in the completion)": the requested
+		// output alone may be too much; a smaller input does not help.
+		if strings.Contains(body, "completion") || strings.Contains(body, "max_tokens") {
+			continue
+		}
 		for _, hint := range tooLongHints {
 			if strings.Contains(body, hint) {
 				return true

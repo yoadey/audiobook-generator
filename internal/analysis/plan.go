@@ -34,7 +34,9 @@ type planned struct {
 // plan packs the narrated chapters of a book into batches of about
 // budget tokens: whole chapters where possible, oversized chapters split
 // at paragraph boundaries.
-func plan(ctx context.Context, st *store.Store, bookID int64, budget int) ([]store.AnalysisBatch, error) {
+//
+// Chapters in skip (already planned) are left out.
+func plan(ctx context.Context, st *store.Store, bookID int64, budget int, skip map[int64]bool) ([]store.AnalysisBatch, error) {
 	chapters, _, err := st.ListChapters(ctx, bookID, store.ChapterFilter{}, 0, 1<<30)
 	if err != nil {
 		return nil, err
@@ -48,7 +50,7 @@ func plan(ctx context.Context, st *store.Store, bookID int64, budget int) ([]sto
 		cur = nil
 	}
 	for _, c := range chapters {
-		if c.Excluded {
+		if c.Excluded || skip[c.ID] {
 			continue
 		}
 		t := wordTokens(c.WordCount)
@@ -133,6 +135,9 @@ func load(ctx context.Context, st *store.Store, ps []part) ([]chapterPart, error
 			}
 			return nil, err
 		}
+		if c.Excluded {
+			continue // excluded after planning: not narrated, no quota for it
+		}
 		paras, _, err := st.ChapterText(ctx, p.ChapterID)
 		if err != nil {
 			return nil, err
@@ -211,4 +216,23 @@ func plannedOf(parts []chapterPart) planned {
 		p.tokens += wordTokens(words)
 	}
 	return p
+}
+
+// planned returns the chapters some batch of the book covers.
+func plannedChapters(ctx context.Context, st *store.Store, bookID int64) (map[int64]bool, error) {
+	all, err := st.AnalysisBatchParts(ctx, bookID)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int64]bool{}
+	for _, raw := range all {
+		var ps []part
+		if err := json.Unmarshal([]byte(raw), &ps); err != nil {
+			return nil, err
+		}
+		for _, p := range ps {
+			out[p.ChapterID] = true
+		}
+	}
+	return out, nil
 }

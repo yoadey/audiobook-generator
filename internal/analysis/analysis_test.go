@@ -565,3 +565,47 @@ func TestProgressResetsJobAttempts(t *testing.T) {
 		assert.Equal(t, 1, j.Attempts)
 	})
 }
+
+func TestChaptersIncludedOrExcludedLater(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, chs := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		a.BatchTokens = 40 // a batch per chapter (chapter 3 in two parts)
+		excl := true
+		_, err := s.UpdateChapter(ctx, chs[2].ID, store.ChapterUpdate{Excluded: &excl})
+		require.NoError(t, err)
+		require.NoError(t, a.Start(ctx, b, false))
+		srv.Respond = func(r llmtest.Request) llmtest.Reply {
+			if strings.Contains(userMessage(r), "Pairs (") {
+				return llmtest.Reply{Content: `{"decisions": []}`}
+			}
+			return answer(t, nil)
+		}
+		// Chapter 2 is excluded: not planned, not analysed.
+		covered := 0
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+		for _, r := range srv.Requests() {
+			if strings.Contains(userMessage(r), "Chapter 2 ===") {
+				t.Fatal("excluded chapter 2 was analysed")
+			}
+			if strings.Contains(userMessage(r), "Chapter 1 ===") {
+				covered++
+			}
+		}
+		assert.Equal(t, 1, covered)
+
+		// Chapter 2 included afterwards: a resume analyses just that.
+		incl := false
+		_, err = s.UpdateChapter(ctx, chs[2].ID, store.ChapterUpdate{Excluded: &incl})
+		require.NoError(t, err)
+		before := len(srv.Requests())
+		got, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		require.NoError(t, a.Start(ctx, got, false))
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+		reqs := srv.Requests()[before:]
+		require.Len(t, reqs, 1)
+		assert.Contains(t, userMessage(reqs[0]), "=== [1] Chapter 2 ===")
+	})
+}

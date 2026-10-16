@@ -224,3 +224,20 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: 'llm.providers: duplicate name "a"'
+
+  - it: renders large numbers as plain integers
+    template: templates/deployment.yaml
+    set:
+      llm.analysisBatchTokens: 1000000
+      maxUploadMB: 2000000
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_ANALYSIS_BATCH_TOKENS
+            value: "1000000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_MAX_UPLOAD_MB
+            value: "2000000"

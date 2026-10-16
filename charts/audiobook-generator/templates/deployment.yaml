@@ -55,7 +55,7 @@ spec:
             - name: ABG_DATA_DIR
               value: /data
             - name: ABG_MAX_UPLOAD_MB
-              value: {{ .Values.maxUploadMB | quote }}
+              value: {{ .Values.maxUploadMB | int | quote }}
             - name: ABG_LOG_LEVEL
               value: {{ .Values.log.level | quote }}
             - name: ABG_LOG_FORMAT
@@ -65,7 +65,7 @@ spec:
             - name: ABG_TTS_TIMEOUT
               value: {{ .Values.tts.timeout | quote }}
             - name: ABG_TTS_CONCURRENCY
-              value: {{ .Values.tts.concurrency | quote }}
+              value: {{ .Values.tts.concurrency | int | quote }}
             - name: ABG_TTS_DEFAULT_VOICE
               value: {{ .Values.tts.defaultVoice | quote }}
             - name: ABG_AUDIO_BITRATE

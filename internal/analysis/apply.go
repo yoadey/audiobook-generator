@@ -39,6 +39,7 @@ type batchResult struct {
 type bible struct {
 	chars  map[int64]*store.Character
 	byNorm map[string][]int64 // name and alias norms → characters
+	byName map[string][]int64 // name norms only
 	// words of each name/alias norm, for finding the characters a text
 	// mentions.
 	names map[int64][]string
@@ -53,7 +54,7 @@ func loadBible(ctx context.Context, st *store.Store, bookID int64) (*bible, erro
 	if err != nil {
 		return nil, err
 	}
-	b := &bible{chars: map[int64]*store.Character{}, byNorm: map[string][]int64{}, names: map[int64][]string{}}
+	b := newBible()
 	for i := range cs {
 		b.add(&cs[i])
 	}
@@ -63,9 +64,20 @@ func loadBible(ctx context.Context, st *store.Store, bookID int64) (*bible, erro
 	return b, nil
 }
 
+func newBible() *bible {
+	return &bible{
+		chars: map[int64]*store.Character{}, byNorm: map[string][]int64{},
+		byName: map[string][]int64{}, names: map[int64][]string{},
+	}
+}
+
 func (b *bible) add(c *store.Character) {
 	b.chars[c.ID] = c
-	b.addName(c.ID, store.NormName(c.Name))
+	n := store.NormName(c.Name)
+	if !slices.Contains(b.byName[n], c.ID) {
+		b.byName[n] = append(b.byName[n], c.ID)
+	}
+	b.addName(c.ID, n)
 }
 
 func (b *bible) addName(id int64, norm string) {
@@ -98,7 +110,13 @@ func (b *bible) best(ids []int64) int64 {
 // match finds the known character a reported name refers to: by its full
 // name first, then by its aliases if they all point to one character.
 func (b *bible) match(name string, aliases []string) int64 {
-	if ids := b.byNorm[store.NormName(name)]; len(ids) > 0 {
+	// A description ("the old guard", "Mom") as name only matches a
+	// character of that name, not one that was once called so.
+	index := b.byNorm
+	if !identifying(name) {
+		index = b.byName
+	}
+	if ids := index[store.NormName(name)]; len(ids) > 0 {
 		return b.best(ids)
 	}
 	found := map[int64]bool{}
@@ -138,24 +156,27 @@ var fillers = map[string]bool{
 	"le": true, "van": true, "von": true, "der": true, "den": true, "al": true, "el": true, "bin": true,
 }
 
-// related reports whether a reported name or alias shares a word with the
-// names of character id: a reference to a known character must look like
-// it (models occasionally reuse or invent a wrong id).
+// related reports whether a reported name or alias plausibly refers to
+// character id: one of them equals one of its names, or the reported name
+// starts with the same given name (titles aside). A shared surname is not
+// enough ("Jane Bennet" is not "Elizabeth Bennet"); models occasionally
+// reuse or invent a wrong id.
 func (b *bible) related(id int64, name string, aliases []string) bool {
+	knownFirst := map[string]bool{}
 	known := map[string]bool{}
 	for _, n := range b.names[id] {
-		for _, w := range strings.Fields(n) {
-			known[w] = true
+		known[n] = true
+		if ws := strings.Fields(stripTitles(n)); len(ws) > 0 && !fillers[ws[0]] {
+			knownFirst[ws[0]] = true
 		}
 	}
 	for _, s := range append([]string{name}, aliases...) {
-		for _, w := range strings.Fields(store.NormName(s)) {
-			if known[w] && !titles[w] && !fillers[w] && len(w) >= 3 {
-				return true
-			}
+		if known[store.NormName(s)] {
+			return true
 		}
 	}
-	return false
+	ws := strings.Fields(stripTitles(store.NormName(name)))
+	return len(ws) > 0 && knownFirst[ws[0]]
 }
 
 // relevant lists the known characters a text mentions (all words of a name
@@ -340,10 +361,10 @@ func apply(ctx context.Context, tx *store.Store, bookID int64, b *bible, sent ma
 				return err
 			}
 		}
-		aliases := []string{name}
 		// The aliases of a corrected character are the user's.
+		var aliases []string
 		if !c.UserEdited {
-			aliases = append(aliases, rc.Aliases...)
+			aliases = append([]string{name}, rc.Aliases...)
 		}
 		for i := range aliases {
 			aliases[i] = clip(aliases[i], 120)

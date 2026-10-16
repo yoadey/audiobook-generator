@@ -50,11 +50,12 @@ func TestNameHelpers(t *testing.T) {
 	assert.True(t, properName("[Innkeeper] Erin", "innkeeper erin"))
 	assert.False(t, properName("the girl", "girl"))
 	assert.False(t, properName("Mom", "mom"))
-	assert.False(t, properName("Al", "al"), "too short to be reliable")
+	assert.True(t, properName("Al", "al"))
+	assert.False(t, properName("Ma", "ma"))
 }
 
 func TestRelevantCharacters(t *testing.T) {
-	b := &bible{chars: map[int64]*store.Character{}, byNorm: map[string][]int64{}, names: map[int64][]string{}}
+	b := newBible()
 	b.add(&store.Character{ID: 1, Name: "Erin Solstice", Importance: 5})
 	b.add(&store.Character{ID: 2, Name: "Ryoka Griffin", Importance: 4})
 	b.add(&store.Character{ID: 3, Name: "Pisces", Importance: 3})
@@ -85,7 +86,17 @@ func TestRelevantCharacters(t *testing.T) {
 	assert.False(t, identifying("Mom"))
 	b.add(&store.Character{ID: 6, Name: "Lady of the Lake"})
 	assert.False(t, b.related(6, "Head of Security", nil), "filler words do not relate names")
-	assert.True(t, b.related(6, "The Lady", []string{"Lake Lady"}))
+	assert.True(t, b.related(6, "Lady of the Lake", nil))
+	b.add(&store.Character{ID: 7, Name: "Elizabeth Bennet"})
+	assert.False(t, b.related(7, "Jane Bennet", nil), "a shared surname is not enough")
+	assert.True(t, b.related(7, "Elizabeth", nil))
+	assert.True(t, b.related(7, "Miss Elizabeth Bennet", nil))
+	b.add(&store.Character{ID: 8, Name: "Relc"})
+	b.addName(8, "old guard")
+	assert.Zero(t, b.match("the old guard", nil), "a description as name does not match an alias")
+	assert.EqualValues(t, 8, b.match("Relc", nil))
+	b.add(&store.Character{ID: 9, Name: "Li"})
+	assert.True(t, b.related(9, "Li Wei", nil), "two-letter given names")
 	assert.Zero(t, b.match("Unknown", nil))
 	assert.EqualValues(t, 12, parseRef(" c12 "))
 	assert.Zero(t, parseRef("nope"))

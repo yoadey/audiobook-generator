@@ -252,26 +252,29 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 	if b.AnalysisStatus == store.AnalysisPaused || b.AnalysisStatus == store.AnalysisNone {
 		return nil // paused (or reset) before it started
 	}
-	fields := map[string]any{"AnalysisStatus": store.AnalysisRunning, "AnalysisError": ""}
+	extra := map[string]any{"analysis_error": ""}
 	if b.AnalysisStartedAt == nil {
-		fields["AnalysisStartedAt"] = time.Now().UTC()
+		extra["analysis_started_at"] = time.Now().UTC()
 	}
-	if err := a.Store.UpdateBook(ctx, bookID, fields); err != nil {
-		return err
+	if ok, err := a.Store.TransitionAnalysis(ctx, bookID, store.AnalysisRunning, extra,
+		store.AnalysisQueued, store.AnalysisRunning, store.AnalysisMerging); err != nil || !ok {
+		return err // paused meanwhile
 	}
 
-	stats, err := a.Store.AnalysisStats(ctx, bookID)
+	// Plan the narrated chapters no batch covers yet: all of them at the
+	// start, chapters included later on a resume.
+	covered, err := plannedChapters(ctx, a.Store, bookID)
 	if err != nil {
 		return err
 	}
-	if stats.Total == 0 {
-		batches, err := plan(ctx, a.Store, bookID, a.batchTokens())
-		if err != nil {
-			return err
-		}
-		if len(batches) == 0 {
-			return jobs.Permanent(errors.New("the book has no narrated chapters to analyse"))
-		}
+	batches, err := plan(ctx, a.Store, bookID, a.batchTokens(), covered)
+	if err != nil {
+		return err
+	}
+	if len(batches) == 0 && len(covered) == 0 {
+		return jobs.Permanent(errors.New("the book has no narrated chapters to analyse"))
+	}
+	if len(batches) > 0 {
 		if err := a.Store.CreateAnalysisBatches(ctx, batches); err != nil {
 			return err
 		}
@@ -303,8 +306,9 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 	if paused, err := a.paused(ctx, bookID); err != nil || paused {
 		return err
 	}
-	if err := a.Store.UpdateBook(ctx, bookID, map[string]any{"AnalysisStatus": store.AnalysisMerging}); err != nil {
-		return err
+	if ok, err := a.Store.TransitionAnalysis(ctx, bookID, store.AnalysisMerging, nil,
+		store.AnalysisRunning, store.AnalysisMerging); err != nil || !ok {
+		return err // paused meanwhile
 	}
 	if err := a.mergeDuplicates(ctx, bookID, func(p float64) { progress(0.95 + 0.05*p) }); err != nil {
 		return err
@@ -317,9 +321,9 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 	}
 	now := time.Now().UTC()
 	a.Log.Info("analysis done", "book", bookID)
-	return a.Store.UpdateBook(ctx, bookID, map[string]any{
-		"AnalysisStatus": store.AnalysisDone, "AnalysisFinishedAt": now,
-	})
+	_, err = a.Store.TransitionAnalysis(ctx, bookID, store.AnalysisDone,
+		map[string]any{"analysis_finished_at": now}, store.AnalysisMerging)
+	return err
 }
 
 // paused reports whether the user paused (or reset) the analysis; a
@@ -334,7 +338,11 @@ func (a *Analyzer) paused(ctx context.Context, bookID int64) (bool, error) {
 	case store.AnalysisPaused, store.AnalysisNone:
 		return true, nil
 	case store.AnalysisQueued:
-		return false, a.Store.UpdateBook(ctx, bookID, map[string]any{"AnalysisStatus": store.AnalysisRunning})
+		ok, err := a.Store.TransitionAnalysis(ctx, bookID, store.AnalysisRunning, nil, store.AnalysisQueued)
+		if err != nil || ok {
+			return false, err
+		}
+		return a.paused(ctx, bookID) // changed meanwhile: look again
 	}
 	return false, nil
 }

@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -30,14 +31,15 @@ var generic = map[string]bool{
 	"queen": true, "lord": true, "lady": true, "master": true, "child": true, "kid": true, "stranger": true,
 	"voice": true, "someone": true, "everyone": true, "narrator": true, "doctor": true, "teacher": true,
 	"soldier": true, "boss": true, "brother": true, "sister": true, "old man": true, "old woman": true,
-	"young man": true, "young woman": true, "unknown": true,
+	"young man": true, "young woman": true, "unknown": true, "ma": true, "pa": true, "mr": true,
+	"ms": true, "dr": true, "me": true, "us": true, "he": true, "it": true, "oh": true, "ok": true,
 }
 
 // properName reports whether an alias looks like a personal name: it
 // starts with an upper-case letter and is not a generic term.
 func properName(alias, norm string) bool {
 	r, _ := utf8.DecodeRuneInString(strings.TrimLeft(alias, `"'“‘[(`))
-	return unicode.IsUpper(r) && len(norm) >= 3 && !generic[norm] && !generic[stripTitles(norm)]
+	return unicode.IsUpper(r) && len(norm) >= 2 && !generic[norm] && !generic[stripTitles(norm)]
 }
 
 func stripTitles(norm string) string {
@@ -248,6 +250,14 @@ func (a *Analyzer) mergeRound(ctx context.Context, bookID int64, progress func(f
 		}
 	}
 
+	var ids []int64
+	for _, p := range pairs {
+		ids = append(ids, p.a, p.b)
+	}
+	last, err := a.Store.LastChapterIdx(ctx, ids...)
+	if err != nil {
+		return false, false, err
+	}
 	isDistinct := func(x, y int64) bool { return distinct[[2]int64{min(x, y), max(x, y)}] }
 	group := a.mergeGroupSize()
 	for start := 0; start < len(pairs); start += group {
@@ -265,8 +275,8 @@ func (a *Analyzer) mergeRound(ctx context.Context, bookID int64, progress func(f
 			ask = append(ask, candidate{pa, pb})
 			lines = append(lines, pairLine{
 				ID: fmt.Sprintf("p%d", len(ask)),
-				A:  profile(byID[pa], aliasesOf[pa], a.chapterSpan(ctx, byID[pa])),
-				B:  profile(byID[pb], aliasesOf[pb], a.chapterSpan(ctx, byID[pb])),
+				A:  profile(byID[pa], aliasesOf[pa], chapterSpan(byID[pa], last[pa])),
+				B:  profile(byID[pb], aliasesOf[pb], chapterSpan(byID[pb], last[pb])),
 			})
 		}
 		if len(ask) == 0 {
@@ -278,8 +288,22 @@ func (a *Analyzer) mergeRound(ctx context.Context, bookID int64, progress func(f
 		}
 		req.MaxTokens = 2048
 		var out mergeResult
-		if _, err := a.LLM.CompleteJSON(ctx, req, &out); err != nil {
+		_, err = a.LLM.CompleteJSON(ctx, req, &out)
+		var (
+			rejected *llm.RejectedError
+			tooLarge *llm.TooLargeError
+		)
+		if errors.As(err, &rejected) || errors.As(err, &tooLarge) {
+			// No provider takes this group: leave its pairs undecided
+			// rather than failing the whole analysis.
+			a.Log.Warn("duplicate check request refused, skipping its pairs", "book", bookID, "err", err)
+			continue
+		}
+		if err != nil {
 			return false, false, err
+		}
+		if done, ok := ctx.Value(batchDoneKey{}).(func(context.Context)); ok {
+			done(ctx) // progress: reset the job's attempts
 		}
 		for _, d := range out.Decisions {
 			var n int
@@ -305,6 +329,12 @@ func (a *Analyzer) mergeRound(ctx context.Context, bookID int64, progress func(f
 			ck, cd := byID[keep], byID[drop]
 			switch {
 			case ck.UserEdited && cd.UserEdited:
+				// Both curated by hand: the user decides; do not ask again.
+				if err := a.Store.MarkDistinct(ctx, bookID, pa, pb); err != nil {
+					return false, false, err
+				}
+				distinct[[2]int64{min(pa, pb), max(pa, pb)}] = true
+				asked = true
 				continue
 			case cd.UserEdited:
 				keep, drop = drop, keep
@@ -340,14 +370,11 @@ type pairLine struct{ ID, A, B string }
 
 // chapterSpan describes where a character appears ("chapters 3–40, 12 in
 // total").
-func (a *Analyzer) chapterSpan(ctx context.Context, c *store.Character) string {
+func chapterSpan(c *store.Character, last int) string {
 	if c.ChapterCount == 0 {
 		return "no chapters"
 	}
-	last := c.FirstChapterIdx
-	if chs, err := a.Store.CharacterChapters(ctx, c.ID); err == nil && len(chs) > 0 {
-		last = chs[len(chs)-1].Idx
-	}
+	last = max(last, c.FirstChapterIdx)
 	return fmt.Sprintf("chapters %d–%d, %d in total", c.FirstChapterIdx+1, last+1, c.ChapterCount)
 }
 
