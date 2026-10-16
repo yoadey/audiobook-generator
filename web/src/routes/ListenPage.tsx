@@ -133,15 +133,21 @@ function Player({
   const ready = current?.audioStatus === 'ready';
 
   const audio = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
+  // A chapter without audio plays nothing (its <audio> is gone).
+  const [playingState, setPlaying] = useState(false);
+  const playing = playingState && ready;
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   // The render a playing chapter started with (see the <audio> src).
   const [pinned, setPinned] = useState<{ id: number; version?: string } | null>(null);
   const [rate, setRate] = useState(() => stored(RATE_KEY, '1'));
   const [tab, setTab] = useState(() => stored(TAB_KEY, 'text'));
-  // The chapter the page opened at (where reading stopped is known for it).
-  const [opened, setOpened] = useState<number | null>(startId);
+  // Where reading stopped (the stored position, then the reader's).
+  const [readSeg, setReadSeg] = useState<{ chapter: number; segment: number } | null>(
+    progress.chapterId === startId && progress.segmentId !== undefined
+      ? { chapter: startId, segment: progress.segmentId }
+      : null,
+  );
   const lastSaved = useRef(0);
 
   // The render being played (pinned) and when its segments are spoken.
@@ -150,13 +156,18 @@ function Player({
     ...timingsQuery(currentId, version),
     enabled: ready,
   });
-  const cues = ready ? timings.data?.cues : undefined;
+  // Only the timings of the render being played (the server falls back to
+  // the current one when that render is gone).
+  const cues =
+    ready && timings.data && (!version || timings.data.version === version)
+      ? timings.data.cues
+      : undefined;
   const cuesRef = useRef(cues);
   useEffect(() => {
     cuesRef.current = cues;
   }, [cues]);
 
-  const save = useMutation({
+  const { mutate: saveMutate } = useMutation({
     mutationFn: ({
       chapterId,
       ms,
@@ -176,9 +187,9 @@ function Player({
       const seg =
         segmentId ??
         (chapterId === currentId && cuesRef.current ? segmentAt(cuesRef.current, ms) : undefined);
-      save.mutate({ chapterId, ms, segmentId: seg });
+      saveMutate({ chapterId, ms, segmentId: seg });
     },
-    [save, currentId],
+    [saveMutate, currentId],
   );
 
   const render = useMutation({
@@ -206,7 +217,6 @@ function Player({
       resumeAt.current = null;
       resumeSegment.current = null;
       autoplay.current = play;
-      setOpened(null);
       setPosition(0);
       setDuration(0);
       setCurrentId(c.id);
@@ -273,30 +283,33 @@ function Player({
   const seekTo = useCallback(
     (ms: number) => {
       const a = audio.current;
-      if (!a || !current) return;
+      if (!a) return;
       a.currentTime = ms / 1000;
       setPosition(ms);
-      if (a.paused) persist(current.id, ms);
+      if (a.paused) persist(currentId, ms);
     },
-    [current, persist],
+    [currentId, persist],
   );
   // Reading while paused moves the listening position along.
   const readAt = useCallback(
     (segmentId: number) => {
-      if (!current) return;
       const a = audio.current;
-      const start = cuesRef.current ? startOf(cuesRef.current, segmentId) : undefined;
-      if (a && start !== undefined) {
-        if (!a.paused) return;
+      if (a) {
+        // With audio: only to where a segment is spoken (never to 0
+        // while the timings load).
+        const start = cuesRef.current ? startOf(cuesRef.current, segmentId) : undefined;
+        if (!a.paused || start === undefined) return;
         a.currentTime = start / 1000;
         setPosition(start);
-        persist(current.id, start, segmentId);
+        setReadSeg({ chapter: currentId, segment: segmentId });
+        persist(currentId, start, segmentId);
       } else {
         resumeSegment.current = segmentId;
-        persist(current.id, 0, segmentId);
+        setReadSeg({ chapter: currentId, segment: segmentId });
+        persist(currentId, 0, segmentId);
       }
     },
-    [current, persist],
+    [currentId, persist],
   );
 
   if (!current) {
@@ -498,15 +511,15 @@ function Player({
               chapter={current}
               cues={cues}
               settled={!ready || !timings.isPending}
+              hasAudio={ready}
               positionMs={position}
               playing={playing}
               startSegment={
-                current.id !== opened
-                  ? undefined
-                  : (progress.segmentId ??
-                    (cues && progress.positionMs > 0
-                      ? segmentAt(cues, progress.positionMs)
-                      : undefined))
+                readSeg?.chapter === current.id
+                  ? readSeg.segment
+                  : current.id === startId && cues && progress.positionMs > 0
+                    ? segmentAt(cues, progress.positionMs)
+                    : undefined
               }
               onSeek={seekTo}
               onRead={readAt}

@@ -381,6 +381,15 @@ describe('App', () => {
             confidence: 1,
             speakerManual: false,
           },
+          {
+            id: 204,
+            idx: 3,
+            kind: 'narration',
+            quoteRef: 0,
+            text: '…',
+            confidence: 1,
+            speakerManual: false,
+          },
         ],
       },
     ],
@@ -418,6 +427,12 @@ describe('App', () => {
     await vi.waitFor(async () => {
       const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
       expect(bodies).toContainEqual({ chapterId: 10, positionMs: 1350, segmentId: 202 });
+    });
+    // A segment that is not spoken stands for its spoken neighbour.
+    fireEvent.click(screen.getByText('…'));
+    await vi.waitFor(async () => {
+      const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
+      expect(bodies).toContainEqual({ chapterId: 10, positionMs: 2150, segmentId: 203 });
     });
   });
 

@@ -51,12 +51,14 @@ export function Reader({
   next,
   onNext,
   settled,
+  hasAudio,
 }: {
   chapter: Chapter;
   /** When each segment is spoken (absent without audio). */
   cues?: Cue[];
   /** The timings are loaded, or there are none to wait for. */
   settled: boolean;
+  hasAudio: boolean;
   positionMs: number;
   playing: boolean;
   /** Where reading stopped last time (shown first). */
@@ -75,8 +77,17 @@ export function Reader({
   const [marked, setMarked] = useState<number | undefined>(startSegment);
   // The user (not code) is scrolling.
   const interacted = useRef(false);
+  // Scroll events until then come from a scroll this component started.
+  const ownScrollUntil = useRef(0);
   const readTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const placed = useRef<number | null>(null);
+  // The latest callbacks, so the paragraphs' click handler stays the same
+  // while the position moves (memoised paragraphs re-render only when
+  // their marked segment changes).
+  const handlers = useRef({ onSeek, onRead });
+  useEffect(() => {
+    handlers.current = { onSeek, onRead };
+  }, [onSeek, onRead]);
 
   const active = cues ? segmentAt(cues, positionMs) : marked;
 
@@ -98,11 +109,33 @@ export function Reader({
   }, [text.data]);
   const activeParagraph = active !== undefined ? paragraphOf.get(active) : undefined;
 
+  // A segment that is not spoken (only punctuation) stands for the next
+  // one that is, so a position always has a time in the audio.
+  const spoken = useCallback(
+    (segmentId: number) => {
+      if (!cues) return segmentId;
+      const timed = new Set(cues.map((c) => c.segmentId));
+      const order = (text.data?.paragraphs ?? []).flatMap((p) => p.segments.map((s) => s.id));
+      const i = order.indexOf(segmentId);
+      const after = order.slice(i).find((id) => timed.has(id));
+      return (
+        after ??
+        order
+          .slice(0, i)
+          .reverse()
+          .find((id) => timed.has(id)) ??
+        segmentId
+      );
+    },
+    [cues, text.data],
+  );
+
   const scrollTo = useCallback((segmentId: number, smooth: boolean) => {
     const vp = viewport.current;
     const el = vp?.querySelector<HTMLElement>(`[data-seg="${segmentId}"]`);
     if (!vp || !el) return false;
     interacted.current = false;
+    ownScrollUntil.current = Date.now() + (smooth ? 700 : 100);
     const top = el.getBoundingClientRect().top - vp.getBoundingClientRect().top + vp.scrollTop;
     vp.scrollTo?.({
       top: Math.max(0, top - vp.clientHeight / 3),
@@ -122,7 +155,7 @@ export function Reader({
   // A new chapter starts at the top, or where reading stopped.
   useEffect(() => {
     if (!text.data || !settled || placed.current === chapter.id) return;
-    const target = startSegment ?? active;
+    const target = active ?? startSegment;
     if (target !== undefined ? scrollTo(target, false) : true) {
       if (target === undefined) viewport.current?.scrollTo?.({ top: 0 });
       placed.current = chapter.id;
@@ -137,7 +170,7 @@ export function Reader({
   useEffect(() => () => clearTimeout(readTimer.current), []);
 
   const onScroll = () => {
-    if (!interacted.current) return;
+    if (!interacted.current || Date.now() < ownScrollUntil.current) return;
     if (playing) {
       setFollow(false);
       return;
@@ -149,9 +182,9 @@ export function Reader({
       const top = vp.getBoundingClientRect().top;
       for (const el of vp.querySelectorAll<HTMLElement>('[data-seg]')) {
         if (el.getBoundingClientRect().bottom > top + 4) {
-          const id = Number(el.dataset.seg);
+          const id = spoken(Number(el.dataset.seg));
           setMarked(id);
-          onRead(id);
+          handlers.current.onRead(id);
           return;
         }
       }
@@ -162,17 +195,18 @@ export function Reader({
   };
 
   const select = useCallback(
-    (segmentId: number) => {
+    (clicked: number) => {
+      const segmentId = spoken(clicked);
       const start = cues ? startOf(cues, segmentId) : undefined;
       setFollow(true);
       if (start !== undefined) {
-        onSeek(start);
+        handlers.current.onSeek(start);
       } else {
         setMarked(segmentId);
-        onRead(segmentId);
+        handlers.current.onRead(segmentId);
       }
     },
-    [cues, onSeek, onRead],
+    [cues, spoken],
   );
 
   if (text.isPending) {
@@ -194,7 +228,7 @@ export function Reader({
     <Stack gap={0} pos="relative">
       <Group justify="space-between" px="md" py="xs">
         <Text size="xs" c="dimmed">
-          {cues
+          {hasAudio
             ? 'Click a passage to listen from there; scrolling while paused moves the position.'
             : 'No audio yet; your reading position is kept.'}
         </Text>
@@ -211,14 +245,12 @@ export function Reader({
         h="60vh"
         viewportRef={viewport}
         onScrollPositionChange={onScroll}
-        viewportProps={{
-          onWheel: userScrolls,
-          onTouchMove: userScrolls,
-          onKeyDown: userScrolls,
-          onPointerDown: userScrolls,
-          tabIndex: 0,
-          'aria-label': 'Chapter text',
-        }}
+        // On the root: also the scrollbar (beside the viewport) counts.
+        onWheel={userScrolls}
+        onTouchMove={userScrolls}
+        onKeyDown={userScrolls}
+        onPointerDown={userScrolls}
+        viewportProps={{ tabIndex: 0, 'aria-label': 'Chapter text' }}
       >
         <Stack gap="sm" px="lg" py="md" maw="42em" mx="auto">
           {text.data.paragraphs.map((p) => (

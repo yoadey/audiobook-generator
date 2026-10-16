@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,7 +72,8 @@ func TestExportRestore(t *testing.T) {
 
 		// What an analysis and a user leave behind.
 		anna := &store.Character{BookID: b.ID, Name: "Anna", Gender: store.GenderFemale, Importance: 4,
-			Tier: store.TierMain, VoiceRecipe: "af_bella(2)+af_heart(1)", VoiceManual: true}
+			Tier: store.TierMain, VoiceRecipe: "af_bella(2)+af_heart(1)", VoiceManual: true,
+			PreviewText: strings.Repeat("ä", 600)}
 		require.NoError(t, s.CreateCharacter(ctx, anna, "Annie"))
 		tom := &store.Character{BookID: b.ID, Name: "Tom", Gender: store.GenderMale, Importance: 2}
 		require.NoError(t, s.CreateCharacter(ctx, tom))
@@ -173,6 +175,7 @@ func TestExportRestore(t *testing.T) {
 		require.NotNil(t, na)
 		assert.Equal(t, "af_bella(2)+af_heart(1)", na.VoiceRecipe)
 		assert.True(t, na.VoiceManual)
+		assert.Equal(t, strings.Repeat("ä", 500), na.PreviewText, "cut to the API's bound")
 		assert.Equal(t, store.TierMain, na.Tier)
 		aliases, err := s.CharacterAliases(ctx, na.ID)
 		require.NoError(t, err)

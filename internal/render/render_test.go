@@ -158,7 +158,19 @@ func TestRenderChapter(t *testing.T) {
 		assert.FileExists(t, filepath.Join(dir, second.AudioPath))
 		assert.NoFileExists(t, filepath.Join(dir, first))
 		assert.NoFileExists(t, filepath.Join(dir, render.TimingsPath(first)), "timings go with their audio")
+		// Leftovers of other versions go too (a timings file whose audio
+		// was removed elsewhere, an unfinished write).
+		orphan := render.TimingsPath(render.AudioPath(b.ID, ch1.ID, 5))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, orphan), []byte("{}"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, orphan+".tmp"), []byte("{"), 0o600))
 		assert.FileExists(t, filepath.Join(dir, render.TimingsPath(second.AudioPath)))
+		require.NoError(t, r.Render(ctx, ch1.ID, func(float64) {}))
+		assert.NoFileExists(t, filepath.Join(dir, orphan))
+		assert.NoFileExists(t, filepath.Join(dir, orphan+".tmp"))
+		fourth, err := s.GetChapter(ctx, ch1.ID)
+		require.NoError(t, err)
+		assert.FileExists(t, filepath.Join(dir, render.TimingsPath(fourth.AudioPath)))
+		third = fourth
 		assert.Equal(t, render.VersionPath(b.ID, ch1.ID, render.AudioVersion(third.AudioPath)), third.AudioPath)
 
 		// Chapters without a heading paragraph get their title spoken first

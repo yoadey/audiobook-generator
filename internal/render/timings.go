@@ -137,6 +137,16 @@ func LoadTimings(ctx context.Context, st *store.Store, dataDir string, c *store.
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, "", false, err
 	}
+	if path != c.AudioPath {
+		// An older render without timings: its duration is unknown, so
+		// the current render's timings (path tells which they are).
+		path = c.AudioPath
+		if t, err = ReadTimings(dataDir, path); err == nil {
+			return t, path, true, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, "", false, err
+		}
+	}
 	paras, segs, err := st.ChapterText(ctx, c.ID)
 	if err != nil {
 		return nil, "", false, err

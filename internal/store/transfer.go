@@ -199,6 +199,12 @@ func (r *restorer) table(table string, rows RowReader) error {
 	case TableCharacters:
 		return restoreRows(r, table, rows, func(c *Character) error {
 			c.BookID = r.bookID
+			// The API's bound: a longer sample text fails every preview.
+			if t := []rune(CleanText(c.PreviewText)); len(t) > 500 {
+				c.PreviewText = string(t[:500])
+			} else {
+				c.PreviewText = string(t)
+			}
 			return nil
 		})
 	case TableChapters:

@@ -85,6 +85,16 @@ func TestLoadTimings(t *testing.T) {
 			assert.Len(t, tm.Cues, 8)
 		}
 
+		// An older render without timings gets the current render's
+		// (its own duration is unknown), named by the path.
+		older := render.AudioPath(b.ID, ch.ID, 0)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, older), []byte("audio"), 0o600))
+		v0 := render.AudioVersion(older)
+		_, path, exact, err = render.LoadTimings(ctx, s, dir, c, &v0)
+		require.NoError(t, err)
+		assert.False(t, exact)
+		assert.Equal(t, cur, path)
+
 		require.NoError(t, render.RemoveAudio(dir, old))
 		assert.NoFileExists(t, filepath.Join(dir, old))
 		assert.NoFileExists(t, filepath.Join(dir, render.TimingsPath(old)))

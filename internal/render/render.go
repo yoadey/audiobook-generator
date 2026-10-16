@@ -106,17 +106,23 @@ func AudioVersion(path string) string {
 	return ""
 }
 
-// keepVersions removes a chapter's older audio files, keeping the current
-// one and the one it replaced (a listener may still stream that).
+// keepVersions removes a chapter's older audio files and their timings
+// (also leftovers of either), keeping the current version and the one it
+// replaced (a listener may still stream that).
 func (r *Renderer) keepVersions(bookID, chapterID int64, keep ...string) {
 	dir := filepath.Join(r.DataDir, importer.BookDir(bookID), "audio")
-	files, _ := filepath.Glob(filepath.Join(dir, strconv.FormatInt(chapterID, 10)+"-*.m4a"))
+	files, _ := filepath.Glob(filepath.Join(dir, strconv.FormatInt(chapterID, 10)+"-*"))
 	for _, f := range files {
 		rel, err := filepath.Rel(r.DataDir, f)
-		if err != nil || slices.Contains(keep, rel) {
+		if err != nil {
 			continue
 		}
-		if err := RemoveAudio(r.DataDir, rel); err != nil {
+		// The audio file a file belongs to: x.m4a, x.json, x.json.tmp.
+		base, _, _ := strings.Cut(filepath.Base(rel), ".")
+		if slices.Contains(keep, filepath.Join(filepath.Dir(rel), base+".m4a")) {
+			continue
+		}
+		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
 			r.Log.Warn("remove old audio", "chapter", chapterID, "err", err)
 		}
 	}

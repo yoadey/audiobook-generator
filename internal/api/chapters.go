@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/yoadey/audiobook-generator/internal/render"
@@ -86,16 +85,6 @@ func (s *Server) removeRenderCache(ctx context.Context, chapterIDs ...int64) {
 		if err := os.RemoveAll(render.CacheDir(s.DataDir, id)); err != nil {
 			s.Log.WarnContext(ctx, "remove render cache", "chapter", id, "err", err)
 		}
-	}
-}
-
-// removeFile deletes a file below the data dir (no-op for "").
-func (s *Server) removeFile(ctx context.Context, rel string) {
-	if rel == "" {
-		return
-	}
-	if err := os.Remove(filepath.Join(s.DataDir, rel)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		s.Log.WarnContext(ctx, "remove file", "path", rel, "err", err)
 	}
 }
 
@@ -291,7 +280,11 @@ func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithN
 		return nil, err
 	}
 	s.dropAudio(ctx, c.ID)
-	s.removeFile(ctx, nextAudio)
+	if nextAudio != "" {
+		if err := render.RemoveAudio(s.DataDir, nextAudio); err != nil {
+			s.Log.WarnContext(ctx, "remove audio", "path", nextAudio, "err", err)
+		}
+	}
 	if nextID != 0 {
 		s.removeRenderCache(ctx, nextID)
 	}
