@@ -70,6 +70,22 @@ spec:
               value: {{ .Values.tts.defaultVoice | quote }}
             - name: ABG_AUDIO_BITRATE
               value: {{ .Values.audioBitrate | quote }}
+            {{- with .Values.publicUrl }}
+            - name: ABG_PUBLIC_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.feed.enabled }}
+            - name: ABG_FEED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.feed.existingSecret }}
+                  name: {{ .Values.feed.existingSecret }}
+                  key: {{ .Values.feed.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "abg.appSecretName" . }}
+                  key: feed-secret
+                  {{- end }}
+            {{- end }}
             {{- include "abg.databaseEnv" . | nindent 12 }}
             {{- include "abg.llmEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}

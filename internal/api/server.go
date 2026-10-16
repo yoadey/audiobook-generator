@@ -43,7 +43,9 @@ type Options struct {
 	DefaultVoice   string
 	DataDir        string
 	MaxUploadBytes int64
-	Log            *slog.Logger
+	// FeedSecret signs podcast feed URLs; empty disables them.
+	FeedSecret []byte
+	Log        *slog.Logger
 }
 
 // Server implements StrictServerInterface.

@@ -73,6 +73,10 @@ app.kubernetes.io/component: kokoro
 {{- include "abg.fullname" . }}
 {{- end }}
 
+{{- define "abg.appSecretName" -}}
+{{- printf "%s-app" (include "abg.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{/* TTS base URL. */}}
 {{- define "abg.ttsUrl" -}}
 {{- if .Values.tts.kokoro.enabled }}
@@ -110,6 +114,11 @@ true
 {{- fail (printf "llm.providers: duplicate name %q" $p.name) }}
 {{- end }}
 {{- $_ := set $names $p.name true }}
+{{- end }}
+{{- with .Values.publicUrl }}
+{{- if not (regexMatch "^https?://[^/]+" .) }}
+{{- fail (printf "publicUrl must be an http(s) URL, got %q" .) }}
+{{- end }}
 {{- end }}
 {{- if and (not .Values.tts.kokoro.enabled) (not .Values.tts.externalUrl) }}
 {{- fail "tts.externalUrl is required when tts.kokoro.enabled=false" }}

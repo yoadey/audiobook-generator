@@ -1304,6 +1304,9 @@ components:
           description: Share of analysed batches (0..1) once the analysis is planned
         castingStatus:
           $ref: "#/components/schemas/CastingStatus"
+        feedPath:
+          type: string
+          description: Path of the book's podcast feed (absent when feeds are disabled); works without a login, so treat it like a password
         createdAt:
           type: string
           format: date-time

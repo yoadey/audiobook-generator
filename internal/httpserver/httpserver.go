@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -22,6 +23,8 @@ type Pinger interface {
 type Options struct {
 	// API registers the API routes on the mux.
 	API interface{ Register(*http.ServeMux) }
+	// Feed registers the podcast feed routes (optional).
+	Feed interface{ Register(*http.ServeMux) }
 	// Ready is checked by /readyz. Only the database: the UI must stay
 	// reachable while the TTS server restarts or loads its model.
 	Ready    Pinger
@@ -34,6 +37,9 @@ type Options struct {
 func Handler(o Options) http.Handler {
 	mux := http.NewServeMux()
 	o.API.Register(mux)
+	if o.Feed != nil {
+		o.Feed.Register(mux)
+	}
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -78,12 +84,16 @@ func instrument(next http.Handler, reg *prometheus.Registry, log *slog.Logger) h
 		elapsed := time.Since(start)
 		duration.WithLabelValues(route, strconv.Itoa(rec.status)).Observe(elapsed.Seconds())
 
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/feed/") {
+			path = "/feed/…" // the token works like a password
+		}
 		level := slog.LevelDebug
 		if rec.status >= 500 {
 			level = slog.LevelWarn
 		}
 		log.Log(r.Context(), level, "http request",
-			"method", r.Method, "path", r.URL.Path, "route", route,
+			"method", r.Method, "path", path, "route", route,
 			"status", rec.status, "duration", elapsed)
 	})
 }

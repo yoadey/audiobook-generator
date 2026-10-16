@@ -1,10 +1,13 @@
 import {
+  ActionIcon,
   Alert,
   Breadcrumbs,
   Button,
   Center,
+  CopyButton,
   Group,
   Loader,
+  Popover,
   Progress,
   SegmentedControl,
   Select,
@@ -12,10 +15,14 @@ import {
   Text,
   TextInput,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import {
+  IconCheck,
+  IconCopy,
   IconHeadphones,
+  IconRss,
   IconSearch,
   IconSpeakerphone,
   IconTrash,
@@ -42,6 +49,46 @@ import { formatListeningTime, formatNumber } from '../lib/format';
 import { notifyError, notifySuccess } from '../lib/notify';
 
 type Filter = 'all' | 'narrated' | 'excluded';
+
+/** The podcast feed URL, to subscribe in any podcast app. */
+function FeedButton({ path }: { path: string }) {
+  const url = new URL(path, window.location.origin).href;
+  return (
+    <Popover width={420} position="bottom-end" withArrow shadow="md">
+      <Popover.Target>
+        <Button variant="default" leftSection={<IconRss size={16} />}>
+          Podcast
+        </Button>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="xs">
+          <Text size="sm">
+            Subscribe in a podcast app to hear the rendered chapters. The link works without a
+            login: share it only with people who may listen.
+          </Text>
+          <Group gap="xs" wrap="nowrap">
+            <TextInput
+              aria-label="Feed URL"
+              value={url}
+              readOnly
+              flex={1}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <CopyButton value={url}>
+              {({ copied, copy }) => (
+                <Tooltip label={copied ? 'Copied' : 'Copy'}>
+                  <ActionIcon variant="default" size="lg" aria-label="Copy feed URL" onClick={copy}>
+                    {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </CopyButton>
+          </Group>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
 
 export function BookPage() {
   const { bookId: raw } = useParams({ from: '/books/$bookId/' });
@@ -145,6 +192,7 @@ export function BookPage() {
               >
                 Render next 10
               </Button>
+              {b.feedPath && <FeedButton path={b.feedPath} />}
               <ButtonLink
                 variant="default"
                 to="/books/$bookId/lexicon"

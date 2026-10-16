@@ -642,7 +642,10 @@ type Book struct {
 	CreatedAt        time.Time      `json:"createdAt"`
 
 	// Error Why the import failed
-	Error    *string `json:"error,omitempty"`
+	Error *string `json:"error,omitempty"`
+
+	// FeedPath Path of the book's podcast feed (absent when feeds are disabled); works without a login, so treat it like a password
+	FeedPath *string `json:"feedPath,omitempty"`
 	HasCover bool    `json:"hasCover"`
 	Id       int64   `json:"id"`
 	Language string  `json:"language"`

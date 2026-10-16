@@ -914,6 +914,19 @@ describe('App', () => {
     expect(await screen.findByText(/waits until/)).toBeInTheDocument();
   });
 
+  it('shows the podcast feed URL', async () => {
+    stubApi({
+      '/api/books/1': { ...book, feedPath: '/feed/tok/1.xml' },
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: [], total: 0 },
+    });
+    renderAt('/books/1');
+    fireEvent.click(await screen.findByRole('button', { name: 'Podcast' }));
+    expect(await screen.findByLabelText('Feed URL')).toHaveValue(
+      'http://localhost:3000/feed/tok/1.xml',
+    );
+  });
+
   it('lists, adds and previews pronunciations', async () => {
     const fetch = stubApi({
       '/api/books/1': book,

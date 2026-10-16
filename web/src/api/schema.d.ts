@@ -723,6 +723,8 @@ export interface components {
       /** @description Share of analysed batches (0..1) once the analysis is planned */
       analysisProgress?: number;
       castingStatus: components['schemas']['CastingStatus'];
+      /** @description Path of the book's podcast feed (absent when feeds are disabled); works without a login, so treat it like a password */
+      feedPath?: string;
       /** Format: date-time */
       createdAt: string;
       /** Format: date-time */

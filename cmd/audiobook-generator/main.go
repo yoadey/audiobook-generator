@@ -23,6 +23,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
 	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/config"
+	"github.com/yoadey/audiobook-generator/internal/feed"
 	"github.com/yoadey/audiobook-generator/internal/httpserver"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
@@ -147,8 +148,13 @@ func run() error {
 				DefaultVoice:   cfg.TTS.DefaultVoice,
 				DataDir:        cfg.DataDir,
 				MaxUploadBytes: cfg.MaxUploadMB << 20,
+				FeedSecret:     []byte(cfg.FeedSecret),
 				Log:            log,
 			}),
+			Feed: &feed.Handler{
+				Store: st, Secret: []byte(cfg.FeedSecret), PublicURL: cfg.PublicURL,
+				DataDir: cfg.DataDir, Log: log,
+			},
 			Ready:    st,
 			WebUI:    webui.Handler(),
 			Registry: reg,

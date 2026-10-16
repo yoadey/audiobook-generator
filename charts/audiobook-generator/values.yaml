@@ -78,6 +78,21 @@ ingress:
   #    hosts:
   #      - audiobooks.example.com
 
+# External URL of the service (https://audiobooks.example.com), used in
+# podcast feeds. Empty: taken from each request; behind a TLS-terminating
+# proxy that needs X-Forwarded-Proto: https.
+publicUrl: ""
+
+# Podcast RSS feed per book. Feed URLs carry a token instead of needing a
+# login, so podcast apps can subscribe; anyone with the URL can listen.
+feed:
+  enabled: true
+  # Secret holding the token key (at least 16 characters). Empty: the chart
+  # generates one and keeps it across upgrades. Changing the key
+  # invalidates every feed URL.
+  existingSecret: ""
+  existingSecretKey: feed-secret
+
 # Data volume: uploaded EPUBs, rendered audio and, in SQLite mode, the
 # database file. A single huge book needs ~10-20 GB of audio.
 persistence:

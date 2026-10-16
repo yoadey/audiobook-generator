@@ -38,6 +38,13 @@ type Config struct {
 	// AudioBitrate of the AAC chapter files.
 	AudioBitrate string `env:"AUDIO_BITRATE" envDefault:"64k"`
 
+	// PublicURL is the external base URL ("https://audiobooks.example.org")
+	// used in podcast feeds; empty takes it from each request.
+	PublicURL string `env:"PUBLIC_URL"`
+	// FeedSecret signs the podcast feed URLs (which work without a login);
+	// empty disables the feeds. Changing it invalidates every feed URL.
+	FeedSecret string `env:"FEED_SECRET"`
+
 	DB  Database `envPrefix:"DB_"`
 	TTS TTS      `envPrefix:"TTS_"`
 	LLM LLM      `envPrefix:"LLM_"`
@@ -126,6 +133,14 @@ func (c Config) Validate() error {
 	}
 	if _, err := url.ParseRequestURI(c.TTS.URL); err != nil {
 		errs = append(errs, fmt.Errorf("ABG_TTS_URL: %w", err))
+	}
+	if c.PublicURL != "" {
+		if u, err := url.Parse(c.PublicURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("ABG_PUBLIC_URL must be an http(s) URL, got %q", c.PublicURL))
+		}
+	}
+	if c.FeedSecret != "" && len(c.FeedSecret) < 16 {
+		errs = append(errs, errors.New("ABG_FEED_SECRET must be at least 16 characters"))
 	}
 	if c.TTS.Concurrency < 1 {
 		errs = append(errs, fmt.Errorf("ABG_TTS_CONCURRENCY must be at least 1, got %d", c.TTS.Concurrency))

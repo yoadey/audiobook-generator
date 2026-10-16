@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yoadey/audiobook-generator/internal/feed"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -35,6 +36,7 @@ func (s *Server) toBook(b *store.Book) Book {
 		HasCover:       b.CoverPath != "",
 		AnalysisStatus: AnalysisStatus(cmp.Or(b.AnalysisStatus, store.AnalysisNone)),
 		CastingStatus:  CastingStatus(cmp.Or(b.CastingStatus, store.CastingNone)),
+		FeedPath:       nonEmpty(feed.Path(s.FeedSecret, b.ID)),
 		CreatedAt:      b.CreatedAt,
 		UpdatedAt:      b.UpdatedAt,
 	}

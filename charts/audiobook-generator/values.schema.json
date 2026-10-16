@@ -132,6 +132,26 @@
     "extraEnv": {
       "$ref": "#/definitions/array"
     },
+    "publicUrl": {
+      "type": "string",
+      "description": "External URL used in podcast feeds; empty derives it from each request"
+    },
+    "feed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "existingSecretKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "service": {
       "type": "object",
       "additionalProperties": false,
