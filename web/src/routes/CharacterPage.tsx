@@ -34,6 +34,7 @@ import {
   updateCharacter,
 } from '../api/client';
 import { AnchorLink } from '../components/links';
+import { VoiceEditor } from '../components/VoiceEditor';
 import { formatNumber } from '../lib/format';
 import { notifyError, notifySuccess } from '../lib/notify';
 
@@ -277,6 +278,7 @@ export function CharacterPage() {
           <Group gap="xs">
             <Title order={2}>{c.name}</Title>
             {c.speaks && <Badge variant="light">speaks</Badge>}
+            {c.tier === 'main' && <Badge variant="light">main character</Badge>}
             {c.userEdited && (
               <Badge variant="outline" color="gray">
                 edited
@@ -334,6 +336,7 @@ export function CharacterPage() {
       </Group>
 
       <ProfileForm key={JSON.stringify(c)} character={c} onSaved={() => void invalidate()} />
+      <VoiceEditor key={JSON.stringify(c)} character={c} onSaved={() => void invalidate()} />
 
       <Card withBorder>
         <Text fw={600} mb="xs">

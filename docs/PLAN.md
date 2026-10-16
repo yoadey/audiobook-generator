@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-15 · Status: **M0–M4 implemented** (usable single-voice audiobook, LLM layer, character bible), M5 next
+Last updated: 2026-10-16 · Status: **M0–M5 implemented** (usable single-voice audiobook, LLM layer, character bible, voice casting), M6 next
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -239,6 +239,41 @@ As implemented in M4 (`internal/analysis`):
 - Every character can be promoted/demoted in the UI and its recipe edited
   freely; previews use a **real quote of that character**.
 - Unknown speakers ("a guard") → generic pool voice by gender.
+
+As implemented in M5 (`internal/casting`):
+
+- The catalogue (`internal/casting/voices.json`: the 28 English Kokoro
+  voices with gender, accent, model-card grade and a timbre hint) is merged
+  with the server's `/v1/audio/voices` (cached 5 min): catalogue voices the
+  server lacks are unavailable, server-only voices are described from their
+  IDs. Casting only uses available English voices.
+- One `cast_book` job per book on the `llm` queue, started automatically
+  when the analysis finishes (and by hand). The `casting.mainCharacters`
+  (50) most important speaking characters become main characters unless
+  their tier was chosen by hand. Main characters without a voice are sent
+  to the `cast_voices` prompt in groups of 8, most important first, with
+  the catalogue, the narrator and the voices already taken.
+- Code checks every proposal: unknown or wrong-gender base voices are
+  dropped, weights normalized, speed clamped to 0.85–1.15. The distance
+  between two voices is the share of blend weight they do not have in
+  common plus their speed difference; a recipe must be ≥ 0.6 from the
+  narrator and ≥ 0.3 from every other recipe. A proposal that fails is
+  replaced by the fitting blend closest to it (singles, 50/50 and 70/30
+  pairs of fitting voices); without a usable answer (refused, invalid) the
+  best-graded fitting blend is taken. The reason is stored with the voice.
+- Minor characters have no stored voice: a pool voice (a single base voice
+  of their gender, suited to their age where the catalogue says so, not a
+  main part of the narrator's voice, at an age-dependent speed) is picked
+  by hashing the character ID, so it stays the same.
+- Tiers and voices chosen in the UI are flags (`TierManual`,
+  `VoiceManual`) the casting never overrides; "Recast all" resets only
+  automatic ones. Promoting a character (or resetting its voice) queues a
+  casting for it; a gender change drops an automatic recipe. The casting
+  view warns about main characters that sound like the narrator (after a
+  narrator change) or like each other.
+- Previews use a real quote: until speaker attribution exists, a quote in
+  a paragraph whose narration names the character next to a speech verb
+  ("said Erin"). Previews are cached in memory (LRU, 32 MB).
 
 ### 3.6 Speaker attribution (per chapter, just in time)
 

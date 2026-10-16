@@ -10,6 +10,7 @@ import {
   Pagination,
   Radio,
   Rating,
+  SegmentedControl,
   Select,
   Stack,
   Table,
@@ -32,8 +33,12 @@ import {
   charactersQuery,
   type CharacterSort,
   mergeCharacters,
+  quotesQuery,
+  type Tier,
 } from '../api/client';
 import { AnchorLink } from '../components/links';
+import { VoicePreviewButton } from '../components/VoicePreviewButton';
+import { usePreview } from '../lib/preview';
 import { formatNumber } from '../lib/format';
 import { notifyError, notifySuccess } from '../lib/notify';
 
@@ -47,6 +52,29 @@ const sorts: { value: CharacterSort; label: string }[] = [
 ];
 
 const genderLabel: Record<Character['gender'], string> = { female: 'f', male: 'm', unknown: '?' };
+
+type TierFilter = 'all' | Tier;
+
+/** The voice a character speaks with, as a short line. */
+function VoiceLabel({ c }: { c: Character }) {
+  return (
+    <Stack gap={0}>
+      <Text size="sm" ff="monospace" lineClamp={1}>
+        {c.voice || '—'}
+        {c.voiceSpeed !== 1 && ` · ${c.voiceSpeed.toFixed(2)}×`}
+      </Text>
+      <Text size="xs" c="dimmed">
+        {c.voiceSource === 'own'
+          ? c.voiceManual
+            ? 'chosen by you'
+            : 'cast'
+          : c.voiceSource === 'pool'
+            ? `pool voice (${genderLabel[c.gender]}, ${c.ageGroup})`
+            : 'narrator (no fitting voice)'}
+      </Text>
+    </Stack>
+  );
+}
 
 function MergeForm({
   selected,
@@ -93,7 +121,16 @@ export function CharactersPage() {
   const [sort, setSort] = useState<CharacterSort>('importance');
   const [pageNo, setPage] = useState(1);
   const [selected, setSelected] = useState<Map<number, Character>>(new Map());
-  const chars = useQuery(charactersQuery(bookId, debounced, sort, pageNo, PAGE_SIZE));
+  const [tier, setTier] = useState<TierFilter>('all');
+  const chars = useQuery(
+    charactersQuery(bookId, debounced, sort, pageNo, PAGE_SIZE, tier === 'all' ? undefined : tier),
+  );
+  const preview = usePreview();
+  // A real quote of the character, if one is found.
+  const sample = (id: number) => async () => {
+    const qs = await queryClient.fetchQuery(quotesQuery(id));
+    return qs.length > 0 ? qs[Math.floor(Math.random() * qs.length)]?.text : undefined;
+  };
 
   const busy =
     analysis.data?.status === 'queued' ||
@@ -176,6 +213,19 @@ export function CharactersPage() {
           w={200}
           aria-label="Sort"
         />
+        <SegmentedControl
+          value={tier}
+          onChange={(v) => {
+            setTier(v as TierFilter);
+            setPage(1);
+          }}
+          data={[
+            { value: 'all', label: 'All' },
+            { value: 'main', label: 'Main' },
+            { value: 'minor', label: 'Minor' },
+          ]}
+          aria-label="Tier"
+        />
         {selected.size >= 2 && (
           <Button
             leftSection={<IconGitMerge size={16} />}
@@ -233,6 +283,8 @@ export function CharactersPage() {
               <Table.Th>Role</Table.Th>
               <Table.Th>Importance</Table.Th>
               <Table.Th ta="right">Chapters</Table.Th>
+              <Table.Th>Voice</Table.Th>
+              <Table.Th w={40} />
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -258,6 +310,11 @@ export function CharactersPage() {
                       <Tooltip label="Speaks">
                         <IconMessage size={14} aria-label="speaks" />
                       </Tooltip>
+                    )}
+                    {c.tier === 'main' && (
+                      <Badge size="xs" variant="light">
+                        main
+                      </Badge>
                     )}
                     {c.userEdited && (
                       <Badge size="xs" variant="outline" color="gray">
@@ -285,6 +342,19 @@ export function CharactersPage() {
                   <Rating value={c.importance} count={5} readOnly size="xs" />
                 </Table.Td>
                 <Table.Td ta="right">{formatNumber(c.chapterCount)}</Table.Td>
+                <Table.Td>
+                  <VoiceLabel c={c} />
+                </Table.Td>
+                <Table.Td>
+                  <VoicePreviewButton
+                    id={String(c.id)}
+                    voice={c.voice}
+                    speed={c.voiceSpeed}
+                    text={sample(c.id)}
+                    preview={preview}
+                    label={`Listen to ${c.name}`}
+                  />
+                </Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>

@@ -126,4 +126,17 @@ characters="$(curl -fsS "localhost:18080/api/books/$id/characters")"
 echo "$characters"
 grep -q '"name":"Anna"' <<<"$characters"
 grep -q '"name":"Tom"' <<<"$characters"
+
+# The finished analysis casts voices for the speaking characters.
+for _ in $(seq 1 60); do
+  casting="$(curl -fsS "localhost:18080/api/books/$id/casting")"
+  grep -qE '"status":"(done|failed)"' <<<"$casting" && break
+  sleep 1
+done
+echo "$casting"
+grep -q '"status":"done"' <<<"$casting"
+grep -q '"voicedCount":2' <<<"$casting"
+mains="$(curl -fsS "localhost:18080/api/books/$id/characters?tier=main")"
+echo "$mains"
+grep -q '"voiceSource":"own"' <<<"$mains"
 echo "e2e ($db) passed"

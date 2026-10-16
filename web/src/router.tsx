@@ -17,6 +17,7 @@ import { ListenPage } from './routes/ListenPage';
 import { NotFound } from './routes/NotFound';
 import { SettingsPage } from './routes/SettingsPage';
 import { SystemPage } from './routes/SystemPage';
+import { VoicesPage } from './routes/VoicesPage';
 
 const rootRoute = createRootRoute({
   component: Layout,
@@ -89,6 +90,12 @@ const systemRoute = createRoute({
   component: SystemPage,
 });
 
+const voicesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/voices',
+  component: VoicesPage,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -105,6 +112,7 @@ const routeTree = rootRoute.addChildren([
     listenRoute,
   ]),
   jobsRoute,
+  voicesRoute,
   settingsRoute,
   systemRoute,
 ]);

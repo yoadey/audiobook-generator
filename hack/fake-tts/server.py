@@ -8,8 +8,9 @@ response_format gets a WAV file.
 
 LLM (OpenAI-compatible): GET /v1/models and POST /v1/chat/completions, which
 answers the app's provider test prompt correctly, the character analysis
-with everyone who "said" something, merge checks with "different", and
-anything else with "{}". When FAKE_LLM_KEY is set, requests must carry it
+with everyone who "said" something, merge checks with "different", voice
+casting with the first offered voice for everyone (code then makes the
+voices distinct), and anything else with "{}". When FAKE_LLM_KEY is set, requests must carry it
 as bearer token.
 """
 
@@ -65,6 +66,17 @@ def analyse(text: str) -> str:
     })
 
 
+def cast(text: str) -> str:
+    """Voice casting: the first listed base voice for every character."""
+    voice = re.search(r"^(\w{2}_\w+) \|", text, flags=re.M)
+    refs = re.findall(r"^(c\d+) \|", text, flags=re.M)
+    return json.dumps({"voices": [
+        {"ref": r, "parts": [{"voice": voice[1] if voice else "af_heart", "weight": 1}],
+         "speed": 1.0, "reason": "fake"}
+        for r in refs
+    ]})
+
+
 def chat_answer(req: dict) -> str:
     """Answers the app's prompts (see the module docstring)."""
     for m in reversed(req.get("messages", [])):
@@ -75,6 +87,8 @@ def chat_answer(req: dict) -> str:
             return json.dumps({"sum": int(add[1]) + int(add[2]), "echo": word[1]})
         if text.startswith("Pairs ("):
             return json.dumps({"decisions": []})
+        if text.startswith("Base voices"):
+            return cast(text)
         if "Chapters (" in text:
             return analyse(text)
     return "{}"

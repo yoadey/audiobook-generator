@@ -45,6 +45,7 @@ const book = {
   narratorSpeed: 1,
   lookahead: 3,
   analysisStatus: 'none',
+  castingStatus: 'none',
   createdAt: '2026-10-15T00:00:00Z',
   updatedAt: '2026-10-15T00:00:00Z',
 };
@@ -76,6 +77,64 @@ const erin = {
   chapterCount: 812,
   firstChapterIdx: 0,
   userEdited: false,
+  tier: 'main',
+  tierManual: false,
+  voice: 'bf_emma(0.7)+af_bella(0.3)',
+  voiceSpeed: 1,
+  voiceSource: 'own',
+  voiceManual: false,
+  voiceNote: 'warm and British',
+};
+
+const voices = [
+  {
+    id: 'af_heart',
+    language: 'en-US',
+    gender: 'female',
+    grade: 'A',
+    traits: 'warm',
+    available: true,
+    inCatalog: true,
+  },
+  {
+    id: 'af_bella',
+    language: 'en-US',
+    gender: 'female',
+    grade: 'A-',
+    traits: 'bright',
+    available: true,
+    inCatalog: true,
+  },
+  {
+    id: 'bf_emma',
+    language: 'en-GB',
+    gender: 'female',
+    grade: 'B-',
+    traits: 'refined',
+    available: true,
+    inCatalog: true,
+  },
+  {
+    id: 'am_adam',
+    language: 'en-US',
+    gender: 'male',
+    grade: 'F+',
+    traits: 'flat',
+    available: false,
+    inCatalog: true,
+  },
+];
+
+const castingBase = {
+  status: 'done',
+  mainCount: 40,
+  minorCount: 300,
+  voicedCount: 40,
+  mainLimit: 50,
+  narratorVoice: 'af_heart',
+  narratorSpeed: 1,
+  prompt: 'cast_voices@v1',
+  warnings: [],
 };
 
 const chapters = [
@@ -600,6 +659,131 @@ describe('App', () => {
       speechStyle: 'brisk',
       aliases: ['Erin', 'the Innkeeper'],
     });
+  });
+
+  it('shows the casting with voices that are hard to tell apart', async () => {
+    const fetch = stubApi({
+      '/api/books/1': { ...book, analysisStatus: 'done', castingStatus: 'done' },
+      '/api/books/1/analysis': { ...analysisBase, status: 'done', characterCount: 340 },
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: chapters, total: 2 },
+      '/api/voices': voices,
+      '/api/books/1/casting': {
+        ...castingBase,
+        warnings: [
+          { kind: 'narrator', characterId: 7, characterName: 'Erin Solstice', distance: 0.3 },
+          {
+            kind: 'similar',
+            characterId: 8,
+            characterName: 'Lyonette',
+            otherId: 7,
+            otherName: 'Erin Solstice',
+            distance: 0.1,
+          },
+        ],
+      },
+      'POST /api/books/1/casting': { ...castingBase, status: 'queued' },
+    });
+    renderAt('/books/1');
+    const card = await screen.findByTestId('casting-card');
+    expect(
+      within(card).getByText('40 of 40 main characters voiced · 300 with pool voices'),
+    ).toBeInTheDocument();
+    expect(within(card).getByText('sounds like the narrator')).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: 'Lyonette' })).toHaveAttribute(
+      'href',
+      '/books/1/characters/8',
+    );
+    fireEvent.click(within(card).getByRole('button', { name: 'Recast all' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Recast' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'POST')).toBe(
+        true,
+      ),
+    );
+    const post = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'POST')!;
+    expect(await (post[0] as Request).json()).toEqual({ restart: true });
+  });
+
+  it('shows voices in the character list and filters by tier', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/analysis': { ...analysisBase, status: 'done', characterCount: 2 },
+      'GET /api/books/1/characters': {
+        items: [
+          erin,
+          {
+            ...erin,
+            id: 8,
+            name: 'Guard',
+            aliases: [],
+            tier: 'minor',
+            gender: 'male',
+            voice: 'am_michael',
+            voiceSpeed: 0.92,
+            voiceSource: 'pool',
+            ageGroup: 'elderly',
+          },
+        ],
+        total: 2,
+      },
+    });
+    renderAt('/books/1/characters');
+    expect(await screen.findByText('bf_emma(0.7)+af_bella(0.3)')).toBeInTheDocument();
+    expect(screen.getByText('cast')).toBeInTheDocument();
+    expect(screen.getByText('am_michael · 0.92×')).toBeInTheDocument();
+    expect(screen.getByText('pool voice (m, elderly)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Listen to Guard' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('radio', { name: 'Main' }));
+    await vi.waitFor(() =>
+      expect(
+        fetch.mock.calls.some(
+          ([r]) => typeof r !== 'string' && new URL(r.url).searchParams.get('tier') === 'main',
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it('edits the voice of a character', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/voices': voices,
+      'GET /api/characters/7': { ...erin, chapters: [] },
+      'GET /api/characters/7/quotes': [
+        { text: '“Welcome to the inn!”', chapterId: 10, chapterIdx: 0, chapterTitle: 'Chapter 1' },
+      ],
+      'PATCH /api/characters/7': { ...erin, chapters: [] },
+    });
+    renderAt('/books/1/characters/7');
+    const editor = await screen.findByTestId('voice-editor');
+    expect(await within(editor).findByText('“Welcome to the inn!”')).toBeInTheDocument();
+    expect(within(editor).getByText('Cast automatically: warm and British')).toBeInTheDocument();
+    const save = within(editor).getByRole('button', { name: 'Save voice' });
+    expect(save).toBeDisabled();
+    fireEvent.click(within(editor).getByRole('button', { name: 'Remove af_bella' }));
+    expect(within(editor).getByText('bf_emma')).toBeInTheDocument();
+    fireEvent.click(within(editor).getByRole('radio', { name: 'Main' }));
+    fireEvent.click(save);
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PATCH')).toBe(
+        true,
+      ),
+    );
+    const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
+    expect(await (patch[0] as Request).json()).toEqual({
+      tier: 'main',
+      voice: 'bf_emma',
+      voiceSpeed: 1,
+    });
+  });
+
+  it('lists the voice catalogue', async () => {
+    stubApi({ '/api/voices': voices });
+    renderAt('/voices');
+    expect(await screen.findByText('refined')).toBeInTheDocument();
+    expect(screen.getByText('not on the server')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Listen to af_heart' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Listen to am_adam' })).toBeDisabled();
   });
 
   it('shows when a deferred job runs again', async () => {

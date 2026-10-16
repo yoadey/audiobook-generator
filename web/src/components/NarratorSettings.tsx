@@ -30,14 +30,14 @@ export function NarratorSettings({ book }: { book: Book }) {
   const [playing, setPlaying] = useState(false);
   const audio = useRef<HTMLAudioElement | null>(null);
 
-  const english = (voices.data ?? []).filter((v) => v.language in accents);
+  const english = (voices.data ?? []).filter((v) => v.language in accents && v.available);
   const groups = Object.entries(accents).map(([lang, label]) => ({
     group: label,
     items: english
       .filter((v) => v.language === lang)
       .map((v) => ({
         value: v.id,
-        label: `${v.id} · ${v.gender}${v.grade ? ` · grade ${v.grade}` : ''}`,
+        label: `${v.id} · ${v.gender}${v.grade ? ` · grade ${v.grade}` : ''}${v.traits ? ` · ${v.traits}` : ''}`,
       })),
   }));
   const isMix = !english.some((v) => v.id === voice);

@@ -12,6 +12,7 @@ import { useDisclosure } from '@mantine/hooks';
 import {
   IconBooks,
   IconListCheck,
+  IconMicrophone,
   IconMoon,
   IconServer,
   IconSettings,
@@ -22,6 +23,7 @@ import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 const navItems = [
   { to: '/library', label: 'Library', icon: IconBooks },
   { to: '/jobs', label: 'Jobs', icon: IconListCheck },
+  { to: '/voices', label: 'Voices', icon: IconMicrophone },
   { to: '/settings', label: 'Settings', icon: IconSettings },
   { to: '/system', label: 'System', icon: IconServer },
 ] as const;

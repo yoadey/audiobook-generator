@@ -7,6 +7,9 @@ export type Analysis = components['schemas']['Analysis'];
 export type AnalysisStatus = components['schemas']['AnalysisStatus'];
 export type AudioStatus = components['schemas']['AudioStatus'];
 export type Book = components['schemas']['Book'];
+export type Casting = components['schemas']['Casting'];
+export type CastingStatus = components['schemas']['CastingStatus'];
+export type CastingWarning = components['schemas']['CastingWarning'];
 export type BookUpdate = components['schemas']['BookUpdate'];
 export type BookPage = components['schemas']['BookPage'];
 export type Chapter = components['schemas']['Chapter'];
@@ -23,8 +26,10 @@ export type LLMModelsRequest = components['schemas']['LLMModelsRequest'];
 export type LLMTestResult = components['schemas']['LLMTestResult'];
 export type Paragraph = components['schemas']['Paragraph'];
 export type Progress = components['schemas']['Progress'];
+export type Quote = components['schemas']['Quote'];
 export type Segment = components['schemas']['Segment'];
 export type SystemInfo = components['schemas']['SystemInfo'];
+export type Tier = components['schemas']['Tier'];
 export type Voice = components['schemas']['Voice'];
 export type Volume = components['schemas']['Volume'];
 
@@ -55,6 +60,7 @@ async function unwrap<T>(
 const POLL_MS = 2000;
 
 const analysisActive = (s?: AnalysisStatus) => s === 'queued' || s === 'running' || s === 'merging';
+export const castingActive = (s?: CastingStatus) => s === 'queued' || s === 'running';
 
 // --- Queries -----------------------------------------------------------------
 
@@ -150,9 +156,10 @@ export const charactersQuery = (
   sort: CharacterSort,
   page: number,
   pageSize = 50,
+  tier?: Tier,
 ) =>
   queryOptions({
-    queryKey: ['books', bookId, 'characters', { search, sort, page }],
+    queryKey: ['books', bookId, 'characters', { search, sort, page, tier }],
     queryFn: () =>
       unwrap(
         api.GET('/books/{bookId}/characters', {
@@ -161,6 +168,7 @@ export const charactersQuery = (
             query: {
               search: search || undefined,
               sort,
+              tier,
               offset: (page - 1) * pageSize,
               limit: pageSize,
             },
@@ -168,6 +176,25 @@ export const charactersQuery = (
         }),
       ),
     placeholderData: (prev) => prev,
+  });
+
+export const castingQuery = (bookId: number) =>
+  queryOptions({
+    queryKey: ['books', bookId, 'casting'],
+    queryFn: () => unwrap(api.GET('/books/{bookId}/casting', { params: { path: { bookId } } })),
+    refetchInterval: (q) => (castingActive(q.state.data?.status) ? 3000 : false),
+  });
+
+export const quotesQuery = (characterId: number) =>
+  queryOptions({
+    queryKey: ['characters', characterId, 'quotes'],
+    queryFn: () =>
+      unwrap(
+        api.GET('/characters/{characterId}/quotes', {
+          params: { path: { characterId }, query: { limit: 10 } },
+        }),
+      ),
+    staleTime: 10 * 60_000,
   });
 
 export const characterQuery = (characterId: number) =>
@@ -282,6 +309,9 @@ export const listLLMModels = (body: LLMModelsRequest) => unwrap(api.POST('/llm/m
 
 export const startAnalysis = (bookId: number, restart = false) =>
   unwrap(api.POST('/books/{bookId}/analysis', { params: { path: { bookId } }, body: { restart } }));
+
+export const startCasting = (bookId: number, restart = false) =>
+  unwrap(api.POST('/books/{bookId}/casting', { params: { path: { bookId } }, body: { restart } }));
 
 export const pauseAnalysis = (bookId: number) =>
   unwrap(api.POST('/books/{bookId}/analysis/pause', { params: { path: { bookId } } }));

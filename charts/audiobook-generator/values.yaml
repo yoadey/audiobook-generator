@@ -160,6 +160,12 @@ tts:
       limits:
         memory: 4Gi
 
+casting:
+  # How many speaking characters (the most important ones) get a voice
+  # recipe of their own; everyone else speaks with a pool voice by gender
+  # and age.
+  mainCharacters: 50
+
 llm:
   # How long a request waits for a provider's per-minute window before it
   # falls back to the next provider.
