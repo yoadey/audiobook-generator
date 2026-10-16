@@ -43,6 +43,13 @@ func TestLexicon(t *testing.T) {
 
 		require.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/books/"+id+"/lexicon",
 			map[string]any{"term": "ANNA", "replacement": "x"}, nil))
+		// Case is folded beyond ASCII on both databases.
+		var emile api.LexiconEntry
+		require.Equal(t, http.StatusCreated, c.json(http.MethodPost, "/api/books/"+id+"/lexicon",
+			map[string]any{"term": "Émile", "replacement": "Ay-meel"}, &emile))
+		require.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/books/"+id+"/lexicon",
+			map[string]any{"term": "éMILE", "replacement": "x"}, nil))
+		require.Equal(t, http.StatusNoContent, c.json(http.MethodDelete, "/api/lexicon/"+itoa(emile.Id), nil, nil))
 		for _, bad := range []map[string]any{
 			{"term": "!!", "replacement": "x"}, {"term": "Tom", "replacement": "[x]"},
 			{"term": "Tom", "replacement": "t/o/m", "phonemes": true}, {"term": "Tom", "replacement": " "},

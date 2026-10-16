@@ -18,6 +18,10 @@ spec:
   template:
     metadata:
       {{- $annotations := deepCopy .Values.podAnnotations }}
+      {{- if .Values.backup.litestream.enabled }}
+      {{- /* The config is mounted with subPath, which never updates in place. */}}
+      {{- $_ := set $annotations "checksum/litestream" (include (print $.Template.BasePath "/litestream.yaml") . | sha256sum) }}
+      {{- end }}
       {{- if include "abg.ownsPostgresSecret" . }}
       {{- $_ := set $annotations "checksum/secret" (include (print $.Template.BasePath "/secret.yaml") . | sha256sum) }}
       {{- end }}
@@ -52,6 +56,26 @@ spec:
           image: "{{ $ls.image.repository }}:{{ $ls.image.tag }}"
           imagePullPolicy: {{ $ls.image.pullPolicy }}
           args: [restore, -if-db-not-exists, -if-replica-exists, -config, /etc/litestream.yml, /data/audiobook-generator.db]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            {{- include "abg.litestreamEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml $ls.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: litestream
+              mountPath: /etc/litestream.yml
+              subPath: litestream.yml
+        # Streams every change of the SQLite database to S3. A native
+        # sidecar (Kubernetes 1.29+): it starts before the app and stops
+        # after it, so the app's last writes are replicated too.
+        - name: litestream
+          image: "{{ $ls.image.repository }}:{{ $ls.image.tag }}"
+          imagePullPolicy: {{ $ls.image.pullPolicy }}
+          restartPolicy: Always
+          args: [replicate, -config, /etc/litestream.yml]
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           env:
@@ -146,26 +170,6 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
-        {{- if .Values.backup.litestream.enabled }}
-        {{- $ls := .Values.backup.litestream }}
-        # Streams every change of the SQLite database to S3.
-        - name: litestream
-          image: "{{ $ls.image.repository }}:{{ $ls.image.tag }}"
-          imagePullPolicy: {{ $ls.image.pullPolicy }}
-          args: [replicate, -config, /etc/litestream.yml]
-          securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
-          env:
-            {{- include "abg.litestreamEnv" . | nindent 12 }}
-          resources:
-            {{- toYaml $ls.resources | nindent 12 }}
-          volumeMounts:
-            - name: data
-              mountPath: /data
-            - name: litestream
-              mountPath: /etc/litestream.yml
-              subPath: litestream.yml
-        {{- end }}
       volumes:
         {{- if .Values.backup.litestream.enabled }}
         - name: litestream

@@ -14,6 +14,7 @@ tests:
 
   - it: configures OIDC with generated session key and a client secret
     set:
+      publicUrl: https://abg.example.com
       auth.oidc.enabled: true
       auth.oidc.issuer: https://id.example.com
       auth.oidc.clientId: abg
@@ -43,6 +44,7 @@ tests:
 
   - it: uses a public client and an existing session key
     set:
+      publicUrl: https://abg.example.com
       auth.oidc.enabled: true
       auth.oidc.issuer: https://id.example.com
       auth.oidc.clientId: abg
@@ -64,8 +66,18 @@ tests:
 
   - it: requires an issuer
     set:
+      publicUrl: https://abg.example.com
       auth.oidc.enabled: true
       auth.oidc.clientId: abg
     asserts:
       - failedTemplate:
           errorMessage: auth.oidc.issuer must be an http(s) URL when auth.oidc.enabled
+
+  - it: requires the public URL
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://id.example.com
+      auth.oidc.clientId: abg
+    asserts:
+      - failedTemplate:
+          errorMessage: publicUrl is required when auth.oidc.enabled

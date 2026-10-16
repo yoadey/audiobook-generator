@@ -185,6 +185,13 @@ func TestAssemble(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, store.DownloadQueued, dl.Status)
 
+		// A listener wanting such a chapter moves it up the queue.
+		_, err = sched.RenderChapter(ctx, b, &cs[1], false)
+		require.NoError(t, err)
+		j1, err := s.PendingRenderJob(ctx, render.JobType, cs[1].ID)
+		require.NoError(t, err)
+		assert.Greater(t, j1.Priority, 100)
+
 		// Rendered: one file with a marker per chapter.
 		for _, c := range cs[1:3] {
 			j, _ := s.PendingRenderJob(ctx, render.JobType, c.ID)
@@ -258,6 +265,17 @@ func TestAssembleFailures(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, store.DownloadFailed, dl.Status)
 		assert.Contains(t, dl.Error, "TTS down")
+
+		// Starting again tries the failed chapter again.
+		require.NoError(t, a.Start(ctx, b.ID, vol))
+		retry, err := s.PendingRenderJob(ctx, render.JobType, cs[3].ID)
+		require.NoError(t, err)
+		require.NotNil(t, retry)
+		require.NoError(t, s.FinishJob(ctx, retry.ID))
+		pending, err = a.Pending(ctx, b.ID)
+		require.NoError(t, err)
+		job = pending[vol]
+		require.NotNil(t, job)
 
 		// Outdated audio whose re-render failed is used as it is.
 		renderFake(t, s, ff, dir, b, cs[3], 1, 800)

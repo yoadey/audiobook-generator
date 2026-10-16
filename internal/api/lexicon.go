@@ -3,10 +3,8 @@ package api
 import (
 	"context"
 	"errors"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
+	"github.com/yoadey/audiobook-generator/internal/lexicon"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
@@ -14,22 +12,11 @@ func toLexiconEntry(e *store.LexiconEntry) LexiconEntry {
 	return LexiconEntry{Id: e.ID, BookId: e.BookID, Term: e.Term, Replacement: e.Replacement, Phonemes: e.IsPhonemes}
 }
 
-// validateLexicon checks an entry; phonemes go into Kokoro's
-// "[word](/phonemes/)" notation, so they must not contain its brackets,
-// and a text replacement must not start one.
+// validateLexicon normalizes and checks an entry ("" when valid).
 func validateLexicon(e *store.LexiconEntry) string {
-	e.Term, e.Replacement = strings.Join(strings.Fields(e.Term), " "), strings.TrimSpace(e.Replacement)
-	switch {
-	case e.Term == "" || utf8.RuneCountInString(e.Term) > 100:
-		return "term must have 1 to 100 characters"
-	case strings.IndexFunc(e.Term, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0:
-		return "term must contain letters or digits"
-	case e.Replacement == "" || utf8.RuneCountInString(e.Replacement) > 200:
-		return "replacement must have 1 to 200 characters"
-	case e.IsPhonemes && strings.ContainsAny(e.Replacement, "[]()/"):
-		return "phonemes must not contain [ ] ( ) or /"
-	case !e.IsPhonemes && strings.ContainsAny(e.Replacement, "[]"):
-		return "replacement must not contain [ or ]"
+	e.Term, e.Replacement = lexicon.Normalize(e.Term, e.Replacement)
+	if err := lexicon.Validate(e.Term, e.Replacement, e.IsPhonemes); err != nil {
+		return err.Error()
 	}
 	return ""
 }
@@ -64,14 +51,15 @@ func (s *Server) CreateLexiconEntry(ctx context.Context, req CreateLexiconEntryR
 	if msg := validateLexicon(e); msg != "" {
 		return CreateLexiconEntry400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 	}
+	if err := s.touchTerms(ctx, e.BookID, e.Term); err != nil {
+		return nil, err
+	}
 	if err := s.Store.SaveLexiconEntry(ctx, e); errors.Is(err, store.ErrConflict) {
 		return CreateLexiconEntry409JSONResponse{Message: err.Error()}, nil
 	} else if err != nil {
 		return nil, err
 	}
-	if err := s.Store.TouchTermChapters(ctx, e.BookID, e.Term); err != nil {
-		return nil, err
-	}
+	s.touchTermsAgain(ctx, e.BookID, e.Term)
 	return CreateLexiconEntry201JSONResponse(toLexiconEntry(e)), nil
 }
 
@@ -96,14 +84,15 @@ func (s *Server) UpdateLexiconEntry(ctx context.Context, req UpdateLexiconEntryR
 	if msg := validateLexicon(e); msg != "" {
 		return UpdateLexiconEntry400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 	}
+	if err := s.touchTerms(ctx, e.BookID, oldTerm, e.Term); err != nil {
+		return nil, err
+	}
 	if err := s.Store.SaveLexiconEntry(ctx, e); errors.Is(err, store.ErrConflict) {
 		return UpdateLexiconEntry409JSONResponse{Message: err.Error()}, nil
 	} else if err != nil {
 		return nil, err
 	}
-	if err := s.Store.TouchTermChapters(ctx, e.BookID, oldTerm, e.Term); err != nil {
-		return nil, err
-	}
+	s.touchTermsAgain(ctx, e.BookID, oldTerm, e.Term)
 	return UpdateLexiconEntry200JSONResponse(toLexiconEntry(e)), nil
 }
 
@@ -115,11 +104,35 @@ func (s *Server) DeleteLexiconEntry(ctx context.Context, req DeleteLexiconEntryR
 	} else if err != nil {
 		return nil, err
 	}
+	if err := s.touchTerms(ctx, e.BookID, e.Term); err != nil {
+		return nil, err
+	}
 	if err := s.Store.DeleteLexiconEntry(ctx, e.ID); err != nil && !isNotFound(err) {
 		return nil, err
 	}
-	if err := s.Store.TouchTermChapters(ctx, e.BookID, e.Term); err != nil {
-		return nil, err
-	}
+	s.touchTermsAgain(ctx, e.BookID, e.Term)
 	return DeleteLexiconEntry204Response{}, nil
+}
+
+// touchTerms outdates the chapters that speak one of the terms. Changes
+// call it before writing the entry (a failure changes nothing, so a retry
+// works) and again after it (touchTermsAgain): a render that started in
+// between used the old pronunciation with the new revision.
+func (s *Server) touchTerms(ctx context.Context, bookID int64, terms ...string) error {
+	var es []store.LexiconEntry
+	for _, t := range terms {
+		// A replacement no text contains, so any match changes the text.
+		es = append(es, store.LexiconEntry{Term: t, Replacement: "\x00"})
+	}
+	l := lexicon.Compile(es)
+	if l == nil {
+		return nil
+	}
+	return s.Store.TouchMatchingChapters(ctx, bookID, l.Matches)
+}
+
+func (s *Server) touchTermsAgain(ctx context.Context, bookID int64, terms ...string) {
+	if err := s.touchTerms(ctx, bookID, terms...); err != nil {
+		s.Log.ErrorContext(ctx, "outdate chapters after a lexicon change", "book", bookID, "err", err)
+	}
 }

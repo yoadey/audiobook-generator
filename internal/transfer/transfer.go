@@ -12,6 +12,7 @@ package transfer
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/lexicon"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
@@ -135,7 +137,18 @@ func ReadHeader(zipPath string) (*Header, error) {
 	return readHeader(&zr.Reader)
 }
 
+// Limits on what an export may contain (it is user input): an export has
+// a dozen entries; a row is one JSON line.
+const (
+	maxEntries   = 64
+	maxEntrySize = 8 << 30
+	maxRowSize   = 32 << 20
+)
+
 func readHeader(zr *zip.Reader) (*Header, error) {
+	if len(zr.File) > maxEntries {
+		return nil, fmt.Errorf("%w: too many files", ErrNotExport)
+	}
 	f := find(zr, headerFile)
 	if f == nil {
 		return nil, ErrNotExport
@@ -197,19 +210,53 @@ func (r *Restorer) Handler() jobs.Handler {
 	}
 }
 
-// jsonl reads rows of one table.
+// jsonl reads rows of one table, one JSON object per line. Lines are
+// bounded, so a crafted export cannot make a single row exhaust memory.
 type jsonl struct {
-	dec *json.Decoder
+	r *bufio.Reader
+	// keep, when set, drops rows it returns false for.
+	keep func(row any) bool
 }
 
 func (l *jsonl) Next(dst any) (bool, error) {
-	if !l.dec.More() {
-		return false, nil
+	for {
+		line, err := l.line()
+		if err != nil || line == nil {
+			return false, err
+		}
+		if err := json.Unmarshal(line, dst); err != nil {
+			return false, jobs.Permanent(fmt.Errorf("invalid row: %w", err))
+		}
+		if l.keep == nil || l.keep(dst) {
+			return true, nil
+		}
 	}
-	if err := l.dec.Decode(dst); err != nil {
-		return false, err
+}
+
+// line returns the next non-empty line (nil at the end).
+func (l *jsonl) line() ([]byte, error) {
+	var buf []byte
+	for {
+		chunk, err := l.r.ReadSlice('\n')
+		buf = append(buf, chunk...)
+		if len(buf) > maxRowSize {
+			return nil, jobs.Permanent(fmt.Errorf("a row is larger than %d MiB", maxRowSize>>20))
+		}
+		switch {
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF) || err == nil:
+			if t := bytes.TrimSpace(buf); len(t) > 0 {
+				return t, nil
+			}
+			if err != nil {
+				return nil, nil
+			}
+			buf = buf[:0]
+		default:
+			return nil, err
+		}
 	}
-	return true, nil
 }
 
 // Restore fills book bookID from its uploaded export. It is idempotent: a
@@ -217,6 +264,13 @@ func (l *jsonl) Next(dst any) (bool, error) {
 func (r *Restorer) Restore(ctx context.Context, bookID int64, progress func(float64)) error {
 	src := filepath.Join(r.DataDir, RestorePath(bookID))
 	zr, err := zip.OpenReader(src)
+	if errors.Is(err, os.ErrNotExist) {
+		// Removed after a finished restore (a crash before the job was
+		// marked done brings it here again).
+		if b, gerr := r.Store.GetBook(ctx, bookID); gerr == nil && b.Status != store.BookImporting {
+			return nil
+		}
+	}
 	if err != nil {
 		return jobs.Permanent(fmt.Errorf("open export: %w", err))
 	}
@@ -248,14 +302,14 @@ func (r *Restorer) Restore(ctx context.Context, bookID int64, progress func(floa
 			return nil, err
 		}
 		open = rc
-		return &jsonl{dec: json.NewDecoder(bufio.NewReaderSize(rc, 1<<16))}, nil
+		rows := &jsonl{r: bufio.NewReaderSize(io.LimitReader(rc, maxEntrySize), 1<<16)}
+		if table == store.TableLexicon {
+			rows.keep = validLexiconRow
+		}
+		return rows, nil
 	})
 	closeOpen()
 	if err != nil {
-		var syn *json.SyntaxError
-		if errors.As(err, &syn) {
-			return jobs.Permanent(err)
-		}
 		return err
 	}
 
@@ -268,14 +322,17 @@ func (r *Restorer) Restore(ctx context.Context, bookID int64, progress func(floa
 		}
 		fields["EpubPath"] = rel
 	}
-	for _, f := range zr.File {
-		if ext := path.Ext(f.Name); strings.TrimSuffix(f.Name, ext) == coverFile && h.Book.CoverPath != "" &&
-			validCoverExt(ext) {
-			rel := filepath.Join(importer.BookDir(bookID), coverFile+ext)
-			if err := extract(f, filepath.Join(r.DataDir, rel)); err != nil {
-				return err
-			}
-			fields["CoverPath"], fields["CoverMediaType"] = rel, h.Book.CoverMediaType
+	if f := coverEntry(&zr.Reader); f != nil && h.Book.CoverPath != "" {
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		rel, mediaType, err := importer.SaveCover(r.DataDir, bookID, rc)
+		_ = rc.Close()
+		if err != nil {
+			r.Log.Warn("restore cover", "book", bookID, "err", err) // the book works without
+		} else {
+			fields["CoverPath"], fields["CoverMediaType"] = rel, mediaType
 		}
 	}
 	if err := r.Store.UpdateBook(ctx, bookID, fields); err != nil {
@@ -289,12 +346,34 @@ func (r *Restorer) Restore(ctx context.Context, bookID int64, progress func(floa
 	return nil
 }
 
-func validCoverExt(ext string) bool {
-	switch strings.ToLower(ext) {
-	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg":
-		return true
+// coverEntry returns the export's cover (its type is taken from the
+// content, not from the name or the header).
+func coverEntry(zr *zip.Reader) *zip.File {
+	for _, f := range zr.File {
+		if strings.TrimSuffix(f.Name, path.Ext(f.Name)) == coverFile {
+			return f
+		}
 	}
-	return false
+	return nil
+}
+
+var (
+	knownAnalysis = map[store.AnalysisStatus]bool{
+		store.AnalysisNone: true, store.AnalysisPaused: true, store.AnalysisDone: true, store.AnalysisFailed: true,
+	}
+	knownCasting = map[store.CastingStatus]bool{
+		store.CastingNone: true, store.CastingDone: true, store.CastingFailed: true,
+	}
+)
+
+// validLexiconRow keeps the pronunciations the API would accept.
+func validLexiconRow(row any) bool {
+	e, ok := row.(*store.LexiconEntry)
+	if !ok {
+		return false
+	}
+	e.Term, e.Replacement = lexicon.Normalize(e.Term, e.Replacement)
+	return lexicon.Validate(e.Term, e.Replacement, e.IsPhonemes) == nil
 }
 
 // restoredBook returns the book's restored settings and states. Work that
@@ -318,13 +397,20 @@ func restoredBook(b *store.Book) map[string]any {
 		casting = store.CastingNone
 	}
 	speed := b.NarratorSpeed
-	if speed <= 0 {
+	if speed < 0.5 || speed > 2 {
 		speed = 1
+	}
+	lookahead := min(max(b.Lookahead, 0), 50) // the API's bounds
+	if !knownAnalysis[analysis] {
+		analysis = store.AnalysisNone
+	}
+	if !knownCasting[casting] {
+		casting = store.CastingNone
 	}
 	return map[string]any{
 		"Title": b.Title, "Author": b.Author, "Language": b.Language, "QuoteStyle": b.QuoteStyle,
 		"WordCount": b.WordCount, "ChapterCount": b.ChapterCount,
-		"NarratorVoice": b.NarratorVoice, "NarratorSpeed": speed, "Lookahead": b.Lookahead,
+		"NarratorVoice": b.NarratorVoice, "NarratorSpeed": speed, "Lookahead": lookahead,
 		"AnalysisStatus": analysis, "AnalysisError": b.AnalysisError,
 		"AnalysisStartedAt": b.AnalysisStartedAt, "AnalysisFinishedAt": b.AnalysisFinishedAt,
 		"CastingStatus": casting, "CastingError": b.CastingError, "CastingFinishedAt": b.CastingFinishedAt,

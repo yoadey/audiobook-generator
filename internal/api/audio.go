@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/yoadey/audiobook-generator/internal/assemble"
 	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/auth"
 	"github.com/yoadey/audiobook-generator/internal/casting"
@@ -342,6 +344,14 @@ func (s *Server) CancelJob(ctx context.Context, req CancelJobRequestObject) (Can
 		}
 		if err := s.Store.SetAudioStatus(ctx, status, "", *j.ChapterID); err != nil {
 			return nil, err
+		}
+	}
+	if j.Type == assemble.JobType && j.BookID != nil {
+		if volumeID, err := strconv.ParseInt(j.Payload, 10, 64); err == nil {
+			if err := s.Store.SetDownloadStatus(ctx, *j.BookID, volumeID, store.DownloadFailed, "canceled"); err != nil &&
+				!isNotFound(err) {
+				return nil, err
+			}
 		}
 	}
 	j, err = s.Store.GetJob(ctx, j.ID)

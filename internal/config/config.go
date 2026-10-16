@@ -163,6 +163,9 @@ func (c Config) Validate() error {
 		if u, err := url.Parse(c.OIDC.Issuer); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			errs = append(errs, fmt.Errorf("ABG_OIDC_ISSUER must be an http(s) URL, got %q", c.OIDC.Issuer))
 		}
+		if c.PublicURL == "" {
+			errs = append(errs, errors.New("ABG_PUBLIC_URL is required with ABG_OIDC_ISSUER (redirect URI, secure cookies)"))
+		}
 		if c.OIDC.ClientID == "" {
 			errs = append(errs, errors.New("ABG_OIDC_CLIENT_ID is required with ABG_OIDC_ISSUER"))
 		}

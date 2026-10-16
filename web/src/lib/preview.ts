@@ -39,16 +39,25 @@ export function usePreview(bookId?: number) {
 
   useEffect(() => stop, [stop]);
 
-  /** Plays voice at speed; id names the preview for `playing`/`loading`. */
+  /**
+   * Plays voice at speed; id names the preview for `playing`/`loading`.
+   * lexicon false skips the book's lexicon (text already spells it out).
+   */
   const play = useCallback(
-    async (id: string, voice: string, speed: number, text?: PreviewText) => {
+    async (id: string, voice: string, speed: number, text?: PreviewText, lexicon = true) => {
       stop();
       const ctrl = new AbortController();
       request.current = ctrl;
       setLoading(id);
       try {
         const sample = typeof text === 'function' ? await text(ctrl.signal) : text;
-        const u = await previewVoice(voice, speed, sample, ctrl.signal, bookId);
+        const u = await previewVoice(
+          voice,
+          speed,
+          sample,
+          ctrl.signal,
+          lexicon ? bookId : undefined,
+        );
         if (ctrl.signal.aborted) {
           URL.revokeObjectURL(u);
           return;

@@ -118,7 +118,7 @@ func Parts(b *store.Book, chapters []store.Chapter, vols []store.VolumeStats) []
 func SourceKey(p *Part) string {
 	h := sha256.New()
 	for _, c := range p.Chapters {
-		_, _ = fmt.Fprintf(h, "%d:%s\n", c.ID, c.AudioPath)
+		_, _ = fmt.Fprintf(h, "%d:%s:%s\n", c.ID, c.AudioPath, c.Title)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
@@ -150,9 +150,18 @@ func (a *Assembler) load(ctx context.Context, bookID, volumeID int64) (*store.Bo
 }
 
 // Start queues the download of a volume unless it is already pending.
+// Chapters whose rendering failed are tried again.
 func (a *Assembler) Start(ctx context.Context, bookID, volumeID int64) error {
-	if _, _, err := a.load(ctx, bookID, volumeID); err != nil {
+	b, part, err := a.load(ctx, bookID, volumeID)
+	if err != nil {
 		return err
+	}
+	for i := range part.Chapters {
+		if c := &part.Chapters[i]; c.AudioPath == "" && c.AudioStatus == store.AudioFailed {
+			if _, err := a.Scheduler.RenderBackground(ctx, b, c); err != nil {
+				return err
+			}
+		}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

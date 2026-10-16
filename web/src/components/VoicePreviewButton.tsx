@@ -11,6 +11,8 @@ export function VoicePreviewButton({
   text,
   preview,
   label = 'Listen',
+  lexicon = true,
+  disabled = false,
 }: {
   id: string;
   voice: string;
@@ -18,6 +20,9 @@ export function VoicePreviewButton({
   text?: PreviewText;
   preview: ReturnType<typeof usePreview>;
   label?: string;
+  /** false: the text is spoken as is, without the book's lexicon. */
+  lexicon?: boolean;
+  disabled?: boolean;
 }) {
   // Stop also cancels a preview that is still being synthesized.
   const active = preview.playing === id || preview.loading === id;
@@ -26,8 +31,10 @@ export function VoicePreviewButton({
       <ActionIcon
         variant="subtle"
         aria-label={active ? 'Stop preview' : label}
-        disabled={!voice}
-        onClick={() => (active ? preview.stop() : void preview.play(id, voice, speed, text))}
+        disabled={!voice || (disabled && !active)}
+        onClick={() =>
+          active ? preview.stop() : void preview.play(id, voice, speed, text, lexicon)
+        }
       >
         {preview.loading === id ? (
           <Loader size={14} />

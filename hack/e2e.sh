@@ -69,8 +69,10 @@ info="$(curl -fsS localhost:18080/api/system)"
 echo "$info"
 grep -q "\"dialect\":\"$db\"" <<<"$info"
 grep -q '"reachable":true' <<<"$info"
-curl -fsS localhost:18080/api/books | grep -q '"total":0'
-curl -fsS localhost:18080/library | grep -q '<div id="root">'
+books="$(curl -fsS localhost:18080/api/books)"
+grep -q '"total":0' <<<"$books"
+page="$(curl -fsS localhost:18080/library)"
+grep -q '<div id="root">' <<<"$page"
 
 # Upload the sample EPUB and wait for its import.
 book="$(curl -fsS -F "file=@$root/hack/testdata/sample.epub" localhost:18080/api/books)"
@@ -168,7 +170,7 @@ grep -q '<enclosure' <<<"$rss"
 volume="$(curl -fsS "localhost:18080/api/books/$id/downloads" |
   python3 -c 'import sys, json; print(json.load(sys.stdin)[0]["volumeId"])')"
 curl -fsS -X POST "localhost:18080/api/books/$id/downloads/$volume" >/dev/null
-for _ in $(seq 1 120); do
+for _ in $(seq 1 240); do
   downloads="$(curl -fsS "localhost:18080/api/books/$id/downloads")"
   grep -q '"status":"ready"' <<<"$downloads" && break
   grep -q '"status":"failed"' <<<"$downloads" && break
@@ -191,6 +193,7 @@ for _ in $(seq 1 60); do
 done
 echo "$book"
 grep -q '"status":"imported"' <<<"$book"
-curl -fsS "localhost:18080/api/books/$restored/characters?tier=main" | grep -q '"voiceSource":"own"'
+mains="$(curl -fsS "localhost:18080/api/books/$restored/characters?tier=main")"
+grep -q '"voiceSource":"own"' <<<"$mains"
 
 echo "e2e ($db) passed"

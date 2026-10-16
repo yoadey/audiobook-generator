@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { IconBook2, IconBooks, IconFileImport, IconUpload } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { type Book, booksQuery, coverUrl, importBook, uploadBook } from '../api/client';
 import { formatListeningTime, formatNumber } from '../lib/format';
@@ -89,6 +89,10 @@ function BookCard({ book }: { book: Book }) {
 export function LibraryPage() {
   const queryClient = useQueryClient();
   const { data, error, isPending } = useQuery(booksQuery());
+  // Cleared after each upload, so the same file can be chosen again (e.g.
+  // after an error).
+  const uploadInput = useRef<() => void>(null);
+  const importInput = useRef<() => void>(null);
   const upload = useMutation({
     mutationFn: uploadBook,
     onSuccess: (book) => {
@@ -96,6 +100,7 @@ export function LibraryPage() {
       return queryClient.invalidateQueries({ queryKey: ['books'] });
     },
     onError: (err) => notifyError('Upload failed', err),
+    onSettled: () => uploadInput.current?.(),
   });
   const restore = useMutation({
     mutationFn: importBook,
@@ -104,6 +109,7 @@ export function LibraryPage() {
       return queryClient.invalidateQueries({ queryKey: ['books'] });
     },
     onError: (err) => notifyError('Import failed', err),
+    onSettled: () => importInput.current?.(),
   });
 
   return (
@@ -112,6 +118,7 @@ export function LibraryPage() {
         <Title order={2}>Library</Title>
         <Group gap="xs">
           <FileButton
+            resetRef={importInput}
             onChange={(file) => file && restore.mutate(file)}
             accept=".zip,application/zip"
           >
@@ -127,6 +134,7 @@ export function LibraryPage() {
             )}
           </FileButton>
           <FileButton
+            resetRef={uploadInput}
             onChange={(file) => file && upload.mutate(file)}
             accept=".epub,application/epub+zip"
           >

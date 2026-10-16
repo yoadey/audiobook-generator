@@ -46,6 +46,7 @@ function EntryForm({
   pending,
   onSubmit,
   onCancel,
+  previewId,
 }: {
   initial: LexiconEntryInput;
   voice: string;
@@ -55,6 +56,7 @@ function EntryForm({
   pending: boolean;
   onSubmit: (e: LexiconEntryInput) => void;
   onCancel?: () => void;
+  previewId: string;
 }) {
   const [term, setTerm] = useState(initial.term);
   const [replacement, setReplacement] = useState(initial.replacement);
@@ -93,12 +95,16 @@ function EntryForm({
           onChange={(e) => setPhonemes(e.currentTarget.checked)}
         />
         <VoicePreviewButton
-          id="draft"
+          id={previewId}
           voice={voice}
           speed={speed}
-          text={valid ? spoken(draft) : undefined}
+          text={spoken(draft)}
           preview={preview}
           label="Listen to this pronunciation"
+          // The draft is spelled out already; the saved entry must not
+          // apply on top of it.
+          lexicon={false}
+          disabled={!valid}
         />
         <Button type="submit" disabled={!valid} loading={pending}>
           {submitLabel}
@@ -179,6 +185,7 @@ export function LexiconPage() {
       <EntryForm
         key={adding}
         initial={{ term: '', replacement: '', phonemes: false }}
+        previewId="draft-new"
         voice={voice}
         speed={speed}
         preview={preview}
@@ -221,6 +228,7 @@ export function LexiconPage() {
                     <Table.Td colSpan={3}>
                       <EntryForm
                         initial={e}
+                        previewId={`draft-${e.id}`}
                         voice={voice}
                         speed={speed}
                         preview={preview}

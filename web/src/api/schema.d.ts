@@ -2128,6 +2128,7 @@ export interface operations {
         };
       };
       404: components['responses']['Error'];
+      409: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };

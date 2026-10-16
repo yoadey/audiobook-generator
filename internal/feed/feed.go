@@ -173,7 +173,8 @@ func playable(c *store.Chapter) bool {
 }
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
-	h.Log.ErrorContext(r.Context(), "feed failed", "path", r.URL.Path, "err", err)
+	// Not the path: it carries the token.
+	h.Log.ErrorContext(r.Context(), "feed failed", "book", r.PathValue("bookId"), "file", r.PathValue("file"), "err", err)
 	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 

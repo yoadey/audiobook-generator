@@ -29,6 +29,8 @@ type Options struct {
 	Feed interface{ Register(*http.ServeMux) }
 	// Auth requires a sign-in (nil: authentication is off).
 	Auth *auth.Authenticator
+	// PublicURL is the external base URL (empty: the request's).
+	PublicURL string
 	// Ready is checked by /readyz. Only the database: the UI must stay
 	// reachable while the TTS server restarts or loads its model.
 	Ready    Pinger
@@ -65,7 +67,7 @@ func Handler(o Options) http.Handler {
 	// No method in the pattern: "GET /" would conflict with the API's "/api/".
 	mux.Handle("/", o.WebUI)
 
-	return instrument(o.Auth.Middleware(mux), o.Registry, o.Log)
+	return instrument(auth.SameOrigin(o.PublicURL, o.Auth.Middleware(mux)), o.Registry, o.Log)
 }
 
 // instrument records Prometheus metrics and logs every request. Route
@@ -81,6 +83,9 @@ func instrument(next http.Handler, reg *prometheus.Registry, log *slog.Logger) h
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		// Nothing is ever meant to be sniffed into another type (a cover
+		// uploaded as an image must not run as HTML).
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 

@@ -260,3 +260,10 @@ func (s *Store) CountChapterAudio(ctx context.Context) ([]AudioCount, error) {
 		Where("excluded = ?", false).Group("audio_status").Scan(&out).Error
 	return out, err
 }
+
+// RaiseJobPriority raises the priority of a job that is still queued.
+func (s *Store) RaiseJobPriority(ctx context.Context, id int64, priority int) error {
+	return s.db.WithContext(ctx).Model(&Job{}).
+		Where("id = ? AND status = ? AND priority < ?", id, JobQueued, priority).
+		Update("priority", priority).Error
+}

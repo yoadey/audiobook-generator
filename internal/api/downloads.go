@@ -60,7 +60,8 @@ func (s *Server) downloads(ctx context.Context, bookID int64) ([]Download, error
 			if d.HasFile {
 				d.SizeBytes = &f.Size
 				d.DurationMs = &f.DurationMs
-				d.Outdated = f.SourceKey != assemble.SourceKey(&p)
+				// Changed chapters, or ones rendered with other voices since.
+				d.Outdated = f.SourceKey != assemble.SourceKey(&p) || d.RenderedCount < d.ChapterCount
 			}
 		}
 		if j := pending[p.VolumeID]; j != nil {
@@ -85,6 +86,9 @@ func (s *Server) ListDownloads(ctx context.Context, req ListDownloadsRequestObje
 
 // AssembleDownload queues the M4B of a volume.
 func (s *Server) AssembleDownload(ctx context.Context, req AssembleDownloadRequestObject) (AssembleDownloadResponseObject, error) {
+	if b, err := s.Store.GetBook(ctx, req.BookId); err == nil && (b.Status == store.BookImporting || b.Status == store.BookFailed) {
+		return AssembleDownload409JSONResponse{Message: "the book is not imported"}, nil
+	}
 	switch err := s.Assembler.Start(ctx, req.BookId, req.VolumeId); {
 	case isNotFound(err):
 		return AssembleDownload404JSONResponse{ErrorJSONResponse(errMsg("book not found"))}, nil

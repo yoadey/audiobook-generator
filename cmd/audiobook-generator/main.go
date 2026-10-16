@@ -137,6 +137,9 @@ func run() error {
 		DataDir: cfg.DataDir, Log: log,
 	}
 	runner.Handle(assemble.JobType, assembler.Handler())
+	if err := render.ReconcileFiles(ctx, st, cfg.DataDir, log); err != nil {
+		log.Error("check audio files", "err", err)
+	}
 	runnerDone := make(chan struct{})
 	go func() {
 		defer close(runnerDone)
@@ -179,7 +182,8 @@ func run() error {
 				AuthEnabled:    authn != nil,
 				Log:            log,
 			}),
-			Auth: authn,
+			Auth:      authn,
+			PublicURL: cfg.PublicURL,
 			Feed: &feed.Handler{
 				Store: st, Secret: []byte(cfg.FeedSecret), PublicURL: cfg.PublicURL,
 				DataDir: cfg.DataDir, Log: log,

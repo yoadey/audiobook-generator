@@ -28,14 +28,16 @@ func (s *Store) GetLexiconEntry(ctx context.Context, id int64) (*LexiconEntry, e
 // book (ignoring case), else ErrConflict.
 func (s *Store) SaveLexiconEntry(ctx context.Context, e *LexiconEntry) error {
 	return s.Tx(ctx, func(tx *Store) error {
-		var n int64
-		if err := tx.db.Model(&LexiconEntry{}).
-			Where("book_id = ? AND LOWER(term) = ? AND id <> ?", e.BookID, strings.ToLower(e.Term), e.ID).
-			Count(&n).Error; err != nil {
+		// Compared in Go: SQLite's LOWER() folds ASCII only.
+		var terms []LexiconEntry
+		if err := tx.db.Select("id, term").Where("book_id = ? AND id <> ?", e.BookID, e.ID).
+			Find(&terms).Error; err != nil {
 			return err
 		}
-		if n > 0 {
-			return fmt.Errorf("%w: %q is already in the lexicon", ErrConflict, e.Term)
+		for _, t := range terms {
+			if strings.EqualFold(t.Term, e.Term) {
+				return fmt.Errorf("%w: %q is already in the lexicon", ErrConflict, e.Term)
+			}
 		}
 		return tx.db.Save(e).Error
 	})
@@ -53,17 +55,47 @@ func (s *Store) DeleteLexiconEntry(ctx context.Context, id int64) error {
 	return nil
 }
 
-// TouchTermChapters bumps the voice revision of a book's chapters whose
-// text contains one of the terms (their pronunciation changed).
-func (s *Store) TouchTermChapters(ctx context.Context, bookID int64, terms ...string) error {
+// TouchMatchingChapters bumps the voice revision of a book's chapters whose
+// spoken text (title or paragraphs) match reports (their pronunciation
+// changed), so they are rendered again. The text is matched in Go, the
+// same way rendering applies the lexicon: SQL case folding differs between
+// the dialects.
+func (s *Store) TouchMatchingChapters(ctx context.Context, bookID int64, match func(text string) bool) error {
 	db := s.db.WithContext(ctx)
-	for _, t := range terms {
-		if strings.TrimSpace(t) == "" {
-			continue
+	var chapters []Chapter
+	if err := db.Select("id, title").Where("book_id = ?", bookID).Find(&chapters).Error; err != nil {
+		return err
+	}
+	hit := map[int64]bool{}
+	for _, c := range chapters {
+		if match(c.Title) {
+			hit[c.ID] = true
 		}
-		sub := db.Session(&gorm.Session{NewDB: true}).Model(&Paragraph{}).Select("chapter_id").
-			Where(`LOWER(text) LIKE ? ESCAPE '\'`, likePattern(strings.TrimSpace(t)))
-		if err := db.Model(&Chapter{}).Where("book_id = ? AND id IN (?)", bookID, sub).
+	}
+	ids := chapterIDs(s.db.Session(&gorm.Session{NewDB: true}), bookID)
+	var last int64
+	for {
+		var paras []Paragraph
+		if err := db.Select("id, chapter_id, text").Where("chapter_id IN (?) AND id > ?", ids, last).
+			Order("id").Limit(2000).Find(&paras).Error; err != nil {
+			return err
+		}
+		for _, p := range paras {
+			if !hit[p.ChapterID] && match(p.Text) {
+				hit[p.ChapterID] = true
+			}
+		}
+		if len(paras) < 2000 {
+			break
+		}
+		last = paras[len(paras)-1].ID
+	}
+	touched := make([]int64, 0, len(hit))
+	for id := range hit {
+		touched = append(touched, id)
+	}
+	for start := 0; start < len(touched); start += 500 {
+		if err := db.Model(&Chapter{}).Where("id IN ?", touched[start:min(start+500, len(touched))]).
 			Update("voice_rev", gorm.Expr("voice_rev + 1")).Error; err != nil {
 			return err
 		}

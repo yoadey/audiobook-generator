@@ -172,6 +172,9 @@ true
 {{- if not .clientId }}
 {{- fail "auth.oidc.clientId is required when auth.oidc.enabled" }}
 {{- end }}
+{{- if not $.Values.publicUrl }}
+{{- fail "publicUrl is required when auth.oidc.enabled" }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- with .Values.backup.litestream }}

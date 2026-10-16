@@ -156,7 +156,8 @@ backup:
   # Continuous backup of the SQLite database to S3 (e.g. Garage, MinIO)
   # with Litestream: a sidecar streams every change; on a fresh volume an
   # init container restores the latest state before the app starts. Audio
-  # files are not backed up (they can be rendered again). PostgreSQL is
+  # files are not backed up: after a restore the app notices they are gone
+  # and renders them again. Needs Kubernetes 1.29+. PostgreSQL is
   # backed up with its own tools (e.g. CNPG's barman).
   litestream:
     enabled: false
@@ -167,6 +168,7 @@ backup:
     s3:
       # Empty for AWS S3; e.g. http://garage.garage.svc:3900
       endpoint: ""
+      # The region the S3 server signs with (Garage: "garage" by default).
       region: us-east-1
       bucket: ""
       path: audiobook-generator

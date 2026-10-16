@@ -67,7 +67,7 @@ Common options (all values: [`charts/audiobook-generator/values.yaml`](charts/au
 
 ### Sign-in
 
-With `auth.oidc.enabled`, every page and API call needs a sign-in at your
+With `auth.oidc.enabled` (needs `publicUrl`), every page and API call needs a sign-in at your
 OpenID Connect provider (authorization code flow with PKCE; listening
 positions are kept per user). Register a web application with the
 redirect URI `<publicUrl>/auth/callback` and the post-logout URI
@@ -96,7 +96,8 @@ URLs carry a token instead, so treat them like passwords.
   *Downloads*); missing chapters are rendered first.
 - **Backup**: with SQLite, `backup.litestream` (S3 endpoint, bucket and a
   Secret with `access-key-id`/`secret-access-key`) keeps the database in
-  S3. Audio is not backed up; it can be rendered again.
+  S3 (Kubernetes 1.29+). Audio is not backed up: after a restore onto a
+  new volume the app notices the missing files and renders them again.
 - **Export/import**: *Export* on the book page downloads a zip with the
   book, its characters, voices, speakers, chapter edits and pronunciations
   (no audio); *Import export* in the library restores it as a new book,

@@ -3,14 +3,14 @@
 package importer
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"mime"
+	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 
 	"github.com/yoadey/audiobook-generator/internal/epub"
@@ -154,32 +154,68 @@ func (im *Importer) Import(ctx context.Context, bookID int64, progress func(floa
 	})
 }
 
+// coverExt is the file extension of each image type allowed as a cover.
+var coverExt = map[string]string{
+	"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp",
+}
+
+// CoverType returns the media type of a cover from the first bytes of its
+// content (not from what an EPUB or export claims): only plain images are
+// accepted, never SVG or HTML, which a browser would run as script.
+func CoverType(head []byte) (mediaType, ext string, ok bool) {
+	mediaType = http.DetectContentType(head)
+	ext, ok = coverExt[mediaType]
+	return mediaType, ext, ok
+}
+
+// AllowedCoverType reports whether a stored cover may be served as is.
+func AllowedCoverType(mediaType string) bool {
+	_, ok := coverExt[mediaType]
+	return ok
+}
+
+// SaveCover writes a cover image read from r to the book's directory and
+// returns its path (relative to the data dir) and media type.
+func SaveCover(dataDir string, bookID int64, r io.Reader) (string, string, error) {
+	br := bufio.NewReader(io.LimitReader(r, maxCover))
+	head, err := br.Peek(512)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", "", err
+	}
+	mediaType, ext, ok := CoverType(head)
+	if !ok {
+		return "", "", fmt.Errorf("unsupported cover type %s", mediaType)
+	}
+	rel := filepath.Join(BookDir(bookID), "cover"+ext)
+	dst, err := os.Create(filepath.Join(dataDir, rel)) //nolint:gosec // path is built from the data dir and a book ID
+	if err != nil {
+		return "", "", err
+	}
+	_, err = io.Copy(dst, br)
+	if cerr := dst.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return rel, mediaType, nil
+}
+
+const maxCover = 20 << 20
+
 // saveCover copies the cover image next to the EPUB. Failures only lose
 // the cover, so they are logged, not returned.
 func (im *Importer) saveCover(b *epub.Book, bookID int64) (string, string) {
 	if b.CoverHref == "" {
 		return "", ""
 	}
-	mediaType := b.CoverMediaType
-	if mediaType == "" {
-		mediaType = mime.TypeByExtension(path.Ext(b.CoverHref))
-	}
-	rel := filepath.Join(BookDir(bookID), "cover"+path.Ext(b.CoverHref))
 	src, err := b.Open(b.CoverHref)
 	if err != nil {
 		im.Log.Warn("cover missing", "book", bookID, "href", b.CoverHref, "err", err)
 		return "", ""
 	}
 	defer func() { _ = src.Close() }()
-	dst, err := os.Create(filepath.Join(im.DataDir, rel)) //nolint:gosec // path is built from the data dir and a book ID
-	if err != nil {
-		im.Log.Warn("save cover", "book", bookID, "err", err)
-		return "", ""
-	}
-	_, err = io.Copy(dst, io.LimitReader(src, 20<<20))
-	if cerr := dst.Close(); err == nil {
-		err = cerr
-	}
+	rel, mediaType, err := SaveCover(im.DataDir, bookID, src)
 	if err != nil {
 		im.Log.Warn("save cover", "book", bookID, "err", err)
 		return "", ""

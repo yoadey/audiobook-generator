@@ -186,6 +186,10 @@ func Paragraphs(ps ...string) string {
 	return sb.String()
 }
 
+// TinyPNG is a valid 1×1 PNG image.
+var TinyPNG = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89" +
+	"\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82")
+
 // Sample is a small two-volume book exercising quotes across paragraphs,
 // scene breaks, front matter and a cover. hack/testdata/sample.epub is this
 // book (see TestSampleFixtureIsUpToDate).
@@ -193,7 +197,7 @@ func Sample() ([]byte, error) {
 	p := Paragraphs
 	return Build(Options{
 		Title: "The Sample", Author: "A. Writer", Language: "en",
-		Cover: []byte("\x89PNG cover"),
+		Cover: TinyPNG,
 		Docs: []Doc{
 			{Name: "copyright.xhtml", Body: p("Copyright 2026 A. Writer.")},
 			{Name: "v1.xhtml", Body: `<h1 id="v1">Book One</h1>` +

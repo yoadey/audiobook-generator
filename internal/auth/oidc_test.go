@@ -103,7 +103,7 @@ func newApp(t *testing.T, idp *fakeIdP) (*httptest.Server, *http.Client) {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") })
 	mux.HandleFunc("/feed/", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "feed") })
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ui") })
-	app := httptest.NewServer(a.Middleware(mux))
+	app := httptest.NewServer(auth.SameOrigin("", a.Middleware(mux)))
 	t.Cleanup(app.Close)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -264,4 +264,44 @@ func TestNilAuthenticatorPassesThrough(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/books", nil))
 	assert.Equal(t, "subject=", w.Body.String())
+}
+
+func TestSameOriginWithoutSignIn(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") })
+	h := auth.SameOrigin("", ok)
+	post := func(origin, host string) int {
+		r := httptest.NewRequest(http.MethodPost, "http://"+host+"/api/books", nil)
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	assert.Equal(t, http.StatusForbidden, post("https://evil.example", "abg.lan"))
+	assert.Equal(t, http.StatusOK, post("https://abg.lan", "abg.lan"), "scheme behind a proxy is not compared")
+	assert.Equal(t, http.StatusOK, post("", "abg.lan"))
+	assert.Equal(t, http.StatusForbidden, post("null", "abg.lan"))
+
+	public := auth.SameOrigin("https://audio.example.org", ok)
+	r := httptest.NewRequest(http.MethodPost, "http://internal:8080/api/books", nil)
+	r.Header.Set("Origin", "https://audio.example.org")
+	w := httptest.NewRecorder()
+	public.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestSafeReturn(t *testing.T) {
+	idp := newIdP(t)
+	app, c := newApp(t, idp)
+	for in, want := range map[string]string{
+		"/books/1?x=2":      "/books/1?x=2",
+		"/\t/evil.example":  "/",
+		"/%09/evil.example": "/%09/evil.example",
+		"/a\\b":             "/",
+		"http:/evil":        "/",
+	} {
+		res := signIn(t, idp, app, c, in, nil)
+		assert.Equal(t, want, res.Header.Get("Location"), in)
+	}
 }

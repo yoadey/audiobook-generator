@@ -71,8 +71,15 @@ func New(cfg Config) (*Authenticator, error) {
 // session is the content of the session cookie.
 type session struct {
 	User
-	Issued int64 `json:"iat"`
+	Issued int64 `json:"iat"` // when this cookie was issued
+	// Started is the sign-in: a session in use is extended, but only up to
+	// maxLifetime after it, then the provider is asked again (a user
+	// disabled there loses access).
+	Started int64 `json:"st,omitempty"`
 }
+
+// maxLifetime bounds a session however actively it is used.
+func (a *Authenticator) maxLifetime() time.Duration { return 3 * a.cfg.SessionTTL }
 
 type login struct {
 	State    string `json:"s"`
@@ -124,13 +131,19 @@ func random() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// safeReturn accepts only local paths (no open redirects).
+// safeReturn accepts only local paths (no open redirects). Browsers drop
+// tabs and newlines and read "\\" as "/" in URLs, so "/\t/evil.example"
+// would leave the site: such characters are refused anywhere.
 func safeReturn(p string) string {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, `/\`) ||
-		strings.HasPrefix(p, "/auth/") {
+	if strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '\\' }) {
 		return "/"
 	}
-	return p
+	u, err := url.Parse(p)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil ||
+		!strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(u.Path, "/auth/") {
+		return "/"
+	}
+	return u.RequestURI()
 }
 
 func (a *Authenticator) login(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +229,7 @@ func (a *Authenticator) callback(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if err := a.startSession(w, r, u); err != nil {
+	if err := a.startSession(w, r, session{User: u, Started: time.Now().Unix()}); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -224,8 +237,9 @@ func (a *Authenticator) callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, l.Return, http.StatusFound)
 }
 
-func (a *Authenticator) startSession(w http.ResponseWriter, r *http.Request, u User) error {
-	value, err := a.sealer.seal(sessionCookie, session{User: u, Issued: time.Now().Unix()}, a.cfg.SessionTTL)
+func (a *Authenticator) startSession(w http.ResponseWriter, r *http.Request, s session) error {
+	s.Issued = time.Now().Unix()
+	value, err := a.sealer.seal(sessionCookie, s, a.cfg.SessionTTL)
 	if err != nil {
 		return err
 	}
@@ -236,6 +250,9 @@ func (a *Authenticator) startSession(w http.ResponseWriter, r *http.Request, u U
 func (a *Authenticator) logout(w http.ResponseWriter, r *http.Request) {
 	a.setCookie(w, r, sessionCookie, "", "/", -1)
 	target := "/"
+	// After a restart nothing is discovered yet; without the provider's
+	// end-session endpoint its session would sign the user straight in again.
+	_, _ = a.discover(r.Context())
 	a.mu.Lock()
 	end := a.endSession
 	a.mu.Unlock()
@@ -297,20 +314,16 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 		if err == nil {
 			err = a.sealer.open(sessionCookie, c.Value, &s)
 		}
-		if err != nil {
+		if s.Started == 0 {
+			s.Started = s.Issued
+		}
+		if err != nil || time.Since(time.Unix(s.Started, 0)) > a.maxLifetime() {
 			a.unauthorized(w, r)
 			return
 		}
-		// Cookies are SameSite=Lax; refuse cross-site writes outright too.
-		if unsafeMethod(r.Method) {
-			if o := r.Header.Get("Origin"); o != "" && o != origin(BaseURL(r, a.cfg.PublicURL)) {
-				http.Error(w, "cross-site request refused", http.StatusForbidden)
-				return
-			}
-		}
 		// A session in use is extended.
 		if time.Since(time.Unix(s.Issued, 0)) > a.cfg.SessionTTL/2 {
-			if err := a.startSession(w, r, s.User); err != nil {
+			if err := a.startSession(w, r, s); err != nil {
 				a.cfg.Log.WarnContext(r.Context(), "extend session", "err", err)
 			}
 		}
@@ -332,13 +345,38 @@ func (a *Authenticator) unauthorized(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/auth/login?redirect="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 }
 
-// origin returns scheme://host of a base URL.
-func origin(base string) string {
-	u, err := url.Parse(base)
-	if err != nil {
-		return base
+// SameOrigin refuses cross-site writes (CSRF): an unsafe request whose
+// Origin header names another host than the service's. Browsers send
+// Origin with every cross-site POST; requests without one (curl, old
+// clients) pass. It applies with and without sign-in: without, a page on
+// the internet could otherwise post to a LAN instance through a visitor's
+// browser.
+func SameOrigin(publicURL string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if unsafeMethod(r.Method) {
+			if o := r.Header.Get("Origin"); o != "" && !sameHost(o, r, publicURL) {
+				http.Error(w, "cross-site request refused", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameHost compares the host of an Origin with the service's (the
+// scheme is not compared: a TLS-terminating proxy may not say it was https).
+func sameHost(originHeader string, r *http.Request, publicURL string) bool {
+	o, err := url.Parse(originHeader)
+	if err != nil || o.Host == "" {
+		return false
 	}
-	return u.Scheme + "://" + u.Host
+	want := r.Host
+	if publicURL != "" {
+		if u, err := url.Parse(publicURL); err == nil {
+			want = u.Host
+		}
+	}
+	return strings.EqualFold(o.Host, want)
 }
 
 // BaseURL is the configured public URL, else the one the request came in

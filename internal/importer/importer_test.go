@@ -53,7 +53,7 @@ func TestImport(t *testing.T) {
 		assert.Equal(t, "image/png", book.CoverMediaType)
 		cover, err := os.ReadFile(filepath.Join(im.DataDir, book.CoverPath))
 		require.NoError(t, err)
-		assert.Equal(t, "\x89PNG cover", string(cover))
+		assert.Equal(t, epubtest.TinyPNG, cover)
 
 		vols, err := s.ListVolumes(ctx, b.ID)
 		require.NoError(t, err)

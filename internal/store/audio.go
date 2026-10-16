@@ -156,3 +156,34 @@ func (s *Store) PendingBookJobs(ctx context.Context, jobType string, bookID int6
 func (s *Store) PendingChapterJob(ctx context.Context, jobType string, chapterID int64) (*Job, error) {
 	return s.PendingRenderJob(ctx, jobType, chapterID)
 }
+
+// AudioFile is a stored file of a chapter or download.
+type AudioFile struct {
+	ID   int64
+	Path string
+}
+
+// ChapterAudioFiles lists the chapters that have audio, with its path.
+func (s *Store) ChapterAudioFiles(ctx context.Context) ([]AudioFile, error) {
+	var out []AudioFile
+	err := s.db.WithContext(ctx).Model(&Chapter{}).Select("id, audio_path AS path").
+		Where("audio_path <> ''").Order("id").Scan(&out).Error
+	return out, err
+}
+
+// DownloadFiles lists the downloads that have a file, with its path.
+func (s *Store) DownloadFiles(ctx context.Context) ([]AudioFile, error) {
+	var out []AudioFile
+	err := s.db.WithContext(ctx).Model(&Download{}).Select("id, path").
+		Where("path <> ''").Order("id").Scan(&out).Error
+	return out, err
+}
+
+// ForgetDownloadFiles clears the file of downloads (it is gone).
+func (s *Store) ForgetDownloadFiles(ctx context.Context, ids ...int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.db.WithContext(ctx).Model(&Download{}).Where("id IN ?", ids).
+		Updates(map[string]any{"path": "", "size": 0, "duration_ms": 0, "source_key": ""}).Error
+}
