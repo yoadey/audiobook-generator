@@ -317,6 +317,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/books/{bookId}/export': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    /** Export the book with its analysis, voices, speakers, edits and pronunciations (zip, without audio) */
+    get: operations['exportBook'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/import': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Restore an exported book as a new book (the restore runs as a job) */
+    post: operations['importBook'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/books/{bookId}/downloads': {
     parameters: {
       query?: never;
@@ -1987,6 +2023,61 @@ export interface operations {
         };
       };
       404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  exportBook: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Export file */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/zip': string;
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  importBook: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /** Format: binary */
+          file: string;
+        };
+      };
+    };
+    responses: {
+      /** @description The new book, being restored */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Book'];
+        };
+      };
+      400: components['responses']['Error'];
+      413: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };

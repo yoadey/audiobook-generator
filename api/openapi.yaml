@@ -524,6 +524,58 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /books/{bookId}/export:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: exportBook
+      summary: Export the book with its analysis, voices, speakers, edits and pronunciations (zip, without audio)
+      tags: [books]
+      responses:
+        "200":
+          description: Export file
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /import:
+    post:
+      operationId: importBook
+      summary: Restore an exported book as a new book (the restore runs as a job)
+      tags: [books]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "202":
+          description: The new book, being restored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "400":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /books/{bookId}/downloads:
     parameters:
       - $ref: "#/components/parameters/BookId"

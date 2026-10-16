@@ -990,6 +990,35 @@ describe('App', () => {
     vi.unstubAllGlobals();
   });
 
+  it('imports a book export', async () => {
+    const fetch = stubApi({
+      '/api/books': { items: [], total: 0 },
+      'POST /api/import': { ...book, id: 9, status: 'importing' },
+    });
+    const { container } = renderAt('/library');
+    await screen.findByRole('button', { name: 'Import export' });
+    const input = container.querySelector('input[type="file"][accept=".zip,application/zip"]')!;
+    fireEvent.change(input, {
+      target: { files: [new File(['zip'], 'book.abg.zip', { type: 'application/zip' })] },
+    });
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => String(r).endsWith('/api/import'))).toBe(true),
+    );
+  });
+
+  it('links the export of a book', async () => {
+    stubApi({
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: [], total: 0 },
+    });
+    renderAt('/books/1');
+    expect(await screen.findByRole('link', { name: 'Export' })).toHaveAttribute(
+      'href',
+      'http://localhost:3000/api/books/1/export',
+    );
+  });
+
   it('shows the podcast feed URL', async () => {
     stubApi({
       '/api/books/1': { ...book, feedPath: '/feed/tok/1.xml' },

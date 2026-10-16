@@ -21,6 +21,7 @@ import { modals } from '@mantine/modals';
 import {
   IconCheck,
   IconCopy,
+  IconFileExport,
   IconHeadphones,
   IconRss,
   IconSearch,
@@ -35,6 +36,7 @@ import { useMemo, useState } from 'react';
 import {
   bookQuery,
   chaptersQuery,
+  exportUrl,
   deleteBook,
   renderBookChapters,
   volumesQuery,
@@ -203,6 +205,19 @@ export function BookPage() {
                 Pronunciation
               </ButtonLink>
             </>
+          )}
+          {imported && b.status !== 'failed' && (
+            <Tooltip label="Download the book with its characters, voices, speakers and pronunciations (without audio), to import it elsewhere">
+              <Button
+                component="a"
+                href={exportUrl(bookId)}
+                download
+                variant="subtle"
+                leftSection={<IconFileExport size={16} />}
+              >
+                Export
+              </Button>
+            </Tooltip>
           )}
           <Button
             variant="subtle"

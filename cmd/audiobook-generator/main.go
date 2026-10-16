@@ -34,6 +34,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/metrics"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
+	"github.com/yoadey/audiobook-generator/internal/transfer"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 	"github.com/yoadey/audiobook-generator/internal/webui"
 )
@@ -89,6 +90,7 @@ func run() error {
 	reg.MustRegister(metrics.NewCollector(st, log))
 	imp := &importer.Importer{Store: st, DataDir: cfg.DataDir, Log: log}
 	runner.Handle(importer.JobType, imp.Handler())
+	runner.Handle(transfer.JobType, (&transfer.Restorer{Store: st, DataDir: cfg.DataDir, Log: log}).Handler())
 	voices := casting.NewCatalog(speech)
 	attributor := &attribution.Attributor{
 		Store: st, LLM: llmPool, Jobs: runner, PartTokens: cfg.LLM.AttributionTokens, Log: log,

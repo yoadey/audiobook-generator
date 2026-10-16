@@ -13,11 +13,11 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconBook2, IconBooks, IconUpload } from '@tabler/icons-react';
+import { IconBook2, IconBooks, IconFileImport, IconUpload } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { type Book, booksQuery, coverUrl, uploadBook } from '../api/client';
+import { type Book, booksQuery, coverUrl, importBook, uploadBook } from '../api/client';
 import { formatListeningTime, formatNumber } from '../lib/format';
 import { CardLink } from '../components/links';
 import { StatusBadge } from '../components/StatusBadge';
@@ -97,21 +97,46 @@ export function LibraryPage() {
     },
     onError: (err) => notifyError('Upload failed', err),
   });
+  const restore = useMutation({
+    mutationFn: importBook,
+    onSuccess: (book) => {
+      notifySuccess(`“${book.title}” uploaded, restoring…`);
+      return queryClient.invalidateQueries({ queryKey: ['books'] });
+    },
+    onError: (err) => notifyError('Import failed', err),
+  });
 
   return (
     <Stack>
       <Group justify="space-between">
         <Title order={2}>Library</Title>
-        <FileButton
-          onChange={(file) => file && upload.mutate(file)}
-          accept=".epub,application/epub+zip"
-        >
-          {(props) => (
-            <Button {...props} leftSection={<IconUpload size={16} />} loading={upload.isPending}>
-              Upload EPUB
-            </Button>
-          )}
-        </FileButton>
+        <Group gap="xs">
+          <FileButton
+            onChange={(file) => file && restore.mutate(file)}
+            accept=".zip,application/zip"
+          >
+            {(props) => (
+              <Button
+                {...props}
+                variant="default"
+                leftSection={<IconFileImport size={16} />}
+                loading={restore.isPending}
+              >
+                Import export
+              </Button>
+            )}
+          </FileButton>
+          <FileButton
+            onChange={(file) => file && upload.mutate(file)}
+            accept=".epub,application/epub+zip"
+          >
+            {(props) => (
+              <Button {...props} leftSection={<IconUpload size={16} />} loading={upload.isPending}>
+                Upload EPUB
+              </Button>
+            )}
+          </FileButton>
+        </Group>
       </Group>
 
       {isPending && (

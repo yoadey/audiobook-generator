@@ -32,6 +32,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/store/storetest"
+	"github.com/yoadey/audiobook-generator/internal/transfer"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 )
 
@@ -89,13 +90,18 @@ func (c client) json(method, path string, in, out any) int {
 
 func (c client) upload(name string, data []byte, out any) int {
 	c.t.Helper()
+	return c.uploadTo("/api/books", name, data, out)
+}
+
+func (c client) uploadTo(path, name string, data []byte, out any) int {
+	c.t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("file", name)
 	require.NoError(c.t, err)
 	_, _ = fw.Write(data)
 	require.NoError(c.t, mw.Close())
-	return c.do(http.MethodPost, "/api/books", &buf, mw.FormDataContentType(), out)
+	return c.do(http.MethodPost, path, &buf, mw.FormDataContentType(), out)
 }
 
 func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
@@ -105,6 +111,7 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	runner := jobs.New(s, log)
 	runner.PollInterval = 20 * time.Millisecond
 	runner.Handle(importer.JobType, (&importer.Importer{Store: s, DataDir: dir, Log: log}).Handler())
+	runner.Handle(transfer.JobType, (&transfer.Restorer{Store: s, DataDir: dir, Log: log}).Handler())
 	pool := llm.NewPool(s, nil, log)
 	voices := casting.NewCatalog(fakeTTS{})
 	attributor := &attribution.Attributor{Store: s, LLM: pool, Jobs: runner, Log: log}

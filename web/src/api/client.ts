@@ -294,10 +294,11 @@ export const coverUrl = (bookId: number) => `${baseUrl}/books/${bookId}/cover`;
 // --- Mutations ---------------------------------------------------------------
 
 /** Uploads an EPUB (multipart; openapi-fetch's JSON body typing does not fit). */
-export async function uploadBook(file: File): Promise<Book> {
+async function postFile(path: string, file: File): Promise<Book> {
   const form = new FormData();
   form.append('file', file);
-  const response = await globalThis.fetch(`${baseUrl}/books`, { method: 'POST', body: form });
+  const response = await globalThis.fetch(`${baseUrl}${path}`, { method: 'POST', body: form });
+  signInIfExpired(response);
   const body: unknown = await response.json().catch(() => undefined);
   if (!response.ok) {
     const message =
@@ -308,6 +309,14 @@ export async function uploadBook(file: File): Promise<Book> {
   }
   return body as Book;
 }
+
+/** Uploads an EPUB; the import runs in the background. */
+export const uploadBook = (file: File) => postFile('/books', file);
+
+/** Uploads a book export; the restore runs in the background. */
+export const importBook = (file: File) => postFile('/import', file);
+
+export const exportUrl = (bookId: number) => `${baseUrl}/books/${bookId}/export`;
 
 export const deleteBook = (bookId: number) =>
   unwrap(api.DELETE('/books/{bookId}', { params: { path: { bookId } } }));

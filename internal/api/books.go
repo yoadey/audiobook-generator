@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -86,50 +84,24 @@ func (s *Server) UploadBook(ctx context.Context, req UploadBookRequestObject) (U
 		return UploadBook400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 	}
 
-	var part *multipart.Part
-	for {
-		p, err := req.Body.NextPart()
-		var maxErr *http.MaxBytesError
-		switch {
-		case errors.As(err, &maxErr):
-			return tooLarge()
-		case errors.Is(err, io.EOF):
-			return bad("missing form field \"file\"")
-		case err != nil:
-			return bad("invalid multipart body: " + err.Error())
-		}
-		if p.FormName() == "file" {
-			part = p
-			break
-		}
-	}
-
-	booksDir := filepath.Join(s.DataDir, "books")
-	if err := os.MkdirAll(booksDir, 0o750); err != nil {
-		return nil, err
-	}
-	tmp, err := os.CreateTemp(booksDir, "upload-*.epub")
+	up, err := s.saveUpload(req.Body, "upload-*.epub")
 	if err != nil {
 		return nil, err
 	}
+	if up.Status == http.StatusRequestEntityTooLarge {
+		return tooLarge()
+	} else if up.Status != 0 {
+		return bad(up.Msg)
+	}
+	tmpPath := up.Path
 	keep := false
 	defer func() {
 		if !keep {
-			_ = os.Remove(tmp.Name())
+			_ = os.Remove(tmpPath)
 		}
 	}()
-	_, err = io.Copy(tmp, part)
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	var maxErr *http.MaxBytesError
-	if errors.As(err, &maxErr) {
-		return tooLarge()
-	} else if err != nil {
-		return nil, fmt.Errorf("store upload: %w", err)
-	}
 
-	eb, f, err := importer.OpenEPUB(tmp.Name())
+	eb, f, err := importer.OpenEPUB(tmpPath)
 	if err != nil {
 		return bad("not a valid EPUB: " + err.Error())
 	}
@@ -137,7 +109,7 @@ func (s *Server) UploadBook(ctx context.Context, req UploadBookRequestObject) (U
 
 	title := strings.TrimSpace(eb.Title)
 	if title == "" {
-		title = strings.TrimSuffix(filepath.Base(part.FileName()), filepath.Ext(part.FileName()))
+		title = strings.TrimSuffix(filepath.Base(up.FileName), filepath.Ext(up.FileName))
 	}
 	if title == "" {
 		title = "Untitled"
@@ -153,7 +125,7 @@ func (s *Server) UploadBook(ctx context.Context, req UploadBookRequestObject) (U
 	if err := os.MkdirAll(filepath.Join(s.DataDir, importer.BookDir(b.ID)), 0o750); err != nil {
 		return nil, err
 	}
-	if err := os.Rename(tmp.Name(), filepath.Join(s.DataDir, b.EpubPath)); err != nil {
+	if err := os.Rename(tmpPath, filepath.Join(s.DataDir, b.EpubPath)); err != nil {
 		return nil, err
 	}
 	keep = true

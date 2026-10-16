@@ -1494,6 +1494,11 @@ type ListCharacterQuotesParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ImportBookMultipartBody defines parameters for ImportBook.
+type ImportBookMultipartBody struct {
+	File openapi_types.File `json:"file"`
+}
+
 // ListJobsParams defines parameters for ListJobs.
 type ListJobsParams struct {
 	BookId *int64       `form:"bookId,omitempty" json:"bookId,omitempty"`
@@ -1543,6 +1548,9 @@ type UpdateCharacterJSONRequestBody = CharacterUpdate
 
 // SplitCharacterJSONRequestBody defines body for SplitCharacter for application/json ContentType.
 type SplitCharacterJSONRequestBody = CharacterSplit
+
+// ImportBookMultipartRequestBody defines body for ImportBook for multipart/form-data ContentType.
+type ImportBookMultipartRequestBody ImportBookMultipartBody
 
 // UpdateLexiconEntryJSONRequestBody defines body for UpdateLexiconEntry for application/json ContentType.
 type UpdateLexiconEntryJSONRequestBody = LexiconEntryUpdate
@@ -1612,6 +1620,9 @@ type ServerInterface interface {
 	// GetDownloadFile The assembled M4B with chapter markers; supports HTTP range requests
 	// (GET /books/{bookId}/downloads/{volumeId}/file)
 	GetDownloadFile(w http.ResponseWriter, r *http.Request, bookId BookId, volumeId VolumeId)
+	// ExportBook Export the book with its analysis, voices, speakers, edits and pronunciations (zip, without audio)
+	// (GET /books/{bookId}/export)
+	ExportBook(w http.ResponseWriter, r *http.Request, bookId BookId)
 	// ListLexicon The book's pronunciation lexicon
 	// (GET /books/{bookId}/lexicon)
 	ListLexicon(w http.ResponseWriter, r *http.Request, bookId BookId)
@@ -1669,6 +1680,9 @@ type ServerInterface interface {
 	// SplitCharacter Move aliases of a character to a new character
 	// (POST /characters/{characterId}/split)
 	SplitCharacter(w http.ResponseWriter, r *http.Request, characterId CharacterId)
+	// ImportBook Restore an exported book as a new book (the restore runs as a job)
+	// (POST /import)
+	ImportBook(w http.ResponseWriter, r *http.Request)
 	// ListJobs List background jobs, newest first
 	// (GET /jobs)
 	ListJobs(w http.ResponseWriter, r *http.Request, params ListJobsParams)
@@ -2316,6 +2330,32 @@ func (siw *ServerInterfaceWrapper) GetDownloadFile(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ExportBook operation middleware
+func (siw *ServerInterfaceWrapper) ExportBook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportBook(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListLexicon operation middleware
 func (siw *ServerInterfaceWrapper) ListLexicon(w http.ResponseWriter, r *http.Request) {
 
@@ -2867,6 +2907,20 @@ func (siw *ServerInterfaceWrapper) SplitCharacter(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ImportBook operation middleware
+func (siw *ServerInterfaceWrapper) ImportBook(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportBook(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListJobs operation middleware
 func (siw *ServerInterfaceWrapper) ListJobs(w http.ResponseWriter, r *http.Request) {
 
@@ -3360,6 +3414,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/chapters/{chapterId}/quotes/{quoteRef}", wrapper.UpdateQuote)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/render", wrapper.RenderChapter)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/chapters/{chapterId}/audio", wrapper.GetChapterAudio)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/export", wrapper.ExportBook)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import", wrapper.ImportBook)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/downloads", wrapper.ListDownloads)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/downloads/{volumeId}", wrapper.AssembleDownload)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/downloads/{volumeId}/file", wrapper.GetDownloadFile)
@@ -4385,6 +4441,79 @@ type GetDownloadFiledefaultJSONResponse struct {
 }
 
 func (response GetDownloadFiledefaultJSONResponse) VisitGetDownloadFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportBookRequestObject struct {
+	BookId BookId `json:"bookId"`
+}
+
+type ExportBookResponseObject interface {
+	VisitExportBookResponse(w http.ResponseWriter) error
+}
+
+type ExportBook200ApplicationzipResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response ExportBook200ApplicationzipResponse) VisitExportBookResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/zip")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type ExportBook404JSONResponse struct{ ErrorJSONResponse }
+
+func (response ExportBook404JSONResponse) VisitExportBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportBook409JSONResponse Error
+
+func (response ExportBook409JSONResponse) VisitExportBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportBookdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ExportBookdefaultJSONResponse) VisitExportBookResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -5612,6 +5741,73 @@ func (response SplitCharacterdefaultJSONResponse) VisitSplitCharacterResponse(w 
 	return err
 }
 
+type ImportBookRequestObject struct {
+	Body *multipart.Reader
+}
+
+type ImportBookResponseObject interface {
+	VisitImportBookResponse(w http.ResponseWriter) error
+}
+
+type ImportBook202JSONResponse Book
+
+func (response ImportBook202JSONResponse) VisitImportBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportBook400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ImportBook400JSONResponse) VisitImportBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportBook413JSONResponse Error
+
+func (response ImportBook413JSONResponse) VisitImportBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportBookdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ImportBookdefaultJSONResponse) VisitImportBookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListJobsRequestObject struct {
 	Params ListJobsParams
 }
@@ -6550,6 +6746,9 @@ type StrictServerInterface interface {
 	// GetDownloadFile The assembled M4B with chapter markers; supports HTTP range requests
 	// (GET /books/{bookId}/downloads/{volumeId}/file)
 	GetDownloadFile(ctx context.Context, request GetDownloadFileRequestObject) (GetDownloadFileResponseObject, error)
+	// ExportBook Export the book with its analysis, voices, speakers, edits and pronunciations (zip, without audio)
+	// (GET /books/{bookId}/export)
+	ExportBook(ctx context.Context, request ExportBookRequestObject) (ExportBookResponseObject, error)
 	// ListLexicon The book's pronunciation lexicon
 	// (GET /books/{bookId}/lexicon)
 	ListLexicon(ctx context.Context, request ListLexiconRequestObject) (ListLexiconResponseObject, error)
@@ -6607,6 +6806,9 @@ type StrictServerInterface interface {
 	// SplitCharacter Move aliases of a character to a new character
 	// (POST /characters/{characterId}/split)
 	SplitCharacter(ctx context.Context, request SplitCharacterRequestObject) (SplitCharacterResponseObject, error)
+	// ImportBook Restore an exported book as a new book (the restore runs as a job)
+	// (POST /import)
+	ImportBook(ctx context.Context, request ImportBookRequestObject) (ImportBookResponseObject, error)
 	// ListJobs List background jobs, newest first
 	// (GET /jobs)
 	ListJobs(ctx context.Context, request ListJobsRequestObject) (ListJobsResponseObject, error)
@@ -7178,6 +7380,32 @@ func (sh *strictHandler) GetDownloadFile(w http.ResponseWriter, r *http.Request,
 	}
 }
 
+// ExportBook operation middleware
+func (sh *strictHandler) ExportBook(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request ExportBookRequestObject
+
+	request.BookId = bookId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExportBook(ctx, request.(ExportBookRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExportBook")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExportBookResponseObject); ok {
+		if err := validResponse.VisitExportBookResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListLexicon operation middleware
 func (sh *strictHandler) ListLexicon(w http.ResponseWriter, r *http.Request, bookId BookId) {
 	var request ListLexiconRequestObject
@@ -7735,6 +7963,37 @@ func (sh *strictHandler) SplitCharacter(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SplitCharacterResponseObject); ok {
 		if err := validResponse.VisitSplitCharacterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ImportBook operation middleware
+func (sh *strictHandler) ImportBook(w http.ResponseWriter, r *http.Request) {
+	var request ImportBookRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ImportBook(ctx, request.(ImportBookRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ImportBook")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ImportBookResponseObject); ok {
+		if err := validResponse.VisitImportBookResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
