@@ -88,6 +88,12 @@ func (s *Store) DeferJob(ctx context.Context, id int64, msg string, at time.Time
 	}).Error
 }
 
+// ResetJobAttempts sets a running job's attempts back to 1 (a long job
+// made progress; earlier failures no longer count against it).
+func (s *Store) ResetJobAttempts(ctx context.Context, id int64) error {
+	return s.db.WithContext(ctx).Model(&Job{ID: id}).UpdateColumn("attempts", 1).Error
+}
+
 // FailJob marks a job permanently failed.
 func (s *Store) FailJob(ctx context.Context, id int64, msg string) error {
 	now := time.Now().UTC()

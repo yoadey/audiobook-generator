@@ -67,6 +67,9 @@ type Analyzer struct {
 	Log                    *slog.Logger
 }
 
+// batchDoneKey carries a function called after each analysed batch.
+type batchDoneKey struct{}
+
 var analysisPrompt = llm.MustLoadPrompt("character_analysis")
 
 // PromptID is the prompt version new batches are analysed with.
@@ -217,6 +220,14 @@ func (a *Analyzer) Handler() jobs.Handler {
 			if j.BookID == nil {
 				return jobs.Permanent(errors.New("analysis job without book"))
 			}
+			// Progress resets the attempts: they count failures of the
+			// current batch, not of a run that may take days.
+			ctx = context.WithValue(ctx, batchDoneKey{}, func(ctx context.Context) {
+				j.Attempts = 1
+				if err := a.Store.ResetJobAttempts(ctx, j.ID); err != nil {
+					a.Log.Warn("reset job attempts", "job", j.ID, "err", err)
+				}
+			})
 			return a.Run(ctx, *j.BookID, progress)
 		},
 		OnFail: func(ctx context.Context, j *store.Job, err error) {
@@ -283,6 +294,9 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 		}
 		if err := a.analyzeBatch(ctx, bookID, next); err != nil {
 			return err
+		}
+		if done, ok := ctx.Value(batchDoneKey{}).(func(context.Context)); ok {
+			done(ctx)
 		}
 	}
 
@@ -385,6 +399,11 @@ func (a *Analyzer) analyzeBatch(ctx context.Context, bookID int64, batch *store.
 		}
 		a.Log.Info("splitting analysis batch", "book", bookID, "batch", batch.ID, "reason", err)
 		return a.Store.ReplaceAnalysisBatch(ctx, batch.ID, []store.AnalysisBatch{first, second})
+	}
+	if errors.As(err, &rejected) {
+		// Every provider refused for another reason (e.g. unsupported
+		// structured output): resending the batch cannot help.
+		return jobs.Permanent(err)
 	}
 	if err != nil {
 		return err

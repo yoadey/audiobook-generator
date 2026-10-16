@@ -103,6 +103,11 @@ func (b *bible) match(name string, aliases []string) int64 {
 	}
 	found := map[int64]bool{}
 	for _, a := range aliases {
+		// Only name-like aliases identify a person: descriptions such as
+		// "the Human" or "the girl" fit many.
+		if !identifying(a) {
+			continue
+		}
 		for _, id := range b.byNorm[store.NormName(a)] {
 			found[id] = true
 		}
@@ -113,6 +118,24 @@ func (b *bible) match(name string, aliases []string) int64 {
 		}
 	}
 	return 0
+}
+
+// identifying reports whether an alias is a name (not a description that
+// starts with an article, and not a generic word).
+func identifying(alias string) bool {
+	a := strings.ToLower(strings.TrimSpace(alias))
+	for _, article := range []string{"the ", "a ", "an "} {
+		if strings.HasPrefix(a, article) {
+			return false
+		}
+	}
+	return properName(alias, store.NormName(alias))
+}
+
+// fillers are words two different names may share.
+var fillers = map[string]bool{
+	"of": true, "the": true, "and": true, "de": true, "du": true, "da": true, "di": true, "la": true,
+	"le": true, "van": true, "von": true, "der": true, "den": true, "al": true, "el": true, "bin": true,
 }
 
 // related reports whether a reported name or alias shares a word with the
@@ -127,7 +150,7 @@ func (b *bible) related(id int64, name string, aliases []string) bool {
 	}
 	for _, s := range append([]string{name}, aliases...) {
 		for _, w := range strings.Fields(store.NormName(s)) {
-			if known[w] && !titles[w] {
+			if known[w] && !titles[w] && !fillers[w] && len(w) >= 3 {
 				return true
 			}
 		}
@@ -317,7 +340,11 @@ func apply(ctx context.Context, tx *store.Store, bookID int64, b *bible, sent ma
 				return err
 			}
 		}
-		aliases := append([]string{name}, rc.Aliases...)
+		aliases := []string{name}
+		// The aliases of a corrected character are the user's.
+		if !c.UserEdited {
+			aliases = append(aliases, rc.Aliases...)
+		}
 		for i := range aliases {
 			aliases[i] = clip(aliases[i], 120)
 		}

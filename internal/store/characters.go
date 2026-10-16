@@ -368,7 +368,7 @@ func (s *Store) MergeCharacters(ctx context.Context, targetID int64, sourceIDs .
 			return err
 		}
 		if err := db.Model(&Character{ID: target.ID}).Select("Gender", "AgeGroup", "Role", "Description",
-			"SpeechStyle", "Importance", "Speaks").Updates(&target).Error; err != nil {
+			"SpeechStyle", "Importance", "Speaks", "UserEdited").Updates(&target).Error; err != nil {
 			return err
 		}
 		return tx.RefreshCharacterStats(ctx, target.ID)
@@ -399,6 +399,7 @@ func mergeProfile(dst, src *Character) {
 	}
 	dst.Importance = max(dst.Importance, src.Importance)
 	dst.Speaks = dst.Speaks || src.Speaks
+	dst.UserEdited = dst.UserEdited || src.UserEdited
 }
 
 func containsID(ids []int64, id int64) bool {
@@ -603,4 +604,14 @@ func deleteAnalysis(tx *gorm.DB, bookID int64) error {
 	}
 	return tx.Model(&Chapter{}).Where("book_id = ?", bookID).
 		Updates(map[string]any{"narration": "", "pov_character_id": nil}).Error
+}
+
+// PauseStaleAnalysis sets an analysis that is active but has no job back to
+// paused, only if its status is still status and unchanged since
+// updatedAt (a concurrent start or resume wins).
+func (s *Store) PauseStaleAnalysis(ctx context.Context, bookID int64, status AnalysisStatus, updatedAt time.Time) (bool, error) {
+	res := s.db.WithContext(ctx).Model(&Book{}).
+		Where("id = ? AND analysis_status = ? AND updated_at = ?", bookID, status, updatedAt).
+		Update("analysis_status", AnalysisPaused)
+	return res.RowsAffected == 1, res.Error
 }

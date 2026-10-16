@@ -60,7 +60,7 @@ type candidate struct{ a, b int64 }
 // genders are returned in conflicting (they are not the same).
 func candidates(chars []store.Character, aliases []store.CharacterAlias, distinct map[[2]int64]bool,
 	limit int,
-) (pairs, conflicting []candidate) {
+) (pairs, conflicting []candidate, more bool) {
 	byID := map[int64]*store.Character{}
 	names := map[int64][][2]string{} // alias, norm
 	for i := range chars {
@@ -142,9 +142,9 @@ func candidates(chars []store.Character, aliases []store.CharacterAlias, distinc
 		return pairs[i].b < pairs[j].b
 	})
 	if len(pairs) > limit {
-		pairs = pairs[:limit]
+		pairs, more = pairs[:limit], true
 	}
-	return pairs, conflicting
+	return pairs, conflicting, more
 }
 
 func known(g store.Gender) bool { return g == store.GenderFemale || g == store.GenderMale }
@@ -192,29 +192,41 @@ func profile(c *store.Character, aliases []store.CharacterAlias, chapters string
 
 // mergeDuplicates asks the LLM about candidate pairs in groups and merges
 // or marks them distinct; both decisions are stored, so a resumed run only
-// asks about pairs left over.
+// asks about pairs left over. More candidates than MergePairs are handled
+// in further rounds.
 func (a *Analyzer) mergeDuplicates(ctx context.Context, bookID int64, progress func(float64)) error {
+	for {
+		asked, more, err := a.mergeRound(ctx, bookID, progress)
+		if err != nil || !more || !asked {
+			return err
+		}
+	}
+}
+
+// mergeRound handles up to MergePairs candidates; asked reports whether it
+// decided anything, more whether candidates were left over.
+func (a *Analyzer) mergeRound(ctx context.Context, bookID int64, progress func(float64)) (asked, more bool, err error) {
 	chars, err := a.Store.BookCharacters(ctx, bookID)
 	if err != nil {
-		return err
+		return false, false, err
 	}
 	aliases, err := a.Store.BookAliases(ctx, bookID)
 	if err != nil {
-		return err
+		return false, false, err
 	}
 	distinct, err := a.Store.DistinctPairs(ctx, bookID)
 	if err != nil {
-		return err
+		return false, false, err
 	}
-	pairs, conflicting := candidates(chars, aliases, distinct, a.maxMergePairs())
+	pairs, conflicting, more := candidates(chars, aliases, distinct, a.maxMergePairs())
 	for _, p := range conflicting {
 		if err := a.Store.MarkDistinct(ctx, bookID, p.a, p.b); err != nil {
-			return err
+			return false, false, err
 		}
 		distinct[[2]int64{p.a, p.b}] = true
 	}
 	if len(pairs) == 0 {
-		return nil
+		return false, more, nil
 	}
 	byID := map[int64]*store.Character{}
 	for i := range chars {
@@ -240,7 +252,7 @@ func (a *Analyzer) mergeDuplicates(ctx context.Context, bookID int64, progress f
 	group := a.mergeGroupSize()
 	for start := 0; start < len(pairs); start += group {
 		if paused, err := a.paused(ctx, bookID); err != nil || paused {
-			return err
+			return false, false, err
 		}
 		progress(float64(start) / float64(len(pairs)))
 		var ask []candidate
@@ -262,12 +274,12 @@ func (a *Analyzer) mergeDuplicates(ctx context.Context, bookID int64, progress f
 		}
 		req, err := mergePrompt.Render(map[string]any{"Pairs": lines})
 		if err != nil {
-			return err
+			return false, false, err
 		}
 		req.MaxTokens = 2048
 		var out mergeResult
 		if _, err := a.LLM.CompleteJSON(ctx, req, &out); err != nil {
-			return err
+			return false, false, err
 		}
 		for _, d := range out.Decisions {
 			var n int
@@ -281,24 +293,34 @@ func (a *Analyzer) mergeDuplicates(ctx context.Context, bookID int64, progress f
 			}
 			if !d.Same {
 				if err := a.Store.MarkDistinct(ctx, bookID, pa, pb); err != nil {
-					return err
+					return false, false, err
 				}
 				distinct[[2]int64{min(pa, pb), max(pa, pb)}] = true
+				asked = true
 				continue
 			}
-			// The better-known character survives.
+			// A character corrected by hand survives (two of them are left
+			// to the user); otherwise the better-known one.
 			keep, drop := pa, pb
-			if ck, cd := byID[keep], byID[drop]; cd.ChapterCount > ck.ChapterCount ||
-				(cd.ChapterCount == ck.ChapterCount && len(strings.Fields(cd.Name)) > len(strings.Fields(ck.Name))) {
+			ck, cd := byID[keep], byID[drop]
+			switch {
+			case ck.UserEdited && cd.UserEdited:
+				continue
+			case cd.UserEdited:
+				keep, drop = drop, keep
+			case ck.UserEdited:
+			case cd.ChapterCount > ck.ChapterCount ||
+				(cd.ChapterCount == ck.ChapterCount && len(strings.Fields(cd.Name)) > len(strings.Fields(ck.Name))):
 				keep, drop = drop, keep
 			}
 			c, err := a.Store.MergeCharacters(ctx, keep, drop)
 			if err != nil {
-				return err
+				return false, false, err
 			}
 			byID[keep] = c
 			aliasesOf[keep] = append(aliasesOf[keep], aliasesOf[drop]...)
 			merged[drop] = keep
+			asked = true
 			// "drop is not X" now holds for keep (as in the store).
 			for k := range distinct {
 				if k[0] == drop || k[1] == drop {
@@ -311,7 +333,7 @@ func (a *Analyzer) mergeDuplicates(ctx context.Context, bookID int64, progress f
 			a.Log.Info("merged duplicate characters", "book", bookID, "kept", c.Name, "merged", byID[drop].Name)
 		}
 	}
-	return nil
+	return asked, more, nil
 }
 
 type pairLine struct{ ID, A, B string }

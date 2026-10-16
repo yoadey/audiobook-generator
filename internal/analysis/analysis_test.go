@@ -498,3 +498,70 @@ func TestAnalysisRespectsCorrectionsAndDistrustsStrangeRefs(t *testing.T) {
 }
 
 func ref(id int64) string { return "c" + strconv.FormatInt(id, 10) }
+
+func TestDuplicateCheckRespectsCorrectionsAndRunsInRounds(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, chs := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		a.MergePairs = 1 // one pair per round
+		// "Tom" was corrected by hand; the analysis knows "Tom Baker" from
+		// more chapters. Anna has a pair as well.
+		tom := &store.Character{BookID: b.ID, Name: "Tom", Role: "baker (corrected)", UserEdited: true, Importance: 5}
+		require.NoError(t, s.CreateCharacter(ctx, tom))
+		require.NoError(t, s.LinkCharacterChapters(ctx, b.ID, tom.ID, chs[1].ID))
+		require.NoError(t, a.Start(ctx, b, false))
+		srv.Respond = func(r llmtest.Request) llmtest.Reply {
+			if strings.Contains(userMessage(r), "Pairs (") {
+				return llmtest.Reply{Content: `{"decisions": [{"pair": "p1", "same": true}]}`}
+			}
+			return answer(t, []char{
+				{Name: "Tom Baker", Gender: "male", Role: "baker", Importance: 3, Chapters: []int{1, 2, 3}},
+				{Name: "Anna", Gender: "female", Importance: 2, Chapters: []int{1}},
+				{Name: "Anna Smith", Gender: "female", Importance: 2, Chapters: []int{2}},
+			})
+		}
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+
+		cs := characters(t, s, b.ID)
+		require.Len(t, cs, 2, "both pairs merged, in two rounds")
+		got, ok := cs["Tom"]
+		require.True(t, ok, "the corrected character survives")
+		assert.Equal(t, "baker (corrected)", got.Role)
+		assert.True(t, got.UserEdited)
+		assert.Equal(t, 3, got.ChapterCount)
+	})
+}
+
+func TestAnalysisGivesUpOnPermanentRefusals(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, _ := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		require.NoError(t, a.Start(ctx, b, false))
+		srv.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":"response_format json_schema is not supported"}`})
+		err := a.Run(ctx, b.ID, func(float64) {})
+		var perm jobs.PermanentError
+		require.ErrorAs(t, err, &perm, "resending the batch cannot help")
+		assert.Len(t, srv.Requests(), 1)
+	})
+}
+
+func TestProgressResetsJobAttempts(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, _ := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		require.NoError(t, a.Start(ctx, b, false))
+		srv.Enqueue(answer(t, nil))
+		j, err := s.ClaimJob(ctx, analysis.Queue, time.Now().UTC())
+		require.NoError(t, err)
+		require.NoError(t, s.DB().Model(&store.Job{}).Where("id = ?", j.ID).UpdateColumn("attempts", 4).Error)
+		j.Attempts = 4
+		require.NoError(t, a.Handler().Run(ctx, j, func(float64) {}))
+		got, err := s.GetJob(ctx, j.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, got.Attempts, "a finished batch resets the count")
+		assert.Equal(t, 1, j.Attempts)
+	})
+}

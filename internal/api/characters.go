@@ -95,10 +95,13 @@ func (s *Server) toAnalysis(ctx context.Context, b *store.Book) (Analysis, error
 		// The job stopped (e.g. it saw a pause just before a resume):
 		// report it as paused, so it can be resumed. (Not right after a
 		// start, which sets the status before it queues the job.)
-		if err := s.Store.UpdateBook(ctx, b.ID, map[string]any{"AnalysisStatus": store.AnalysisPaused}); err != nil {
+		ok, err := s.Store.PauseStaleAnalysis(ctx, b.ID, b.AnalysisStatus, b.UpdatedAt)
+		if err != nil {
 			return Analysis{}, err
 		}
-		out.Status = AnalysisStatusPaused
+		if ok {
+			out.Status = AnalysisStatusPaused
+		}
 	}
 	return out, nil
 }

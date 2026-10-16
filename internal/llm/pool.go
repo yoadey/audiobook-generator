@@ -352,12 +352,13 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 		}
 		now := p.Now()
 		var (
-			pick       *store.LLMProvider
-			pickLim    *limiter
-			pickAt     time.Time
-			reasons    []string
-			retryAt    time.Time
-			keyMissing bool
+			pick        *store.LLMProvider
+			pickLim     *limiter
+			pickAt      time.Time
+			reasons     []string
+			retryAt     time.Time
+			keyMissing  bool
+			tooLargeFor bool // some provider's limits are below the request
 		)
 		for _, prov := range fallbackOrder(provs, failed) {
 			if rejected[prov.ID] {
@@ -379,6 +380,7 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 			}
 			reasons = append(reasons, fmt.Sprintf("%s: %s", prov.Name, a.Reason))
 			if a.Never {
+				tooLargeFor = true
 				continue
 			}
 			if retryAt.IsZero() || a.At.Before(retryAt) {
@@ -393,6 +395,9 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 				// Wait for the configuration to change, like without
 				// providers.
 				return nil, &ExhaustedError{RetryAt: now.Add(15 * time.Minute), Reasons: reasons}
+			case lastErr != nil && tooLargeFor:
+				// Some providers would take a smaller request.
+				return nil, &TooLargeError{Reasons: append(reasons, lastErr.Error())}
 			case lastErr != nil:
 				// Every remaining provider refused this request.
 				return nil, &RejectedError{Errs: rejections}

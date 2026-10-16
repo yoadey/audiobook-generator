@@ -510,3 +510,17 @@ func TestRejectionsAndTruncatedRepairs(t *testing.T) {
 		assert.True(t, inv.Truncated, "a cut-off repair answer counts as truncated")
 	})
 }
+
+func TestTooLargeForSomeAndRejectedByOthers(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		small, big := llmtest.New(t), llmtest.New(t)
+		addProvider(t, s, small, "small", 0, func(p *store.LLMProvider) { p.TPM = 5 })
+		addProvider(t, s, big, "big", 1, nil)
+		pool, _ := newPool(s)
+		big.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":"something else"}`})
+		_, err := pool.Complete(ctx, userReq("a request well beyond five tokens per minute"))
+		var tl *llm.TooLargeError
+		require.ErrorAs(t, err, &tl, "a smaller request would fit the small provider")
+	})
+}

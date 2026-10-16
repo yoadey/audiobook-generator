@@ -29,14 +29,16 @@ func TestCandidates(t *testing.T) {
 	}
 	distinct := map[[2]int64]bool{{8, 9}: true}
 
-	pairs, conflicting := candidates(chars, aliases, distinct, 100)
+	pairs, conflicting, more := candidates(chars, aliases, distinct, 100)
+	assert.False(t, more)
 	assert.ElementsMatch(t, []candidate{{1, 2}}, pairs,
 		"first name vs full name; generic words, aliases of different people and known distinct pairs are not candidates")
 	assert.ElementsMatch(t, []candidate{{3, 4}}, conflicting, "Mr. and Mrs. Bennet differ by gender")
 
-	pairs, _ = candidates(chars, aliases, nil, 100)
+	pairs, _, _ = candidates(chars, aliases, nil, 100)
 	assert.Contains(t, pairs, candidate{8, 9})
-	pairs, _ = candidates(chars, aliases, nil, 1)
+	pairs, _, more = candidates(chars, aliases, nil, 1)
+	assert.True(t, more)
 	assert.Equal(t, []candidate{{1, 2}}, pairs, "most important first when limited")
 }
 
@@ -74,7 +76,16 @@ func TestRelevantCharacters(t *testing.T) {
 	assert.Len(t, b.relevant("Erin Solstice met Ryoka Griffin", 1), 1)
 
 	assert.EqualValues(t, 3, b.match("pisces", nil))
-	assert.EqualValues(t, 2, b.match("Ryoka", []string{"The Runner"}), "matched by an alias")
+	b.addName(2, "ryoka")
+	b.add(&store.Character{ID: 5, Name: "Ryoka's sister"})
+	assert.EqualValues(t, 2, b.match("Miss Griffin", []string{"Ryoka"}), "matched by a name-like alias")
+	assert.Zero(t, b.match("Somebody", []string{"the Runner"}), "descriptions do not identify")
+	assert.True(t, identifying("Erin"))
+	assert.False(t, identifying("The Innkeeper"))
+	assert.False(t, identifying("Mom"))
+	b.add(&store.Character{ID: 6, Name: "Lady of the Lake"})
+	assert.False(t, b.related(6, "Head of Security", nil), "filler words do not relate names")
+	assert.True(t, b.related(6, "The Lady", []string{"Lake Lady"}))
 	assert.Zero(t, b.match("Unknown", nil))
 	assert.EqualValues(t, 12, parseRef(" c12 "))
 	assert.Zero(t, parseRef("nope"))
