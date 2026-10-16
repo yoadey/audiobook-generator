@@ -126,7 +126,7 @@ func TestAttributionFlow(t *testing.T) {
 					assert.True(t, sg.SpeakerManual)
 				case 2:
 					assert.Equal(t, tomID, *sg.SpeakerId)
-					assert.Equal(t, "angry", *sg.Emotion)
+					assert.Equal(t, api.EmotionAngry, *sg.Emotion)
 					assert.InDelta(t, 1, sg.Confidence, 1e-6)
 				}
 			}
