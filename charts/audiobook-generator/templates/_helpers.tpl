@@ -110,6 +110,22 @@ app.kubernetes.io/component: kokoro
 {{- end }}
 {{- end }}
 
+{{/* Environment of the Litestream containers. */}}
+{{- define "abg.litestreamEnv" -}}
+{{- with .Values.backup.litestream.s3 }}
+- name: LITESTREAM_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ .existingSecret }}
+      key: {{ .accessKeyIdKey }}
+- name: LITESTREAM_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ .existingSecret }}
+      key: {{ .secretAccessKeyKey }}
+{{- end }}
+{{- end }}
+
 {{/* TTS base URL. */}}
 {{- define "abg.ttsUrl" -}}
 {{- if .Values.tts.kokoro.enabled }}
@@ -155,6 +171,16 @@ true
 {{- end }}
 {{- if not .clientId }}
 {{- fail "auth.oidc.clientId is required when auth.oidc.enabled" }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- with .Values.backup.litestream }}
+{{- if .enabled }}
+{{- if ne $.Values.database.type "sqlite" }}
+{{- fail "backup.litestream needs database.type=sqlite (back up PostgreSQL with its own tools)" }}
+{{- end }}
+{{- if or (not .s3.bucket) (not .s3.existingSecret) }}
+{{- fail "backup.litestream needs s3.bucket and s3.existingSecret" }}
 {{- end }}
 {{- end }}
 {{- end }}

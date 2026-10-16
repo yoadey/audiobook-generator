@@ -43,6 +43,28 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.backup.litestream.enabled }}
+      {{- $ls := .Values.backup.litestream }}
+      initContainers:
+        # A fresh volume gets the database back from the backup before the
+        # app starts (nothing happens when the file exists or no backup does).
+        - name: litestream-restore
+          image: "{{ $ls.image.repository }}:{{ $ls.image.tag }}"
+          imagePullPolicy: {{ $ls.image.pullPolicy }}
+          args: [restore, -if-db-not-exists, -if-replica-exists, -config, /etc/litestream.yml, /data/audiobook-generator.db]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            {{- include "abg.litestreamEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml $ls.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: litestream
+              mountPath: /etc/litestream.yml
+              subPath: litestream.yml
+      {{- end }}
       containers:
         - name: app
           image: {{ include "abg.image" . }}
@@ -124,7 +146,32 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+        {{- if .Values.backup.litestream.enabled }}
+        {{- $ls := .Values.backup.litestream }}
+        # Streams every change of the SQLite database to S3.
+        - name: litestream
+          image: "{{ $ls.image.repository }}:{{ $ls.image.tag }}"
+          imagePullPolicy: {{ $ls.image.pullPolicy }}
+          args: [replicate, -config, /etc/litestream.yml]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            {{- include "abg.litestreamEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml $ls.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: litestream
+              mountPath: /etc/litestream.yml
+              subPath: litestream.yml
+        {{- end }}
       volumes:
+        {{- if .Values.backup.litestream.enabled }}
+        - name: litestream
+          configMap:
+            name: {{ include "abg.fullname" . }}-litestream
+        {{- end }}
         - name: data
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
