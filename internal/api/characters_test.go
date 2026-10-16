@@ -198,9 +198,10 @@ func TestAnalysisGuards(t *testing.T) {
 
 		// While a job still runs (e.g. finishing a batch after a pause),
 		// nothing may change under it.
-		j := &store.Job{Type: "analyze_book", Queue: "llm", BookID: &book.Id}
+		// (On a queue no runner serves, so the test's runner cannot take it.)
+		j := &store.Job{Type: "analyze_book", Queue: "test-only", BookID: &book.Id}
 		require.NoError(t, s.EnqueueJob(ctx, j))
-		_, err = s.ClaimJob(ctx, "llm", time.Now().UTC())
+		_, err = s.ClaimJob(ctx, "test-only", time.Now().UTC())
 		require.NoError(t, err)
 		require.Equal(t, http.StatusConflict, c.json(http.MethodPatch, "/api/characters/"+cid,
 			map[string]any{"role": "x"}, nil))
