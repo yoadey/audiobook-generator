@@ -361,7 +361,7 @@ export function CharactersPage() {
                     id={String(c.id)}
                     voice={c.voice}
                     speed={c.voiceSpeed}
-                    text={sample(c.id)}
+                    text={c.previewText || sample(c.id)}
                     preview={preview}
                     label={`Listen to ${c.name}`}
                   />

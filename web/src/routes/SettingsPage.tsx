@@ -12,6 +12,7 @@ import {
 } from '../api/client';
 import { LLMProviderCard } from '../components/LLMProviderCard';
 import { LLMProviderForm } from '../components/LLMProviderForm';
+import { PreviewTextCard } from '../components/PreviewTextCard';
 import { notifyError, notifySuccess } from '../lib/notify';
 
 type Editing = { mode: 'create' } | { mode: 'edit'; provider: LLMProvider } | null;
@@ -121,6 +122,11 @@ export function SettingsPage() {
           />
         )}
       </Modal>
+
+      <Title order={3} mt="md">
+        Voices
+      </Title>
+      <PreviewTextCard />
     </Stack>
   );
 }

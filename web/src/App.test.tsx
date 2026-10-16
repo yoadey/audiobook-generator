@@ -44,6 +44,7 @@ const book = {
   narratorVoice: 'af_heart',
   narratorSpeed: 1,
   lookahead: 3,
+  previewText: '',
   analysisStatus: 'none',
   castingStatus: 'none',
   createdAt: '2026-10-15T00:00:00Z',
@@ -84,6 +85,7 @@ const erin = {
   voiceSource: 'own',
   voiceManual: false,
   voiceNote: 'warm and British',
+  previewText: '',
 };
 
 const voices = [
@@ -984,6 +986,70 @@ describe('App', () => {
       voice: 'bf_emma',
       voiceSpeed: 1,
     });
+  });
+
+  it('gives a character a sample text of its own', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/voices': voices,
+      'GET /api/characters/7': { ...erin, chapters: [] },
+      'GET /api/characters/7/quotes': [
+        { text: '“Welcome to the inn!”', chapterId: 10, chapterIdx: 0, chapterTitle: 'Chapter 1' },
+      ],
+      'PATCH /api/characters/7': { ...erin, chapters: [] },
+    });
+    renderAt('/books/1/characters/7');
+    const editor = await screen.findByTestId('voice-editor');
+    await within(editor).findByText('“Welcome to the inn!”');
+    fireEvent.click(within(editor).getByRole('radio', { name: 'Own sample text' }));
+    fireEvent.change(within(editor).getByRole('textbox', { name: 'Sample text' }), {
+      target: { value: 'Mind the stairs.' },
+    });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save voice' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PATCH')).toBe(
+        true,
+      ),
+    );
+    const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
+    expect(await (patch[0] as Request).json()).toEqual({ previewText: 'Mind the stairs.' });
+    // The preview says it.
+    fireEvent.click(within(editor).getByRole('button', { name: 'Listen to this voice' }));
+    await vi.waitFor(() =>
+      expect(
+        fetch.mock.calls.some(([r]) => typeof r === 'string' && r.endsWith('/voices/preview')),
+      ).toBe(true),
+    );
+    const call = fetch.mock.calls.find(
+      ([r]) => typeof r === 'string' && r.endsWith('/voices/preview'),
+    )! as unknown as [string, RequestInit];
+    expect(JSON.parse(call[1].body as string)).toMatchObject({ text: 'Mind the stairs.' });
+  });
+
+  it('saves the sample text of voice previews', async () => {
+    const fetch = stubApi({
+      '/api/llm/providers': [],
+      'GET /api/settings': { previewText: '', defaultPreviewText: 'It was a bright cold day.' },
+      'PATCH /api/settings': {
+        previewText: 'Call me Ishmael.',
+        defaultPreviewText: 'It was a bright cold day.',
+      },
+    });
+    renderAt('/settings');
+    const input = await screen.findByRole('textbox', { name: 'Sample text' });
+    expect(input).toHaveAttribute('placeholder', 'It was a bright cold day.');
+    fireEvent.change(input, { target: { value: 'Call me Ishmael.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PATCH')).toBe(
+        true,
+      ),
+    );
+    const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
+    expect(await (patch[0] as Request).json()).toEqual({ previewText: 'Call me Ishmael.' });
+    expect(
+      await screen.findByRole('button', { name: 'Use the built-in text' }),
+    ).toBeInTheDocument();
   });
 
   it('lists the voice catalogue', async () => {

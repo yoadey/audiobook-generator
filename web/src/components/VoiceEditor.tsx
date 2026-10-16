@@ -10,6 +10,7 @@ import {
   Slider,
   Stack,
   Text,
+  Textarea,
   Tooltip,
 } from '@mantine/core';
 import { IconPlus, IconRefresh, IconRotate, IconTrash } from '@tabler/icons-react';
@@ -90,10 +91,15 @@ export function VoiceEditor({
   const [parts, setParts] = useState<RecipePart[]>(initialParts);
   const [speed, setSpeed] = useState(c.voiceSpeed);
   const [quote, setQuote] = useState(0);
+  // Previews speak quotes from the book, or a text of the character's own.
+  const [ownText, setOwnText] = useState(c.previewText);
+  const [useOwn, setUseOwn] = useState(c.previewText !== '');
 
   const recipe = formatRecipe(parts);
   const voiceChanged = recipe !== formatRecipe(initialParts) || speed !== c.voiceSpeed;
-  const dirty = tier !== initialTier || voiceChanged;
+  const previewText = useOwn ? ownText.trim() : '';
+  const textChanged = previewText !== c.previewText;
+  const dirty = tier !== initialTier || voiceChanged || textChanged;
   const samples = quotes.data ?? [];
   const sample = samples.length > 0 ? samples[quote % samples.length] : undefined;
 
@@ -113,6 +119,9 @@ export function VoiceEditor({
     if (voiceChanged && recipe) {
       body.voice = recipe;
       body.voiceSpeed = speed;
+    }
+    if (textChanged) {
+      body.previewText = previewText;
     }
     save.mutate(body);
   };
@@ -239,7 +248,7 @@ export function VoiceEditor({
             id="editor"
             voice={recipe}
             speed={speed}
-            text={sample?.text}
+            text={previewText || sample?.text}
             preview={preview}
             label="Listen to this voice"
           />
@@ -247,7 +256,28 @@ export function VoiceEditor({
             {recipe || '—'}
           </Text>
         </Group>
-        {sample ? (
+        <SegmentedControl
+          size="xs"
+          w="fit-content"
+          value={useOwn ? 'own' : 'quotes'}
+          onChange={(v) => setUseOwn(v === 'own')}
+          data={[
+            { value: 'quotes', label: 'Quotes from the book' },
+            { value: 'own', label: 'Own sample text' },
+          ]}
+          aria-label="Preview text"
+        />
+        {useOwn ? (
+          <Textarea
+            aria-label="Sample text"
+            placeholder={sample?.text ?? 'What this character says in previews'}
+            value={ownText}
+            onChange={(e) => setOwnText(e.currentTarget.value)}
+            maxLength={500}
+            autosize
+            minRows={2}
+          />
+        ) : sample ? (
           <Blockquote p="xs" cite={`— ${sample.chapterTitle}`}>
             <Group justify="space-between" wrap="nowrap" align="flex-start">
               <Text size="sm">{sample.text}</Text>
