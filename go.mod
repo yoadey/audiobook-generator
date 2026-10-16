@@ -4,13 +4,16 @@ go 1.27.2
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-gormigrate/gormigrate/v2 v2.1.7
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/ncruces/go-sqlite3/gormlite v0.34.0
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/net v0.61.0
+	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/text v0.43.0
 	gorm.io/driver/postgres v1.6.3

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,6 +48,9 @@ type Config struct {
 	// empty disables the feeds. Changing it invalidates every feed URL.
 	FeedSecret string `env:"FEED_SECRET"`
 
+	// OIDC enables sign-in (when the issuer is set).
+	OIDC OIDC `envPrefix:"OIDC_"`
+
 	DB  Database `envPrefix:"DB_"`
 	TTS TTS      `envPrefix:"TTS_"`
 	LLM LLM      `envPrefix:"LLM_"`
@@ -68,6 +72,20 @@ type LLM struct {
 	// AttributionTokens is the input size of one speaker attribution
 	// request (longer chapters are sent in parts).
 	AttributionTokens int `env:"ATTRIBUTION_TOKENS" envDefault:"12000"`
+}
+
+// OIDC configures sign-in with OpenID Connect (e.g. Zitadel).
+type OIDC struct {
+	// Issuer URL; empty disables authentication.
+	Issuer       string `env:"ISSUER"`
+	ClientID     string `env:"CLIENT_ID"`
+	ClientSecret string `env:"CLIENT_SECRET"`
+	// Scopes, separated by spaces.
+	Scopes string `env:"SCOPES" envDefault:"openid profile email"`
+	// SessionKey encrypts the session cookie (at least 32 characters).
+	SessionKey string `env:"SESSION_KEY"`
+	// SessionTTL is how long a sign-in lasts without use.
+	SessionTTL time.Duration `env:"SESSION_TTL" envDefault:"720h"`
 }
 
 // Casting configures the voice casting.
@@ -139,6 +157,23 @@ func (c Config) Validate() error {
 	if c.PublicURL != "" {
 		if u, err := url.Parse(c.PublicURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			errs = append(errs, fmt.Errorf("ABG_PUBLIC_URL must be an http(s) URL, got %q", c.PublicURL))
+		}
+	}
+	if c.OIDC.Issuer != "" {
+		if u, err := url.Parse(c.OIDC.Issuer); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("ABG_OIDC_ISSUER must be an http(s) URL, got %q", c.OIDC.Issuer))
+		}
+		if c.OIDC.ClientID == "" {
+			errs = append(errs, errors.New("ABG_OIDC_CLIENT_ID is required with ABG_OIDC_ISSUER"))
+		}
+		if len(c.OIDC.SessionKey) < 32 {
+			errs = append(errs, errors.New("ABG_OIDC_SESSION_KEY must be at least 32 characters with ABG_OIDC_ISSUER"))
+		}
+		if !slices.Contains(strings.Fields(c.OIDC.Scopes), "openid") {
+			errs = append(errs, errors.New("ABG_OIDC_SCOPES must contain openid"))
+		}
+		if c.OIDC.SessionTTL < time.Minute {
+			errs = append(errs, fmt.Errorf("ABG_OIDC_SESSION_TTL must be at least 1m, got %s", c.OIDC.SessionTTL))
 		}
 	}
 	if c.FeedSecret != "" && len(c.FeedSecret) < 16 {

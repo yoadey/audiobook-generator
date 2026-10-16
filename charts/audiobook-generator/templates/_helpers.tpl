@@ -77,6 +77,39 @@ app.kubernetes.io/component: kokoro
 {{- printf "%s-app" (include "abg.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{/* OIDC environment variables of the app container. */}}
+{{- define "abg.oidcEnv" -}}
+{{- with .Values.auth.oidc }}
+{{- if .enabled }}
+- name: ABG_OIDC_ISSUER
+  value: {{ .issuer | quote }}
+- name: ABG_OIDC_CLIENT_ID
+  value: {{ .clientId | quote }}
+{{- if .clientSecret.existingSecret }}
+- name: ABG_OIDC_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ .clientSecret.existingSecret }}
+      key: {{ .clientSecret.key }}
+{{- end }}
+- name: ABG_OIDC_SCOPES
+  value: {{ .scopes | quote }}
+- name: ABG_OIDC_SESSION_TTL
+  value: {{ .sessionTTL | quote }}
+- name: ABG_OIDC_SESSION_KEY
+  valueFrom:
+    secretKeyRef:
+      {{- if .sessionKey.existingSecret }}
+      name: {{ .sessionKey.existingSecret }}
+      key: {{ .sessionKey.key }}
+      {{- else }}
+      name: {{ include "abg.appSecretName" $ }}
+      key: session-key
+      {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
 {{/* TTS base URL. */}}
 {{- define "abg.ttsUrl" -}}
 {{- if .Values.tts.kokoro.enabled }}
@@ -114,6 +147,16 @@ true
 {{- fail (printf "llm.providers: duplicate name %q" $p.name) }}
 {{- end }}
 {{- $_ := set $names $p.name true }}
+{{- end }}
+{{- with .Values.auth.oidc }}
+{{- if .enabled }}
+{{- if not (regexMatch "^https?://[^/]+" .issuer) }}
+{{- fail "auth.oidc.issuer must be an http(s) URL when auth.oidc.enabled" }}
+{{- end }}
+{{- if not .clientId }}
+{{- fail "auth.oidc.clientId is required when auth.oidc.enabled" }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- with .Values.publicUrl }}
 {{- if not (regexMatch "^https?://[^/]+" .) }}

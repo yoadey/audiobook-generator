@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yoadey/audiobook-generator/internal/auth"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
@@ -90,7 +91,7 @@ func (h *Handler) serveFeed(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	data, err := h.build(r.Context(), b, h.baseURL(r)+"/feed/"+url.PathEscape(token))
+	data, err := h.build(r.Context(), b, auth.BaseURL(r, h.PublicURL)+"/feed/"+url.PathEscape(token))
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -174,18 +175,6 @@ func playable(c *store.Chapter) bool {
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	h.Log.ErrorContext(r.Context(), "feed failed", "path", r.URL.Path, "err", err)
 	http.Error(w, "internal error", http.StatusInternalServerError)
-}
-
-// baseURL is the configured public URL, else the one the request came in on.
-func (h *Handler) baseURL(r *http.Request) string {
-	if h.PublicURL != "" {
-		return strings.TrimRight(h.PublicURL, "/")
-	}
-	scheme := "http"
-	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host
 }
 
 // RSS 2.0 with the iTunes podcast extensions.

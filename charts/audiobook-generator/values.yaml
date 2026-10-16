@@ -93,6 +93,29 @@ feed:
   existingSecret: ""
   existingSecretKey: feed-secret
 
+# Sign-in with OpenID Connect (e.g. Zitadel). Register a web application
+# with the redirect URI <publicUrl>/auth/callback (and, for sign-out,
+# the post-logout URI <publicUrl>/); PKCE is always used, so a public
+# client without secret works too. Probes, /metrics and the podcast feeds
+# stay reachable without a sign-in.
+auth:
+  oidc:
+    enabled: false
+    issuer: ""
+    clientId: ""
+    # Existing Secret with the client secret (empty: public client).
+    clientSecret:
+      existingSecret: ""
+      key: client-secret
+    scopes: openid profile email
+    # How long a sign-in lasts without use.
+    sessionTTL: 720h
+    # Key encrypting the session cookie (at least 32 characters). Empty
+    # existingSecret: the chart generates one and keeps it across upgrades.
+    sessionKey:
+      existingSecret: ""
+      key: session-key
+
 # Data volume: uploaded EPUBs, rendered audio and, in SQLite mode, the
 # database file. A single huge book needs ~10-20 GB of audio.
 persistence:

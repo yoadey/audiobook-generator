@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata" // quota time zones of LLM providers, without the OS database
@@ -21,6 +22,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/assemble"
 	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/audio"
+	"github.com/yoadey/audiobook-generator/internal/auth"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
 	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/config"
@@ -138,6 +140,19 @@ func run() error {
 		}
 	}()
 
+	var authn *auth.Authenticator
+	if cfg.OIDC.Issuer != "" {
+		authn, err = auth.New(auth.Config{
+			Issuer: cfg.OIDC.Issuer, ClientID: cfg.OIDC.ClientID, ClientSecret: cfg.OIDC.ClientSecret,
+			Scopes: strings.Fields(cfg.OIDC.Scopes), PublicURL: cfg.PublicURL,
+			SessionKey: []byte(cfg.OIDC.SessionKey), SessionTTL: cfg.OIDC.SessionTTL, Log: log,
+		})
+		if err != nil {
+			return err
+		}
+		log.Info("sign-in required", "issuer", cfg.OIDC.Issuer)
+	}
+
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: httpserver.Handler(httpserver.Options{
@@ -156,8 +171,10 @@ func run() error {
 				DataDir:        cfg.DataDir,
 				MaxUploadBytes: cfg.MaxUploadMB << 20,
 				FeedSecret:     []byte(cfg.FeedSecret),
+				AuthEnabled:    authn != nil,
 				Log:            log,
 			}),
+			Auth: authn,
 			Feed: &feed.Handler{
 				Store: st, Secret: []byte(cfg.FeedSecret), PublicURL: cfg.PublicURL,
 				DataDir: cfg.DataDir, Log: log,

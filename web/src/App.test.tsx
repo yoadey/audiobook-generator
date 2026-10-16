@@ -969,6 +969,27 @@ describe('App', () => {
     );
   });
 
+  it('shows the signed-in user and signs in again when the session ends', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign, pathname: '/jobs', search: '' });
+    const fetch = vi.fn(async (input: Request | string) => {
+      const url = new URL(typeof input === 'string' ? input : input.url);
+      if (url.pathname === '/api/me') {
+        return new Response(JSON.stringify({ authEnabled: true, name: 'Erin Solstice' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ message: 'sign-in required' }), { status: 401 });
+    });
+    vi.stubGlobal('fetch', fetch);
+    renderAt('/jobs');
+    expect(await screen.findByText('Erin Solstice')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sign out' })).toHaveAttribute('href', '/auth/logout');
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/auth/login?redirect=%2Fjobs'));
+    vi.unstubAllGlobals();
+  });
+
   it('shows the podcast feed URL', async () => {
     stubApi({
       '/api/books/1': { ...book, feedPath: '/feed/tok/1.xml' },

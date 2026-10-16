@@ -86,6 +86,7 @@ spec:
                   key: feed-secret
                   {{- end }}
             {{- end }}
+            {{- include "abg.oidcEnv" . | nindent 12 }}
             {{- include "abg.databaseEnv" . | nindent 12 }}
             {{- include "abg.llmEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}

@@ -586,6 +586,21 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /me:
+    get:
+      operationId: getMe
+      summary: The signed-in user
+      tags: [system]
+      responses:
+        "200":
+          description: The user, or authEnabled false when sign-in is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        default:
+          $ref: "#/components/responses/Error"
+
   /voices:
     get:
       operationId: listVoices
@@ -1778,6 +1793,18 @@ components:
         inCatalog:
           type: boolean
           description: Described by the built-in catalogue (otherwise only known to the server)
+    Me:
+      type: object
+      required: [authEnabled]
+      properties:
+        authEnabled:
+          type: boolean
+        subject:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
     Download:
       type: object
       required: [volumeId, title, chapterCount, renderedCount, status, hasFile, outdated]

@@ -378,6 +378,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/me': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The signed-in user */
+    get: operations['getMe'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/voices': {
     parameters: {
       query?: never;
@@ -1025,6 +1042,12 @@ export interface components {
       available: boolean;
       /** @description Described by the built-in catalogue (otherwise only known to the server) */
       inCatalog: boolean;
+    };
+    Me: {
+      authEnabled: boolean;
+      subject?: string;
+      name?: string;
+      email?: string;
     };
     Download: {
       /**
@@ -2040,6 +2063,27 @@ export interface operations {
         };
       };
       404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getMe: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The user, or authEnabled false when sign-in is off */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Me'];
+        };
+      };
       default: components['responses']['Error'];
     };
   };

@@ -86,3 +86,15 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: publicUrl must be an http(s) URL, got "audiobooks.example.com"
+
+  - it: generates the session key with OIDC
+    template: templates/app-secret.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://id.example.com
+      auth.oidc.clientId: abg
+    asserts:
+      - exists:
+          path: data.session-key
+      - exists:
+          path: data.feed-secret

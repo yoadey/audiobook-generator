@@ -1266,6 +1266,14 @@ type LexiconEntryUpdate struct {
 	Term        *string `json:"term,omitempty"`
 }
 
+// Me defines model for Me.
+type Me struct {
+	AuthEnabled bool    `json:"authEnabled"`
+	Email       *string `json:"email,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Subject     *string `json:"subject,omitempty"`
+}
+
 // Narration defines model for Narration.
 type Narration string
 
@@ -1694,6 +1702,9 @@ type ServerInterface interface {
 	// TestLLMProvider Send a small structured-output request to the provider and check the answer
 	// (POST /llm/providers/{providerId}/test)
 	TestLLMProvider(w http.ResponseWriter, r *http.Request, providerId ProviderId)
+	// GetMe The signed-in user
+	// (GET /me)
+	GetMe(w http.ResponseWriter, r *http.Request)
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(w http.ResponseWriter, r *http.Request)
@@ -3152,6 +3163,20 @@ func (siw *ServerInterfaceWrapper) TestLLMProvider(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetMe operation middleware
+func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSystemInfo operation middleware
 func (siw *ServerInterfaceWrapper) GetSystemInfo(w http.ResponseWriter, r *http.Request) {
 
@@ -3338,6 +3363,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/downloads", wrapper.ListDownloads)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/downloads/{volumeId}", wrapper.AssembleDownload)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/downloads/{volumeId}/file", wrapper.GetDownloadFile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/voices", wrapper.ListVoices)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/voices/preview", wrapper.PreviewVoice)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/jobs/{jobId}/retry", wrapper.RetryJob)
@@ -6270,6 +6296,44 @@ func (response TestLLMProviderdefaultJSONResponse) VisitTestLLMProviderResponse(
 	return err
 }
 
+type GetMeRequestObject struct {
+}
+
+type GetMeResponseObject interface {
+	VisitGetMeResponse(w http.ResponseWriter) error
+}
+
+type GetMe200JSONResponse Me
+
+func (response GetMe200JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetMedefaultJSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetSystemInfoRequestObject struct {
 }
 
@@ -6576,6 +6640,9 @@ type StrictServerInterface interface {
 	// TestLLMProvider Send a small structured-output request to the provider and check the answer
 	// (POST /llm/providers/{providerId}/test)
 	TestLLMProvider(ctx context.Context, request TestLLMProviderRequestObject) (TestLLMProviderResponseObject, error)
+	// GetMe The signed-in user
+	// (GET /me)
+	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(ctx context.Context, request GetSystemInfoRequestObject) (GetSystemInfoResponseObject, error)
@@ -7976,6 +8043,30 @@ func (sh *strictHandler) TestLLMProvider(w http.ResponseWriter, r *http.Request,
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(TestLLMProviderResponseObject); ok {
 		if err := validResponse.VisitTestLLMProviderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMe operation middleware
+func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	var request GetMeRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMe(ctx, request.(GetMeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMeResponseObject); ok {
+		if err := validResponse.VisitGetMeResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

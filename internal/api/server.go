@@ -10,6 +10,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/assemble"
 	"github.com/yoadey/audiobook-generator/internal/attribution"
+	"github.com/yoadey/audiobook-generator/internal/auth"
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
 	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/llm"
@@ -47,7 +48,9 @@ type Options struct {
 	MaxUploadBytes int64
 	// FeedSecret signs podcast feed URLs; empty disables them.
 	FeedSecret []byte
-	Log        *slog.Logger
+	// AuthEnabled reports that users sign in (OIDC).
+	AuthEnabled bool
+	Log         *slog.Logger
 }
 
 // Server implements StrictServerInterface.
@@ -161,4 +164,13 @@ func nonEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// GetMe returns the signed-in user.
+func (s *Server) GetMe(ctx context.Context, _ GetMeRequestObject) (GetMeResponseObject, error) {
+	me := Me{AuthEnabled: s.AuthEnabled}
+	if u := auth.UserFrom(ctx); u != nil {
+		me.Subject, me.Name, me.Email = nonEmpty(u.Subject), nonEmpty(u.Name), nonEmpty(u.Email)
+	}
+	return GetMe200JSONResponse(me), nil
 }

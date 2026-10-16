@@ -12,6 +12,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/yoadey/audiobook-generator/internal/auth"
 )
 
 // Pinger reports whether a dependency is usable.
@@ -25,6 +27,8 @@ type Options struct {
 	API interface{ Register(*http.ServeMux) }
 	// Feed registers the podcast feed routes (optional).
 	Feed interface{ Register(*http.ServeMux) }
+	// Auth requires a sign-in (nil: authentication is off).
+	Auth *auth.Authenticator
 	// Ready is checked by /readyz. Only the database: the UI must stay
 	// reachable while the TTS server restarts or loads its model.
 	Ready    Pinger
@@ -39,6 +43,9 @@ func Handler(o Options) http.Handler {
 	o.API.Register(mux)
 	if o.Feed != nil {
 		o.Feed.Register(mux)
+	}
+	if o.Auth != nil {
+		o.Auth.Register(mux)
 	}
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -58,7 +65,7 @@ func Handler(o Options) http.Handler {
 	// No method in the pattern: "GET /" would conflict with the API's "/api/".
 	mux.Handle("/", o.WebUI)
 
-	return instrument(mux, o.Registry, o.Log)
+	return instrument(o.Auth.Middleware(mux), o.Registry, o.Log)
 }
 
 // instrument records Prometheus metrics and logs every request. Route

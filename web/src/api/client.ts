@@ -23,6 +23,7 @@ export type QuoteUpdate = components['schemas']['QuoteUpdate'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type CharacterUpdate = components['schemas']['CharacterUpdate'];
 export type Job = components['schemas']['Job'];
+export type Me = components['schemas']['Me'];
 export type LexiconEntry = components['schemas']['LexiconEntry'];
 export type LexiconEntryInput = components['schemas']['LexiconEntryInput'];
 export type LexiconEntryUpdate = components['schemas']['LexiconEntryUpdate'];
@@ -43,10 +44,22 @@ export type Volume = components['schemas']['Volume'];
 // Absolute, because Request() outside a browser (tests) rejects relative URLs.
 const baseUrl = new URL('/api', window.location.origin).href;
 
+/** Sends the browser to sign in again when the session has ended. */
+function signInIfExpired(response: Response) {
+  if (response.status === 401) {
+    const back = window.location.pathname + window.location.search;
+    window.location.assign(`/auth/login?redirect=${encodeURIComponent(back)}`);
+  }
+}
+
 export const api = createClient<paths>({
   baseUrl,
   // Resolve fetch per call (not once at import time) so tests can stub it.
-  fetch: (request) => globalThis.fetch(request),
+  fetch: async (request) => {
+    const response = await globalThis.fetch(request);
+    signInIfExpired(response);
+    return response;
+  },
 });
 
 /** Unwraps an openapi-fetch result, throwing the API's error message. */
@@ -70,6 +83,12 @@ const analysisActive = (s?: AnalysisStatus) => s === 'queued' || s === 'running'
 export const castingActive = (s?: CastingStatus) => s === 'queued' || s === 'running';
 
 // --- Queries -----------------------------------------------------------------
+
+export const meQuery = queryOptions({
+  queryKey: ['me'],
+  queryFn: () => unwrap(api.GET('/me')),
+  staleTime: Infinity,
+});
 
 export const systemInfoQuery = queryOptions({
   queryKey: ['system'],
@@ -356,6 +375,7 @@ export async function previewVoice(
     body: JSON.stringify({ voice, speed, text, bookId }),
     signal,
   });
+  signInIfExpired(response);
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => undefined);
     throw new Error(
