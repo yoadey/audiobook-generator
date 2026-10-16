@@ -146,9 +146,6 @@ export function NarratorSettings({ book }: { book: Book }) {
             onChange={setLookahead}
             w={160}
           />
-          <Button onClick={() => save.mutate()} disabled={!dirty} loading={save.isPending}>
-            Save
-          </Button>
         </Group>
         <Textarea
           label="Sample text"
@@ -161,6 +158,11 @@ export function NarratorSettings({ book }: { book: Book }) {
           minRows={1}
           maw={720}
         />
+        <Group>
+          <Button onClick={() => save.mutate()} disabled={!dirty} loading={save.isPending}>
+            Save
+          </Button>
+        </Group>
         <Text size="xs" c="dimmed">
           Changing the voice or speed marks existing audio as outdated; chapters in the lookahead
           window are rendered again automatically while you listen.
