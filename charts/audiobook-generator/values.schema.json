@@ -255,6 +255,9 @@
                 "key": {
                   "type": "string",
                   "minLength": 1
+                },
+                "clientIdKey": {
+                  "type": "string"
                 }
               }
             },

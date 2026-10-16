@@ -107,6 +107,9 @@ auth:
     clientSecret:
       existingSecret: ""
       key: client-secret
+      # Also read the client ID from this Secret (when clientId is empty),
+      # e.g. one that Terraform writes for the identity provider's app.
+      clientIdKey: ""
     scopes: openid profile email
     # How long a sign-in lasts without use.
     sessionTTL: 720h

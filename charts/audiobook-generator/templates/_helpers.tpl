@@ -84,7 +84,14 @@ app.kubernetes.io/component: kokoro
 - name: ABG_OIDC_ISSUER
   value: {{ .issuer | quote }}
 - name: ABG_OIDC_CLIENT_ID
+{{- if .clientId }}
   value: {{ .clientId | quote }}
+{{- else }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ .clientSecret.existingSecret }}
+      key: {{ .clientSecret.clientIdKey }}
+{{- end }}
 {{- if .clientSecret.existingSecret }}
 - name: ABG_OIDC_CLIENT_SECRET
   valueFrom:
@@ -169,8 +176,8 @@ true
 {{- if not (regexMatch "^https?://[^/]+" .issuer) }}
 {{- fail "auth.oidc.issuer must be an http(s) URL when auth.oidc.enabled" }}
 {{- end }}
-{{- if not .clientId }}
-{{- fail "auth.oidc.clientId is required when auth.oidc.enabled" }}
+{{- if and (not .clientId) (not (and .clientSecret.existingSecret .clientSecret.clientIdKey)) }}
+{{- fail "auth.oidc.clientId (or clientSecret.existingSecret with clientSecret.clientIdKey) is required when auth.oidc.enabled" }}
 {{- end }}
 {{- if not $.Values.publicUrl }}
 {{- fail "publicUrl is required when auth.oidc.enabled" }}
