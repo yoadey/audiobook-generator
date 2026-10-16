@@ -310,9 +310,14 @@ As implemented in M6 (`internal/attribution`):
   names for the first time and the number of paragraphs done, only while
   the attribution still runs from that point (a reset, chapter merge or
   split drops a late answer); a resumed job continues after those
-  paragraphs. A render also waits while a casting job of the book is
-  pending, and narrated audio of a chapter that can now be attributed
-  counts as outdated. Cut-off answers, requests too large for every provider and
+  paragraphs.
+- Waiting: a render waits for the attribution it needs and, if the chapter
+  has speakers, for a pending casting (queued above attributions) — but
+  not for jobs deferred more than two minutes (LLM quota, no provider):
+  then it renders with the voices there are and is rendered again when
+  they change. A finished analysis marks all audio outdated (it was
+  narrated only). Outdated audio stays playable while it is re-rendered,
+  and a failed re-render keeps it. Cut-off answers, requests too large for every provider and
   content-filter refusals split the part; a single paragraph still refused
   stays with the narrator.
 - Speakers chosen in the chapter editor are flags (`SpeakerManual`) an

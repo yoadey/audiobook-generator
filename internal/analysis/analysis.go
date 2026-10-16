@@ -327,10 +327,17 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 	a.Log.Info("analysis done", "book", bookID)
 	ok, err := a.Store.TransitionAnalysis(ctx, bookID, store.AnalysisDone,
 		map[string]any{"analysis_finished_at": now}, store.AnalysisMerging)
-	if err == nil && ok && a.OnDone != nil {
+	if err != nil || !ok {
+		return err
+	}
+	// Audio rendered so far is narrated only: speakers can be found now.
+	if err := a.Store.TouchBookVoices(ctx, bookID); err != nil {
+		a.Log.Warn("mark audio outdated", "book", bookID, "err", err)
+	}
+	if a.OnDone != nil {
 		a.OnDone(ctx, bookID)
 	}
-	return err
+	return nil
 }
 
 // paused reports whether the user paused (or reset) the analysis; a

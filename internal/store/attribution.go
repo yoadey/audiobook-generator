@@ -127,14 +127,23 @@ func (s *Store) SetQuoteSpeaker(ctx context.Context, chapterID int64, quoteRef i
 			}).Error; err != nil {
 			return err
 		}
-		// Confirming the speaker it already has changes nothing audible.
-		same := before.Emotion == emotion && (before.SpeakerCharacterID == nil) == (characterID == nil) &&
+		// Confirming the speaker it already has, or changing only the
+		// emotion (not spoken yet), changes nothing audible.
+		same := (before.SpeakerCharacterID == nil) == (characterID == nil) &&
 			(characterID == nil || *before.SpeakerCharacterID == *characterID)
 		if same {
 			return nil
 		}
 		return db.Model(&Chapter{ID: chapterID}).Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
 	})
+}
+
+// HasSpeakers reports whether any quotation of a chapter has a speaker.
+func (s *Store) HasSpeakers(ctx context.Context, chapterID int64) (bool, error) {
+	var n int64
+	err := s.db.WithContext(ctx).Model(&Segment{}).
+		Where("chapter_id = ? AND speaker_character_id IS NOT NULL", chapterID).Limit(1).Count(&n).Error
+	return n > 0, err
 }
 
 // GetSegment loads one segment.

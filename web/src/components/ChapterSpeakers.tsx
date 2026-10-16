@@ -125,7 +125,7 @@ export function AttributionBar({
       {active && (
         <Text size="xs" c="dimmed">
           {waitingUntil
-            ? `Waiting for LLM quota until ${waitingUntil.toLocaleString()}`
+            ? `Waiting until ${waitingUntil.toLocaleString()} (LLM quota, the analysis or a retry)`
             : 'The speakers are being attributed…'}
         </Text>
       )}

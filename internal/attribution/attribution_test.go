@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -463,23 +464,53 @@ func TestRenderRequeuesALostAttributionAndWaitsForTheCasting(t *testing.T) {
 	})
 }
 
-func TestNarratedAudioIsOutdatedOnceSpeakersCanBeFound(t *testing.T) {
+func TestOutdatedAudioStaysPlayable(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
 		ctx := context.Background()
 		f := setup(t, s)
-		require.NoError(t, s.SetChapterAudio(ctx, f.chapters[1].ID, store.ChapterAudio{Path: "x.m4a", Voice: "af_heart@1.00"}))
-		require.NoError(t, s.SetChapterAudio(ctx, f.chapters[3].ID, store.ChapterAudio{Path: "y.m4a", Voice: "af_heart@1.00"}))
+		ch := f.chapters[1]
+		require.NoError(t, s.SetChapterAudio(ctx, ch.ID, store.ChapterAudio{Path: "x.m4a", Voice: "af_heart@1.00"}))
+		// The analysis finished: narrated audio is outdated …
+		require.NoError(t, s.TouchBookVoices(ctx, f.book.ID))
+		got, err := s.GetChapter(ctx, ch.ID)
+		require.NoError(t, err)
+		sched := &render.Scheduler{Store: s, Jobs: f.jobs, DefaultVoice: "af_heart"}
+		assert.True(t, sched.Stale(f.book, got))
+		// … and rendered again, but stays playable meanwhile.
+		ok, err := sched.RenderChapter(ctx, f.book, got, false)
+		require.NoError(t, err)
+		assert.True(t, ok)
+		got, err = s.GetChapter(ctx, ch.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AudioReady, got.AudioStatus)
+	})
+}
+
+func TestRenderDoesNotWaitForJobsThatCannotRun(t *testing.T) {
+	ff, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		f := setup(t, s)
+		ch := f.chapters[1]
+		r := &render.Renderer{Store: s, TTS: &fakeTTS{voices: map[string]string{}}, Encoder: audio.Encoder{FFmpeg: ff},
+			DataDir: f.dir, DefaultVoice: "af_heart", Attribution: f.a, Log: slog.New(slog.DiscardHandler)}
+		// The attribution waits for LLM quota until tomorrow: render the
+		// chapter narrated now (it is rendered again once attributed).
+		require.NoError(t, f.a.Start(ctx, f.book, &ch, false, 0))
+		require.NoError(t, s.DB().Model(&store.Job{}).Where("type = ?", attribution.JobType).
+			Update("not_before", time.Now().Add(24*time.Hour)).Error)
+		require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+		got, err := s.GetChapter(ctx, ch.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AudioReady, got.AudioStatus)
 		sched := &render.Scheduler{Store: s, DefaultVoice: "af_heart"}
-		ch1, err := s.GetChapter(ctx, f.chapters[1].ID)
-		require.NoError(t, err)
-		assert.True(t, sched.Stale(f.book, ch1), "quotes not attributed yet")
-		ch3, err := s.GetChapter(ctx, f.chapters[3].ID)
-		require.NoError(t, err)
-		assert.False(t, sched.Stale(f.book, ch3), "no quotes")
-		require.NoError(t, s.DB().Model(&store.Chapter{}).Where("id = ?", ch1.ID).
-			Update("attribution_status", store.AttributionFailed).Error)
-		ch1, err = s.GetChapter(ctx, ch1.ID)
-		require.NoError(t, err)
-		assert.False(t, sched.Stale(f.book, ch1), "a failed attribution stays narrated")
+		assert.False(t, sched.Stale(f.book, got), "not rendered again until the speakers change")
+
+		// A chapter without speakers does not wait for the casting.
+		require.NoError(t, s.EnqueueJob(ctx, &store.Job{Type: "cast_book", Queue: "test-only", BookID: &f.book.ID}))
+		require.NoError(t, r.Render(ctx, f.chapters[3].ID, func(float64) {}))
 	})
 }

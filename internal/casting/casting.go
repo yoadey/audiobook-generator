@@ -30,6 +30,10 @@ const (
 	Queue   = "llm"
 )
 
+// Priority puts a casting before the speaker attributions on the LLM queue
+// (renders wait for it; it is a handful of requests).
+const Priority = 300
+
 // Casting rules.
 const (
 	DefaultMainCharacters = 50
@@ -132,7 +136,7 @@ func (c *Caster) Start(ctx context.Context, b *store.Book, restart bool) error {
 		}); err != nil || pending.Status != store.JobRunning {
 			return err
 		}
-		return c.Jobs.Enqueue(ctx, &store.Job{Type: JobType, BookID: &b.ID, MaxAttempts: 5})
+		return c.Jobs.Enqueue(ctx, &store.Job{Type: JobType, BookID: &b.ID, Priority: Priority, MaxAttempts: 5})
 	}
 	if restart {
 		if err := c.Store.ResetCasting(ctx, b.ID); err != nil {
@@ -144,7 +148,7 @@ func (c *Caster) Start(ctx context.Context, b *store.Book, restart bool) error {
 	}); err != nil {
 		return err
 	}
-	return c.Jobs.Enqueue(ctx, &store.Job{Type: JobType, BookID: &b.ID, MaxAttempts: 5})
+	return c.Jobs.Enqueue(ctx, &store.Job{Type: JobType, BookID: &b.ID, Priority: Priority, MaxAttempts: 5})
 }
 
 // Handler is the job handler for JobType.

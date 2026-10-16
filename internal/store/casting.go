@@ -27,11 +27,18 @@ func (s *Store) ResetCasting(ctx context.Context, bookID int64) error {
 			Update("tier", TierMinor).Error; err != nil {
 			return err
 		}
-		if err := db.Model(&Character{}).Where("book_id = ? AND voice_manual = ?", bookID, false).
-			Updates(map[string]any{"voice_recipe": "", "voice_speed": 1, "voice_note": ""}).Error; err != nil {
+		// Chapters in which a character with a cast voice speaks get
+		// another voice for it.
+		var cast []int64
+		if err := db.Model(&Character{}).Where("book_id = ? AND voice_manual = ? AND voice_recipe <> ''", bookID, false).
+			Pluck("id", &cast).Error; err != nil {
 			return err
 		}
-		return tx.TouchBookVoices(ctx, bookID)
+		if err := tx.TouchCharacterVoices(ctx, cast...); err != nil {
+			return err
+		}
+		return db.Model(&Character{}).Where("book_id = ? AND voice_manual = ?", bookID, false).
+			Updates(map[string]any{"voice_recipe": "", "voice_speed": 1, "voice_note": ""}).Error
 	})
 }
 

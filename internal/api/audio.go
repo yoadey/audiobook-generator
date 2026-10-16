@@ -254,13 +254,21 @@ func (s *Server) RetryJob(ctx context.Context, req RetryJobRequestObject) (Retry
 		return nil, err
 	}
 	if j.Type == render.JobType && j.ChapterID != nil {
-		if err := s.Store.SetAudioStatus(ctx, store.AudioQueued, "", *j.ChapterID); err != nil {
-			return nil, err
+		// Existing audio stays playable while it is rendered again.
+		if c, err := s.Store.GetChapter(ctx, *j.ChapterID); err == nil && c.AudioPath == "" {
+			if err := s.Store.SetAudioStatus(ctx, store.AudioQueued, "", *j.ChapterID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if j.Type == attribution.JobType && j.ChapterID != nil {
 		if _, err := s.Store.TransitionAttribution(ctx, *j.ChapterID, store.AttributionQueued,
 			map[string]any{"attribution_error": ""}, store.AttributionFailed); err != nil {
+			return nil, err
+		}
+		// Canceled before: from the start.
+		if _, err := s.Store.TransitionAttribution(ctx, *j.ChapterID, store.AttributionQueued,
+			map[string]any{"attribution_error": "", "attribution_part": 0}, store.AttributionNone); err != nil {
 			return nil, err
 		}
 	}

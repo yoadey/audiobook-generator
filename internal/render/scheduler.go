@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
@@ -38,11 +37,9 @@ const (
 )
 
 // current reports whether a chapter's audio matches the book's narrator
-// and the chapter's speakers and their voices — narrated audio of a chapter
-// that can now get character voices is not.
-func current(b *store.Book, c *store.Chapter, voiceKey string) bool {
-	return c.AudioStatus == store.AudioReady && c.AudioVoice == voiceKey && c.AudioVoiceRev == c.VoiceRev &&
-		!attribution.Needed(b, c)
+// and the chapter's speakers and their voices.
+func current(c *store.Chapter, voiceKey string) bool {
+	return c.AudioStatus == store.AudioReady && c.AudioVoice == voiceKey && c.AudioVoiceRev == c.VoiceRev
 }
 
 // Pending reports whether a chapter waits for or is being rendered.
@@ -55,7 +52,7 @@ func (s *Scheduler) Stale(b *store.Book, c *store.Chapter) bool {
 	if c.AudioStatus != store.AudioReady {
 		return false
 	}
-	return !current(b, c, VoiceKey(NarratorVoice(b, s.DefaultVoice)))
+	return !current(c, VoiceKey(NarratorVoice(b, s.DefaultVoice)))
 }
 
 // RenderChapter queues a chapter unless a render is already pending.
@@ -67,7 +64,7 @@ func (s *Scheduler) RenderChapter(ctx context.Context, b *store.Book, c *store.C
 func (s *Scheduler) enqueue(ctx context.Context, b *store.Book, c *store.Chapter, priority int, force bool) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !force && current(b, c, VoiceKey(NarratorVoice(b, s.DefaultVoice))) {
+	if !force && current(c, VoiceKey(NarratorVoice(b, s.DefaultVoice))) {
 		return false, nil
 	}
 	pending, err := s.Store.PendingRenderJob(ctx, JobType, c.ID)
@@ -77,8 +74,12 @@ func (s *Scheduler) enqueue(ctx context.Context, b *store.Book, c *store.Chapter
 	if pending != nil {
 		return false, nil
 	}
-	if err := s.Store.SetAudioStatus(ctx, store.AudioQueued, "", c.ID); err != nil {
-		return false, err
+	// Audio that is only outdated stays playable until the new one is
+	// ready (the listener may be in the middle of it).
+	if c.AudioPath == "" {
+		if err := s.Store.SetAudioStatus(ctx, store.AudioQueued, "", c.ID); err != nil {
+			return false, err
+		}
 	}
 	if err := s.Jobs.Enqueue(ctx, &store.Job{
 		Type: JobType, BookID: &b.ID, ChapterID: &c.ID, Priority: priority, MaxAttempts: 3,

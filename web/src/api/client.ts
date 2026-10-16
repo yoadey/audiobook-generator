@@ -121,15 +121,20 @@ export const chapterQuery = (chapterId: number) =>
       if (!c) {
         return false;
       }
+      // An attribution deferred (LLM quota, retry) holds up the render too:
+      // look again rarely.
+      const until = c.attribution?.job?.notBefore;
+      if (
+        attributionActive(c.attributionStatus) &&
+        until &&
+        new Date(until).getTime() > Date.now()
+      ) {
+        return 60_000;
+      }
       if (audioPending(c.audioStatus) || c.attributionStatus === 'running') {
         return POLL_MS;
       }
-      if (attributionActive(c.attributionStatus)) {
-        // Queued: slowly, very slowly while it waits for LLM quota.
-        const until = c.attribution?.job?.notBefore;
-        return until && new Date(until).getTime() > Date.now() ? 60_000 : 10_000;
-      }
-      return false;
+      return attributionActive(c.attributionStatus) ? 10_000 : false;
     },
   });
 

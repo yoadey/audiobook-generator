@@ -124,7 +124,12 @@ func (r *Renderer) Handler() jobs.Handler {
 			if j.ChapterID == nil {
 				return
 			}
-			if serr := r.Store.SetAudioStatus(ctx, store.AudioFailed, truncate(err.Error(), maxSynthErrLen), *j.ChapterID); serr != nil {
+			// A failed re-render keeps the previous audio playable.
+			status := store.AudioFailed
+			if c, gerr := r.Store.GetChapter(ctx, *j.ChapterID); gerr == nil && c.AudioPath != "" {
+				status = store.AudioReady
+			}
+			if serr := r.Store.SetAudioStatus(ctx, status, truncate(err.Error(), maxSynthErrLen), *j.ChapterID); serr != nil {
 				r.Log.Error("mark audio failed", "chapter", *j.ChapterID, "err", serr)
 			}
 			if rerr := os.RemoveAll(CacheDir(r.DataDir, *j.ChapterID)); rerr != nil {
@@ -234,29 +239,20 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return jobs.Permanent(err)
 	}
-	// Character voices need the speakers first (Start does nothing while
-	// a job is pending, and queues one again if it was lost or canceled),
-	// and a casting that runs is waited for, not rendered twice.
-	if r.Attribution != nil && attribution.Needed(book, ch) {
-		err := r.Attribution.Start(ctx, book, ch, false, AttributionPriority)
-		if err != nil && !errors.Is(err, attribution.ErrNotReady) {
-			return err
+	if wait, err := r.waitForVoices(ctx, book, ch); err != nil || wait {
+		if err == nil {
+			err = attribution.WaitError()
 		}
-		return attribution.WaitError()
-	}
-	if r.Attribution != nil {
-		if j, err := r.Store.PendingBookJob(ctx, casting.JobType, book.ID); err != nil {
-			return err
-		} else if j != nil {
-			return jobs.Defer(time.Now().Add(time.Minute), "waiting for the voice casting of this book")
-		}
+		return err
 	}
 	paras, segs, err := r.Store.ChapterText(ctx, ch.ID)
 	if err != nil {
 		return err
 	}
-	if err := r.Store.SetAudioStatus(ctx, store.AudioRendering, "", ch.ID); err != nil {
-		return err
+	if ch.AudioPath == "" {
+		if err := r.Store.SetAudioStatus(ctx, store.AudioRendering, "", ch.ID); err != nil {
+			return err
+		}
 	}
 	voice, speed := NarratorVoice(book, r.DefaultVoice)
 	key := VoiceKey(voice, speed)
@@ -355,6 +351,41 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	r.Log.Info("chapter rendered", "chapter", ch.ID, "audio", duration.Round(time.Second),
 		"took", elapsed.Round(time.Second), "realtime_factor", fmt.Sprintf("%.2f", duration.Seconds()/elapsed.Seconds()))
 	return nil
+}
+
+// waitFor is how far a job may be deferred and still be waited for:
+// beyond it (out of LLM quota, no provider) the chapter is rendered with
+// the voices it has, and rendered again once they change.
+const waitFor = 2 * time.Minute
+
+// waitForVoices reports whether a render should wait: for the speaker
+// attribution the chapter needs (queued if missing), and for a pending
+// casting when the chapter has speakers — unless that job cannot run soon.
+func (r *Renderer) waitForVoices(ctx context.Context, b *store.Book, ch *store.Chapter) (bool, error) {
+	if r.Attribution == nil {
+		return false, nil
+	}
+	soon := func(j *store.Job) bool {
+		return j != nil && j.NotBefore.Before(time.Now().Add(waitFor))
+	}
+	if attribution.Needed(b, ch) {
+		// Start does nothing while a job is pending, and queues one again
+		// if it was lost or canceled.
+		err := r.Attribution.Start(ctx, b, ch, false, AttributionPriority)
+		if err != nil && !errors.Is(err, attribution.ErrNotReady) {
+			return false, err
+		}
+		j, err := r.Store.PendingChapterJob(ctx, attribution.JobType, ch.ID)
+		if err != nil || soon(j) {
+			return err == nil, err
+		}
+	}
+	speaks, err := r.Store.HasSpeakers(ctx, ch.ID)
+	if err != nil || !speaks {
+		return false, err
+	}
+	j, err := r.Store.PendingBookJob(ctx, casting.JobType, b.ID)
+	return err == nil && soon(j), err
 }
 
 // speakerVoices resolves the voices of a chapter's speakers: their own
