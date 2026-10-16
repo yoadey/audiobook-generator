@@ -139,4 +139,18 @@ grep -q '"voicedCount":2' <<<"$casting"
 mains="$(curl -fsS "localhost:18080/api/books/$id/characters?tier=main")"
 echo "$mains"
 grep -q '"voiceSource":"own"' <<<"$mains"
+
+# Rendering a chapter now attributes its speakers first.
+chapter2="$(curl -fsS "localhost:18080/api/books/$id/chapters" |
+  python3 -c 'import sys, json; print([c["id"] for c in json.load(sys.stdin)["items"] if c["title"] == "Chapter 2"][0])')"
+curl -fsS -X POST "localhost:18080/api/chapters/$chapter2/render?force=true" >/dev/null
+for _ in $(seq 1 90); do
+  detail="$(curl -fsS "localhost:18080/api/chapters/$chapter2")"
+  grep -q '"audioStatus":"ready"' <<<"$detail" && grep -q '"attributionStatus":"done"' <<<"$detail" && break
+  sleep 1
+done
+echo "$detail" | head -c 2000; echo
+grep -q '"attributionStatus":"done"' <<<"$detail"
+grep -q '"speakerId"' <<<"$detail"
+grep -q '"audioStatus":"ready"' <<<"$detail"
 echo "e2e ($db) passed"

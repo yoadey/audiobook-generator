@@ -8,8 +8,8 @@ Go backend, React frontend, shipped as a self-contained Helm chart that
 brings the app, the [Kokoro](https://github.com/remsky/Kokoro-FastAPI) TTS
 server and storage.
 
-> **Status:** milestone M5 — a usable single-voice audiobook plus the
-> character bible and a voice for every character. EPUBs are split into volumes, chapters and narration/quote segments
+> **Status:** milestone M6 — a **multi-voice audiobook**: every
+> character speaks with their own voice. EPUBs are split into volumes, chapters and narration/quote segments
 > (a 3-million-word book imports in seconds) and can be reviewed in the UI;
 > chapters are rendered with a narrator voice of your choice (Kokoro, voice
 > mixes, speed, previews) and played in the built-in player, which resumes
@@ -22,8 +22,10 @@ server and storage.
 > with voices of their own (LLM-proposed Kokoro blends that code keeps
 > distinct from the narrator and each other), everyone else with pool
 > voices by gender and age; voices can be edited and previewed with real
-> quotes. Rendering with these voices follows in M6 — see
-> [`docs/PLAN.md`](docs/PLAN.md).
+> quotes. Before a chapter is rendered, the LLM attributes its quotations to
+> their speakers (just in time, in parts for long chapters); the chapter
+> editor shows who says what, flags unsure speakers and lets you correct
+> them. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Install
 
@@ -46,6 +48,7 @@ Common options (all values: [`charts/audiobook-generator/values.yaml`](charts/au
 | `tts.concurrency` | `2` | parallel synthesis requests (~1–2 per Kokoro replica) |
 | `llm.providers` | `[]` | OpenAI-compatible LLM providers with limits; keys from Secrets (see below). More can be added in the UI |
 | `llm.analysisBatchTokens` | `30000` | input tokens per character analysis request (fewer, larger requests save daily request quota) |
+| `llm.attributionTokens` | `12000` | input tokens per speaker attribution request (longer chapters are sent in parts) |
 | `casting.mainCharacters` | `50` | speaking characters that get a voice recipe of their own; the rest speak with pool voices |
 | `ingress.enabled` | `false` | expose the UI |
 | `metrics.serviceMonitor.enabled` | `false` | Prometheus Operator scraping of `/metrics` |
@@ -105,7 +108,8 @@ cmd/audiobook-generator/  main
 internal/                 Go packages: epub (parser), segment (quotes, chunking),
                           importer, jobs (persistent queue), render (TTS + ffmpeg,
                           lookahead), llm (providers, limits, prompts), analysis
-                          (character bible), casting (voices), audio, store, api,
+                          (character bible), casting (voices), attribution (speakers),
+                          audio, store, api,
                           tts, webui
 web/                      React + Mantine frontend (built into internal/webui/dist)
 charts/audiobook-generator/  Helm chart

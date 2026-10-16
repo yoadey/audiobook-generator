@@ -214,6 +214,11 @@ tests:
           content:
             name: ABG_CASTING_MAIN_CHARACTERS
             value: "50"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_ATTRIBUTION_TOKENS
+            value: "12000"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:

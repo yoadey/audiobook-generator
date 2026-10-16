@@ -174,6 +174,8 @@ the names of variables that read them from Secrets). */}}
   value: {{ .Values.llm.maxWait | quote }}
 - name: ABG_LLM_ANALYSIS_BATCH_TOKENS
   value: {{ .Values.llm.analysisBatchTokens | int | quote }}
+- name: ABG_LLM_ATTRIBUTION_TOKENS
+  value: {{ .Values.llm.attributionTokens | int | quote }}
 - name: ABG_CASTING_MAIN_CHARACTERS
   value: {{ .Values.casting.mainCharacters | int | quote }}
 {{- with .Values.llm.providers }}

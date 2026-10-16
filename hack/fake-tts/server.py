@@ -10,8 +10,9 @@ LLM (OpenAI-compatible): GET /v1/models and POST /v1/chat/completions, which
 answers the app's provider test prompt correctly, the character analysis
 with everyone who "said" something, merge checks with "different", voice
 casting with the first offered voice for everyone (code then makes the
-voices distinct), and anything else with "{}". When FAKE_LLM_KEY is set, requests must carry it
-as bearer token.
+voices distinct), speaker attribution by the "said Name" of the quote's
+paragraph, and anything else with "{}". When FAKE_LLM_KEY is set, requests
+must carry it as bearer token.
 """
 
 import json
@@ -77,6 +78,19 @@ def cast(text: str) -> str:
     ]})
 
 
+def attribute(text: str) -> str:
+    """Speaker attribution: the "said Name" of the quotation's paragraph."""
+    ids = {name: "c" + n for n, name in re.findall(r"^c(\d+) \| ([^|]+?) \|", text, flags=re.M)}
+    quotes = []
+    for para in text.split("\n\n"):
+        said = re.search(r"said ([A-Z][a-z]+)", para)
+        for n in re.findall(r"\[q(\d+)\]", para):
+            speaker = ids.get(said[1], "unknown") if said else "unknown"
+            quotes.append({"q": int(n), "speaker": speaker, "emotion": "neutral",
+                           "confidence": 0.9 if speaker != "unknown" else 0.2})
+    return json.dumps({"quotes": quotes})
+
+
 def chat_answer(req: dict) -> str:
     """Answers the app's prompts (see the module docstring)."""
     for m in reversed(req.get("messages", [])):
@@ -89,6 +103,8 @@ def chat_answer(req: dict) -> str:
             return json.dumps({"decisions": []})
         if text.startswith("Base voices"):
             return cast(text)
+        if "Quotations to attribute" in text:
+            return attribute(text)
         if "Chapters (" in text:
             return analyse(text)
     return "{}"

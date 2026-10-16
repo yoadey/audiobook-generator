@@ -20,6 +20,7 @@ import (
 
 	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/api"
+	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/epub/epubtest"
@@ -102,16 +103,18 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	runner := jobs.New(s, log)
 	runner.PollInterval = 20 * time.Millisecond
 	runner.Handle(importer.JobType, (&importer.Importer{Store: s, DataDir: dir, Log: log}).Handler())
+	pool := llm.NewPool(s, nil, log)
+	voices := casting.NewCatalog(fakeTTS{})
+	attributor := &attribution.Attributor{Store: s, LLM: pool, Jobs: runner, Log: log}
+	runner.Handle(attribution.JobType, attributor.Handler())
 	ffmpeg, _ := exec.LookPath("ffmpeg")
 	runner.Handle(render.JobType, (&render.Renderer{
 		Store: s, TTS: fakeTTS{}, Encoder: audio.Encoder{FFmpeg: ffmpeg}, DataDir: dir,
-		Concurrency: 2, DefaultVoice: "af_heart", Log: log,
+		Concurrency: 2, DefaultVoice: "af_heart", Voices: voices, Attribution: attributor, Log: log,
 	}).Handler())
 	scheduler := &render.Scheduler{Store: s, Jobs: runner, DefaultVoice: "af_heart"}
-	pool := llm.NewPool(s, nil, log)
 	analyzer := &analysis.Analyzer{Store: s, LLM: pool, Jobs: runner, BatchTokens: analysis.DefaultBatchTokens, Log: log}
 	runner.Handle(analysis.JobType, analyzer.Handler())
-	voices := casting.NewCatalog(fakeTTS{})
 	caster := &casting.Caster{Store: s, LLM: pool, Jobs: runner, Catalog: voices, DefaultVoice: "af_heart", Log: log}
 	runner.Handle(casting.JobType, caster.Handler())
 	analyzer.OnDone = func(ctx context.Context, bookID int64) {
@@ -126,7 +129,7 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	mux := http.NewServeMux()
 	api.NewServer(api.Options{
 		Store: s, TTS: fakeTTS{}, Jobs: runner, Scheduler: scheduler, DefaultVoice: "af_heart",
-		LLM: pool, Analyzer: analyzer, Caster: caster, Voices: voices, DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
+		LLM: pool, Analyzer: analyzer, Caster: caster, Attributor: attributor, Voices: voices, DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
 	}).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(func() {

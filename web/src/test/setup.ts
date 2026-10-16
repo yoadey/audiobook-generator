@@ -45,3 +45,6 @@ Object.defineProperty(document, 'fonts', {
   configurable: true,
   value: { addEventListener: () => {}, removeEventListener: () => {}, ready: Promise.resolve() },
 });
+
+// Mantine's combobox scrolls the selected option into view; jsdom lacks it.
+Element.prototype.scrollIntoView = function scrollIntoView() {};

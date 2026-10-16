@@ -13,9 +13,12 @@ export type CastingWarning = components['schemas']['CastingWarning'];
 export type BookUpdate = components['schemas']['BookUpdate'];
 export type BookPage = components['schemas']['BookPage'];
 export type Chapter = components['schemas']['Chapter'];
+export type ChapterAttribution = components['schemas']['ChapterAttribution'];
 export type ChapterDetail = components['schemas']['ChapterDetail'];
 export type ChapterUpdate = components['schemas']['ChapterUpdate'];
 export type Character = components['schemas']['Character'];
+export type Emotion = components['schemas']['Emotion'];
+export type QuoteUpdate = components['schemas']['QuoteUpdate'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type CharacterUpdate = components['schemas']['CharacterUpdate'];
 export type Job = components['schemas']['Job'];
@@ -107,12 +110,17 @@ export const chaptersQuery = (bookId: number) =>
       q.state.data?.items.some((c) => audioPending(c.audioStatus)) ? POLL_MS * 2 : false,
   });
 
+const attributionActive = (s?: ChapterAttribution['status']) => s === 'queued' || s === 'running';
+
 export const chapterQuery = (chapterId: number) =>
   queryOptions({
     queryKey: ['chapters', chapterId],
     queryFn: () => unwrap(api.GET('/chapters/{chapterId}', { params: { path: { chapterId } } })),
     refetchInterval: (q) =>
-      q.state.data && audioPending(q.state.data.audioStatus) ? POLL_MS : false,
+      q.state.data &&
+      (audioPending(q.state.data.audioStatus) || attributionActive(q.state.data.attributionStatus))
+        ? POLL_MS
+        : false,
   });
 
 export const progressQuery = (bookId: number) =>
@@ -323,6 +331,22 @@ export const listLLMModels = (body: LLMModelsRequest) => unwrap(api.POST('/llm/m
 
 export const startAnalysis = (bookId: number, restart = false) =>
   unwrap(api.POST('/books/{bookId}/analysis', { params: { path: { bookId } }, body: { restart } }));
+
+export const startAttribution = (chapterId: number, force = false) =>
+  unwrap(
+    api.POST('/chapters/{chapterId}/attribution', {
+      params: { path: { chapterId } },
+      body: { force },
+    }),
+  );
+
+export const updateQuote = (chapterId: number, quoteRef: number, body: QuoteUpdate) =>
+  unwrap(
+    api.PATCH('/chapters/{chapterId}/quotes/{quoteRef}', {
+      params: { path: { chapterId, quoteRef } },
+      body,
+    }),
+  );
 
 export const startCasting = (bookId: number, restart = false) =>
   unwrap(api.POST('/books/{bookId}/casting', { params: { path: { bookId } }, body: { restart } }));

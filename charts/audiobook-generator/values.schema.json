@@ -410,6 +410,10 @@
           "type": "integer",
           "minimum": 1000
         },
+        "attributionTokens": {
+          "type": "integer",
+          "minimum": 1000
+        },
         "providers": {
           "type": "array",
           "items": {

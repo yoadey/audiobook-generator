@@ -231,6 +231,51 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/chapters/{chapterId}/attribution': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Attribute the chapter's quotations to their speakers
+     * @description Queues the speaker attribution (a render does this by itself). With force, automatic speakers are discarded and attributed again; speakers chosen by hand stay. Needs a finished character analysis.
+     */
+    post: operations['startAttribution'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/chapters/{chapterId}/quotes/{quoteRef}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+        quoteRef: number;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Choose the speaker or emotion of a quotation
+     * @description Applies to every piece of the quotation and protects it from being attributed again. The chapter's audio becomes outdated.
+     */
+    patch: operations['updateQuote'];
+    trace?: never;
+  };
   '/chapters/{chapterId}/render': {
     parameters: {
       query?: never;
@@ -682,8 +727,10 @@ export interface components {
       /** Format: int64 */
       audioDurationMs?: number;
       audioError?: string;
-      /** @description The audio was rendered with another narrator voice or speed */
+      /** @description The audio was rendered with other voices (narrator, speakers or their voices changed) */
       audioStale: boolean;
+      attributionStatus: components['schemas']['AttributionStatus'];
+      attributionError?: string;
       narration?: components['schemas']['Narration'];
       /**
        * Format: int64
@@ -702,6 +749,49 @@ export interface components {
     ParagraphKind: 'text' | 'heading' | 'scene_break';
     /** @enum {string} */
     SegmentKind: 'narration' | 'quote';
+    /** @enum {string} */
+    AttributionStatus: 'none' | 'queued' | 'running' | 'done' | 'failed';
+    /** @enum {string} */
+    Emotion:
+      | 'neutral'
+      | 'happy'
+      | 'sad'
+      | 'angry'
+      | 'afraid'
+      | 'surprised'
+      | 'whispering'
+      | 'shouting'
+      | 'sarcastic';
+    AttributionStart: {
+      /** @description Attribute again, discarding automatic speakers */
+      force?: boolean;
+    };
+    ChapterAttribution: {
+      status: components['schemas']['AttributionStatus'];
+      error?: string;
+      /** @description Prompt version of the last attribution */
+      prompt?: string;
+      /** Format: date-time */
+      attributedAt?: string;
+      /** @description Quotations in the chapter */
+      quotes: number;
+      /** @description Quotations with a speaker */
+      attributed: number;
+      /** @description Quotations attributed automatically with a confidence below unsureBelow (or to nobody) */
+      unsure: number;
+      unsureBelow: number;
+      job?: components['schemas']['Job'];
+    };
+    QuoteUpdate: {
+      /**
+       * Format: int64
+       * @description The character who speaks it
+       */
+      speakerId?: number;
+      /** @description Read by the narrator (no speaker); instead of speakerId */
+      narrator?: boolean;
+      emotion?: components['schemas']['Emotion'];
+    };
     Segment: {
       /** Format: int64 */
       id: number;
@@ -710,6 +800,15 @@ export interface components {
       /** @description Number of the quotation within the chapter (0 for narration) */
       quoteRef: number;
       text: string;
+      /**
+       * Format: int64
+       * @description Who speaks the quotation (absent - the narrator reads it)
+       */
+      speakerId?: number;
+      emotion?: string;
+      /** @description How sure the attribution is (0..1; 1 for a speaker chosen by hand) */
+      confidence: number;
+      speakerManual: boolean;
     };
     Paragraph: {
       /** Format: int64 */
@@ -727,6 +826,9 @@ export interface components {
       paragraphs: components['schemas']['Paragraph'][];
       /** @description Characters appearing in the chapter, most important first */
       characters?: components['schemas']['CharacterRef'][];
+      /** @description Characters who speak a quotation of the chapter */
+      speakers?: components['schemas']['CharacterRef'][];
+      attribution?: components['schemas']['ChapterAttribution'];
     };
     ChapterUpdate: {
       title?: string;
@@ -1580,6 +1682,65 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['Progress'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  startAttribution: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        'application/json': components['schemas']['AttributionStart'];
+      };
+    };
+    responses: {
+      /** @description The attribution is queued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterAttribution'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  updateQuote: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+        quoteRef: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['QuoteUpdate'];
+      };
+    };
+    responses: {
+      /** @description The chapter */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterDetail'];
         };
       };
       400: components['responses']['Error'];

@@ -12,7 +12,15 @@ import { AnchorLink } from './links';
 import { notifyError } from '../lib/notify';
 
 const ROW_HEIGHT = 44;
-const columns = '56px minmax(0, 1fr) 90px 70px 100px 80px 44px';
+const columns = '56px minmax(0, 1fr) 90px 70px 80px 100px 80px 44px';
+
+const speakerLabels: Record<Chapter['attributionStatus'], [string, string]> = {
+  none: ['–', 'dimmed'],
+  queued: ['queued', 'blue'],
+  running: ['…', 'blue'],
+  done: ['✔', 'green'],
+  failed: ['failed', 'red'],
+};
 
 function useChapterMutations(bookId: number) {
   const queryClient = useQueryClient();
@@ -68,7 +76,7 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
           borderBottom: '1px solid var(--mantine-color-default-border)',
         }}
       >
-        {['#', 'Title', 'Words', 'Quotes', 'Audio', 'Narrate', ''].map((h, i) => (
+        {['#', 'Title', 'Words', 'Quotes', 'Speakers', 'Audio', 'Narrate', ''].map((h, i) => (
           <Text key={i} size="xs" fw={600} c="dimmed" ta={i >= 2 && i <= 3 ? 'right' : 'left'}>
             {h}
           </Text>
@@ -119,6 +127,15 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
                 </Text>
                 <Text size="sm" ta="right">
                   {formatNumber(c.quoteCount)}
+                </Text>
+                <Text
+                  size="sm"
+                  c={(speakerLabels[c.attributionStatus] ?? speakerLabels.none)[1]}
+                  title={c.attributionError ?? `Speakers: ${c.attributionStatus}`}
+                >
+                  {c.quoteCount > 0
+                    ? (speakerLabels[c.attributionStatus] ?? speakerLabels.none)[0]
+                    : ''}
                 </Text>
                 <Group>
                   <AudioBadge chapter={c} />

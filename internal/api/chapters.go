@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"os"
@@ -30,6 +31,9 @@ func (s *Server) toChapter(b *store.Book, c *store.Chapter) Chapter {
 		AudioStale:  b != nil && s.Scheduler != nil && s.Scheduler.Stale(b, c),
 
 		PovCharacterId: c.POVCharacterID,
+
+		AttributionStatus: AttributionStatus(cmp.Or(c.AttributionStatus, store.AttributionNone)),
+		AttributionError:  nonEmpty(c.AttributionError),
 	}
 	if c.Narration != "" {
 		n := Narration(c.Narration)
@@ -140,20 +144,38 @@ func (s *Server) GetChapter(ctx context.Context, req GetChapterRequestObject) (G
 	} else if err != nil {
 		return nil, err
 	}
-	paras, segs, err := s.Store.ChapterText(ctx, c.ID)
+	out, err := s.chapterDetail(ctx, b, c)
 	if err != nil {
 		return nil, err
+	}
+	return GetChapter200JSONResponse(out), nil
+}
+
+// chapterDetail builds a chapter with its text, characters and speakers.
+func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chapter) (ChapterDetail, error) {
+	paras, segs, err := s.Store.ChapterText(ctx, c.ID)
+	if err != nil {
+		return ChapterDetail{}, err
 	}
 	prev, next, err := s.Store.AdjacentChapters(ctx, c)
 	if err != nil {
-		return nil, err
+		return ChapterDetail{}, err
 	}
 
 	byPara := make(map[int64][]Segment, len(paras))
+	var speakerIDs []int64
+	seen := map[int64]bool{}
 	for _, sg := range segs {
-		byPara[sg.ParagraphID] = append(byPara[sg.ParagraphID], Segment{
+		seg := Segment{
 			Id: sg.ID, Idx: sg.Idx, Kind: SegmentKind(sg.Kind), QuoteRef: sg.QuoteRef, Text: sg.Text,
-		})
+			SpeakerId: sg.SpeakerCharacterID, Emotion: nonEmpty(sg.Emotion), Confidence: float32(sg.Confidence),
+			SpeakerManual: sg.SpeakerManual,
+		}
+		if id := sg.SpeakerCharacterID; id != nil && !seen[*id] {
+			seen[*id] = true
+			speakerIDs = append(speakerIDs, *id)
+		}
+		byPara[sg.ParagraphID] = append(byPara[sg.ParagraphID], seg)
 	}
 	ch := s.toChapter(b, c)
 	out := ChapterDetail{
@@ -161,11 +183,26 @@ func (s *Server) GetChapter(ctx context.Context, req GetChapterRequestObject) (G
 		WordCount: ch.WordCount, QuoteCount: ch.QuoteCount, Excluded: ch.Excluded, Status: ch.Status,
 		AudioStatus: ch.AudioStatus, AudioDurationMs: ch.AudioDurationMs, AudioError: ch.AudioError,
 		AudioStale: ch.AudioStale, Narration: ch.Narration, PovCharacterId: ch.PovCharacterId,
+		AttributionStatus: ch.AttributionStatus, AttributionError: ch.AttributionError,
 		Paragraphs: make([]Paragraph, 0, len(paras)),
 	}
+	att, err := s.toAttribution(ctx, c)
+	if err != nil {
+		return ChapterDetail{}, err
+	}
+	out.Attribution = &att
+	speakers, err := s.Store.GetCharacters(ctx, speakerIDs...)
+	if err != nil {
+		return ChapterDetail{}, err
+	}
+	sp := make([]CharacterRef, 0, len(speakers))
+	for _, x := range speakers {
+		sp = append(sp, CharacterRef{Id: x.ID, Name: x.Name})
+	}
+	out.Speakers = &sp
 	chars, err := s.Store.ChapterCharacters(ctx, c.ID)
 	if err != nil {
-		return nil, err
+		return ChapterDetail{}, err
 	}
 	refs := make([]CharacterRef, 0, len(chars))
 	for _, ch := range chars {
@@ -187,7 +224,7 @@ func (s *Server) GetChapter(ctx context.Context, req GetChapterRequestObject) (G
 			Id: p.ID, Idx: p.Idx, Kind: ParagraphKind(p.Kind), Text: p.Text, Segments: ss,
 		})
 	}
-	return GetChapter200JSONResponse(out), nil
+	return out, nil
 }
 
 // UpdateChapter renames or (un)excludes a chapter.

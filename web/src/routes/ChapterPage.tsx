@@ -41,9 +41,11 @@ import {
   updateChapter,
 } from '../api/client';
 import { AudioBadge } from '../components/AudioBadge';
+import { AttributionBar, QuoteSpan } from '../components/ChapterSpeakers';
 import { AnchorLink } from '../components/links';
 import { confirmMerge } from '../lib/confirm';
 import { formatListeningTime, formatNumber } from '../lib/format';
+import { unsure } from '../lib/speakers';
 import { notifyError, notifySuccess } from '../lib/notify';
 
 const narrations: Record<NonNullable<ChapterDetail['narration']>, string> = {
@@ -62,7 +64,17 @@ function narrationLabel(c: ChapterDetail): string {
   return `${[label, pov && `POV ${pov}`].filter(Boolean).join(', ')} · `;
 }
 
-function ParagraphView({ p, onSplit }: { p: Paragraph; onSplit?: () => void }) {
+function ParagraphView({
+  chapter,
+  p,
+  firstPieces,
+  onSplit,
+}: {
+  chapter: ChapterDetail;
+  p: Paragraph;
+  firstPieces: Set<number>;
+  onSplit?: () => void;
+}) {
   const body =
     p.kind === 'scene_break' ? (
       <Divider my="sm" label="⁂" labelPosition="center" />
@@ -74,19 +86,7 @@ function ParagraphView({ p, onSplit }: { p: Paragraph; onSplit?: () => void }) {
           <span key={s.id}>
             {i > 0 && ' '}
             {s.kind === 'quote' ? (
-              <Tooltip label={`Quote ${s.quoteRef}`} openDelay={400}>
-                <Box
-                  component="span"
-                  data-quote={s.quoteRef}
-                  style={{
-                    background: 'var(--mantine-color-blue-light)',
-                    borderRadius: 4,
-                    padding: '1px 2px',
-                  }}
-                >
-                  {s.text}
-                </Box>
-              </Tooltip>
+              <QuoteSpan chapter={chapter} segment={s} first={firstPieces.has(s.id)} />
             ) : (
               s.text
             )}
@@ -176,6 +176,7 @@ export function ChapterPage() {
   const queryClient = useQueryClient();
   const book = useQuery(bookQuery(bookId));
   const { data: chapter, error, isPending } = useQuery(chapterQuery(chapterId));
+  const [onlyUnsure, setOnlyUnsure] = useState(false);
 
   const invalidate = () =>
     Promise.all([
@@ -225,6 +226,22 @@ export function ChapterPage() {
       </Alert>
     );
   }
+
+  // The first piece of each quotation carries its speaker's name.
+  const firstPieces = new Set<number>();
+  const seenQuotes = new Set<number>();
+  for (const p of chapter.paragraphs) {
+    for (const s of p.segments) {
+      if (s.quoteRef > 0 && !seenQuotes.has(s.quoteRef)) {
+        seenQuotes.add(s.quoteRef);
+        firstPieces.add(s.id);
+      }
+    }
+  }
+  const below = chapter.attribution?.unsureBelow ?? 0.6;
+  const visible = onlyUnsure
+    ? chapter.paragraphs.filter((p) => p.segments.some((s) => unsure(s, below)))
+    : chapter.paragraphs;
 
   const go = (id: number | undefined) =>
     id &&
@@ -341,13 +358,17 @@ export function ChapterPage() {
         </Group>
       )}
 
+      <AttributionBar chapter={chapter} onlyUnsure={onlyUnsure} onOnlyUnsure={setOnlyUnsure} />
+
       <Stack gap="sm" mt="md">
-        {chapter.paragraphs.map((p, i) => (
+        {visible.map((p) => (
           <ParagraphView
             key={p.id}
+            chapter={chapter}
             p={p}
+            firstPieces={firstPieces}
             onSplit={
-              i === 0
+              p.idx === 0 || onlyUnsure
                 ? undefined
                 : () =>
                     modals.open({

@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-16 · Status: **M0–M5 implemented** (usable single-voice audiobook, LLM layer, character bible, voice casting), M6 next
+Last updated: 2026-10-16 · Status: **M0–M6 implemented** (LLM layer, character bible, voice casting, **multi-voice audiobook**), M7 next
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -288,6 +288,36 @@ As implemented in M5 (`internal/casting`):
 - Low confidence is flagged in the UI.
 - Optional later: narrate first-person chapters with the POV character's
   voice.
+
+As implemented in M6 (`internal/attribution`):
+
+- One `attribute_chapter` job per chapter on the `llm` queue. A render of
+  a chapter that needs speakers (finished analysis, quotes, not yet
+  attributed) queues it and waits (the render job is deferred and looks
+  again every 30 s); a failed attribution leaves the quotes with the
+  narrator instead of blocking the render.
+- The request (`attribute_chapter@v1`) lists the chapter's characters
+  (appearances, point-of-view character, the last speakers of the previous
+  chapter, at most 120) and the text with every quotation marked once, at
+  the paragraph it starts in. The answer per quotation: speaker (a listed
+  id, `new:Name` or `unknown`), emotion and confidence.
+- Validation in code: quotations not answered, or answered with an id that
+  was not listed, stay with the narrator at confidence 0; `new:` names are
+  matched against names and aliases or added as minor characters.
+- Chapters longer than `llm.attributionTokens` (12k) go in parts, cut at
+  scene breaks where possible, later parts with three paragraphs of
+  context. Each part is stored when answered; a resumed job continues with
+  the next one. Cut-off answers, requests too large for every provider and
+  content-filter refusals split the part; a single paragraph still refused
+  stays with the narrator.
+- Speakers chosen in the chapter editor are flags (`SpeakerManual`) an
+  attribution never overrides. Confidence below 0.6 is flagged for review.
+- Rendering speaks quotes with the speaker's own recipe or pool voice,
+  narration and unknown speakers with the narrator. A per-chapter voice
+  revision is bumped by attribution, speaker edits, character voice,
+  tier, gender or age changes, merges and the casting; audio rendered at an
+  older revision is stale and re-rendered by the lookahead. Emotions are
+  stored and shown, not yet spoken (Kokoro has no emotion control).
 
 ### 3.7 Rendering and assembly
 

@@ -151,6 +151,7 @@ const chapters = [
     audioStatus: 'ready',
     audioDurationMs: 245000,
     audioStale: false,
+    attributionStatus: 'done',
   },
   {
     id: 11,
@@ -415,6 +416,108 @@ describe('App', () => {
       'href',
       '/books/1/characters/8',
     );
+  });
+
+  it('shows and edits the speakers of a chapter', async () => {
+    const detail = {
+      ...chapters[0],
+      attributionStatus: 'done',
+      paragraphs: [
+        {
+          id: 101,
+          idx: 0,
+          kind: 'text',
+          text: '“My dear,” said his lady. “Come.”',
+          segments: [
+            {
+              id: 2,
+              idx: 0,
+              kind: 'quote',
+              quoteRef: 1,
+              text: '“My dear,”',
+              speakerId: 7,
+              emotion: 'happy',
+              confidence: 0.9,
+              speakerManual: false,
+            },
+            {
+              id: 3,
+              idx: 1,
+              kind: 'narration',
+              quoteRef: 0,
+              text: 'said his lady.',
+              confidence: 0,
+              speakerManual: false,
+            },
+            {
+              id: 4,
+              idx: 2,
+              kind: 'quote',
+              quoteRef: 2,
+              text: '“Come.”',
+              confidence: 0.2,
+              speakerManual: false,
+            },
+          ],
+        },
+        {
+          id: 102,
+          idx: 1,
+          kind: 'text',
+          text: 'Nothing else.',
+          segments: [
+            {
+              id: 5,
+              idx: 3,
+              kind: 'narration',
+              quoteRef: 0,
+              text: 'Nothing else.',
+              confidence: 0,
+              speakerManual: false,
+            },
+          ],
+        },
+      ],
+      characters: [
+        { id: 7, name: 'Erin Solstice' },
+        { id: 8, name: 'Lyonette' },
+      ],
+      speakers: [{ id: 7, name: 'Erin Solstice' }],
+      attribution: {
+        status: 'done',
+        quotes: 2,
+        attributed: 1,
+        unsure: 1,
+        unsureBelow: 0.6,
+        prompt: 'attribute_chapter@v1',
+      },
+    };
+    const fetch = stubApi({
+      '/api/books/1': book,
+      'GET /api/chapters/10': detail,
+      'PATCH /api/chapters/10/quotes/2': detail,
+    });
+    renderAt('/books/1/chapters/10');
+    const bar = await screen.findByTestId('attribution-bar');
+    expect(within(bar).getByText(/1 of 2 quotes with a speaker, 1 to check/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Quote 1, spoken by Erin Solstice' }),
+    ).toHaveTextContent('Erin Solstice · happy');
+    fireEvent.click(within(bar).getByRole('button', { name: 'Show only those to check' }));
+    expect(screen.queryByText('Nothing else.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quote 2, spoken by Narrator' }));
+    fireEvent.click((await screen.findAllByLabelText('Speaker'))[0]!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Lyonette', hidden: true }));
+    // (The popover is still fading in under jsdom, hence hidden.)
+    fireEvent.click(screen.getByRole('button', { name: 'Save', hidden: true }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PATCH')).toBe(
+        true,
+      ),
+    );
+    const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
+    expect(await (patch[0] as Request).json()).toEqual({ speakerId: 8, emotion: 'neutral' });
   });
 
   it('shows database and TTS status', async () => {

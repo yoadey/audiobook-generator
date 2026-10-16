@@ -80,6 +80,33 @@ func (e AnalysisStatus) Valid() bool {
 	}
 }
 
+// Defines values for AttributionStatus.
+const (
+	AttributionStatusDone    AttributionStatus = "done"
+	AttributionStatusFailed  AttributionStatus = "failed"
+	AttributionStatusNone    AttributionStatus = "none"
+	AttributionStatusQueued  AttributionStatus = "queued"
+	AttributionStatusRunning AttributionStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the AttributionStatus enum.
+func (e AttributionStatus) Valid() bool {
+	switch e {
+	case AttributionStatusDone:
+		return true
+	case AttributionStatusFailed:
+		return true
+	case AttributionStatusNone:
+		return true
+	case AttributionStatusQueued:
+		return true
+	case AttributionStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AudioStatus.
 const (
 	AudioStatusFailed    AudioStatus = "failed"
@@ -269,6 +296,45 @@ func (e DatabaseInfoDialect) Valid() bool {
 	case DatabaseInfoDialectPostgres:
 		return true
 	case DatabaseInfoDialectSqlite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for Emotion.
+const (
+	EmotionAfraid     Emotion = "afraid"
+	EmotionAngry      Emotion = "angry"
+	EmotionHappy      Emotion = "happy"
+	EmotionNeutral    Emotion = "neutral"
+	EmotionSad        Emotion = "sad"
+	EmotionSarcastic  Emotion = "sarcastic"
+	EmotionShouting   Emotion = "shouting"
+	EmotionSurprised  Emotion = "surprised"
+	EmotionWhispering Emotion = "whispering"
+)
+
+// Valid indicates whether the value is a known member of the Emotion enum.
+func (e Emotion) Valid() bool {
+	switch e {
+	case EmotionAfraid:
+		return true
+	case EmotionAngry:
+		return true
+	case EmotionHappy:
+		return true
+	case EmotionNeutral:
+		return true
+	case EmotionSad:
+		return true
+	case EmotionSarcastic:
+		return true
+	case EmotionShouting:
+		return true
+	case EmotionSurprised:
+		return true
+	case EmotionWhispering:
 		return true
 	default:
 		return false
@@ -553,6 +619,15 @@ type AnalysisStart struct {
 // AnalysisStatus defines model for AnalysisStatus.
 type AnalysisStatus string
 
+// AttributionStart defines model for AttributionStart.
+type AttributionStart struct {
+	// Force Attribute again, discarding automatic speakers
+	Force *bool `json:"force,omitempty"`
+}
+
+// AttributionStatus defines model for AttributionStatus.
+type AttributionStatus string
+
 // AudioStatus defines model for AudioStatus.
 type AudioStatus string
 
@@ -653,10 +728,12 @@ type CastingWarningKind string
 
 // Chapter defines model for Chapter.
 type Chapter struct {
-	AudioDurationMs *int64  `json:"audioDurationMs,omitempty"`
-	AudioError      *string `json:"audioError,omitempty"`
+	AttributionError  *string           `json:"attributionError,omitempty"`
+	AttributionStatus AttributionStatus `json:"attributionStatus"`
+	AudioDurationMs   *int64            `json:"audioDurationMs,omitempty"`
+	AudioError        *string           `json:"audioError,omitempty"`
 
-	// AudioStale The audio was rendered with another narrator voice or speed
+	// AudioStale The audio was rendered with other voices (narrator, speakers or their voices changed)
 	AudioStale  bool        `json:"audioStale"`
 	AudioStatus AudioStatus `json:"audioStatus"`
 	BookId      int64       `json:"bookId"`
@@ -678,12 +755,35 @@ type Chapter struct {
 	WordCount      int           `json:"wordCount"`
 }
 
+// ChapterAttribution defines model for ChapterAttribution.
+type ChapterAttribution struct {
+	// Attributed Quotations with a speaker
+	Attributed   int        `json:"attributed"`
+	AttributedAt *time.Time `json:"attributedAt,omitempty"`
+	Error        *string    `json:"error,omitempty"`
+	Job          *Job       `json:"job,omitempty"`
+
+	// Prompt Prompt version of the last attribution
+	Prompt *string `json:"prompt,omitempty"`
+
+	// Quotes Quotations in the chapter
+	Quotes int               `json:"quotes"`
+	Status AttributionStatus `json:"status"`
+
+	// Unsure Quotations attributed automatically with a confidence below unsureBelow (or to nobody)
+	Unsure      int     `json:"unsure"`
+	UnsureBelow float32 `json:"unsureBelow"`
+}
+
 // ChapterDetail defines model for ChapterDetail.
 type ChapterDetail struct {
-	AudioDurationMs *int64  `json:"audioDurationMs,omitempty"`
-	AudioError      *string `json:"audioError,omitempty"`
+	Attribution       *ChapterAttribution `json:"attribution,omitempty"`
+	AttributionError  *string             `json:"attributionError,omitempty"`
+	AttributionStatus AttributionStatus   `json:"attributionStatus"`
+	AudioDurationMs   *int64              `json:"audioDurationMs,omitempty"`
+	AudioError        *string             `json:"audioError,omitempty"`
 
-	// AudioStale The audio was rendered with another narrator voice or speed
+	// AudioStale The audio was rendered with other voices (narrator, speakers or their voices changed)
 	AudioStale  bool        `json:"audioStale"`
 	AudioStatus AudioStatus `json:"audioStatus"`
 	BookId      int64       `json:"bookId"`
@@ -702,13 +802,16 @@ type ChapterDetail struct {
 	Paragraphs    []Paragraph `json:"paragraphs"`
 
 	// PovCharacterId Point-of-view character found by the analysis
-	PovCharacterId *int64        `json:"povCharacterId,omitempty"`
-	PrevChapterId  *int64        `json:"prevChapterId,omitempty"`
-	QuoteCount     int           `json:"quoteCount"`
-	Status         ChapterStatus `json:"status"`
-	Title          string        `json:"title"`
-	VolumeId       *int64        `json:"volumeId,omitempty"`
-	WordCount      int           `json:"wordCount"`
+	PovCharacterId *int64 `json:"povCharacterId,omitempty"`
+	PrevChapterId  *int64 `json:"prevChapterId,omitempty"`
+	QuoteCount     int    `json:"quoteCount"`
+
+	// Speakers Characters who speak a quotation of the chapter
+	Speakers  *[]CharacterRef `json:"speakers,omitempty"`
+	Status    ChapterStatus   `json:"status"`
+	Title     string          `json:"title"`
+	VolumeId  *int64          `json:"volumeId,omitempty"`
+	WordCount int             `json:"wordCount"`
 }
 
 // ChapterPage defines model for ChapterPage.
@@ -877,6 +980,9 @@ type DatabaseInfo struct {
 
 // DatabaseInfoDialect defines model for DatabaseInfo.Dialect.
 type DatabaseInfoDialect string
+
+// Emotion defines model for Emotion.
+type Emotion string
 
 // Error defines model for Error.
 type Error struct {
@@ -1096,6 +1202,17 @@ type Quote struct {
 	Text         string `json:"text"`
 }
 
+// QuoteUpdate defines model for QuoteUpdate.
+type QuoteUpdate struct {
+	Emotion *Emotion `json:"emotion,omitempty"`
+
+	// Narrator Read by the narrator (no speaker); instead of speakerId
+	Narrator *bool `json:"narrator,omitempty"`
+
+	// SpeakerId The character who speaks it
+	SpeakerId *int64 `json:"speakerId,omitempty"`
+}
+
 // RenderRequest defines model for RenderRequest.
 type RenderRequest struct {
 	Count int `json:"count"`
@@ -1111,13 +1228,20 @@ type RenderResult struct {
 
 // Segment defines model for Segment.
 type Segment struct {
-	Id   int64       `json:"id"`
-	Idx  int         `json:"idx"`
-	Kind SegmentKind `json:"kind"`
+	// Confidence How sure the attribution is (0..1; 1 for a speaker chosen by hand)
+	Confidence float32     `json:"confidence"`
+	Emotion    *string     `json:"emotion,omitempty"`
+	Id         int64       `json:"id"`
+	Idx        int         `json:"idx"`
+	Kind       SegmentKind `json:"kind"`
 
 	// QuoteRef Number of the quotation within the chapter (0 for narration)
-	QuoteRef int    `json:"quoteRef"`
-	Text     string `json:"text"`
+	QuoteRef int `json:"quoteRef"`
+
+	// SpeakerId Who speaks the quotation (absent - the narrator reads it)
+	SpeakerId     *int64 `json:"speakerId,omitempty"`
+	SpeakerManual bool   `json:"speakerManual"`
+	Text          string `json:"text"`
 }
 
 // SegmentKind defines model for SegmentKind.
@@ -1284,6 +1408,12 @@ type RenderBookChaptersJSONRequestBody = RenderRequest
 // UpdateChapterJSONRequestBody defines body for UpdateChapter for application/json ContentType.
 type UpdateChapterJSONRequestBody = ChapterUpdate
 
+// StartAttributionJSONRequestBody defines body for StartAttribution for application/json ContentType.
+type StartAttributionJSONRequestBody = AttributionStart
+
+// UpdateQuoteJSONRequestBody defines body for UpdateQuote for application/json ContentType.
+type UpdateQuoteJSONRequestBody = QuoteUpdate
+
 // SplitChapterJSONRequestBody defines body for SplitChapter for application/json ContentType.
 type SplitChapterJSONRequestBody = ChapterSplit
 
@@ -1367,12 +1497,18 @@ type ServerInterface interface {
 	// UpdateChapter Rename a chapter or exclude it from narration
 	// (PATCH /chapters/{chapterId})
 	UpdateChapter(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
+	// StartAttribution Attribute the chapter's quotations to their speakers
+	// (POST /chapters/{chapterId}/attribution)
+	StartAttribution(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
 	// GetChapterAudio The chapter's audio (AAC in MP4); supports HTTP range requests
 	// (GET /chapters/{chapterId}/audio)
 	GetChapterAudio(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
 	// MergeChapterWithNext Append the following chapter to this one
 	// (POST /chapters/{chapterId}/merge-next)
 	MergeChapterWithNext(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
+	// UpdateQuote Choose the speaker or emotion of a quotation
+	// (PATCH /chapters/{chapterId}/quotes/{quoteRef})
+	UpdateQuote(w http.ResponseWriter, r *http.Request, chapterId ChapterId, quoteRef int)
 	// RenderChapter Queue a chapter for rendering (again)
 	// (POST /chapters/{chapterId}/render)
 	RenderChapter(w http.ResponseWriter, r *http.Request, chapterId ChapterId, params RenderChapterParams)
@@ -2092,6 +2228,32 @@ func (siw *ServerInterfaceWrapper) UpdateChapter(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// StartAttribution operation middleware
+func (siw *ServerInterfaceWrapper) StartAttribution(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chapterId" -------------
+	var chapterId ChapterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chapterId", r.PathValue("chapterId"), &chapterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chapterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartAttribution(w, r, chapterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetChapterAudio operation middleware
 func (siw *ServerInterfaceWrapper) GetChapterAudio(w http.ResponseWriter, r *http.Request) {
 
@@ -2135,6 +2297,41 @@ func (siw *ServerInterfaceWrapper) MergeChapterWithNext(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.MergeChapterWithNext(w, r, chapterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateQuote operation middleware
+func (siw *ServerInterfaceWrapper) UpdateQuote(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chapterId" -------------
+	var chapterId ChapterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chapterId", r.PathValue("chapterId"), &chapterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chapterId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "quoteRef" -------------
+	var quoteRef int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "quoteRef", r.PathValue("quoteRef"), &quoteRef, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "quoteRef", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateQuote(w, r, chapterId, quoteRef)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2781,6 +2978,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/render", wrapper.RenderBookChapters)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/progress", wrapper.GetProgress)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/books/{bookId}/progress", wrapper.SaveProgress)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/attribution", wrapper.StartAttribution)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/chapters/{chapterId}/quotes/{quoteRef}", wrapper.UpdateQuote)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/render", wrapper.RenderChapter)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/chapters/{chapterId}/audio", wrapper.GetChapterAudio)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/voices", wrapper.ListVoices)
@@ -3993,6 +4192,74 @@ func (response UpdateChapterdefaultJSONResponse) VisitUpdateChapterResponse(w ht
 	return err
 }
 
+type StartAttributionRequestObject struct {
+	ChapterId ChapterId `json:"chapterId"`
+	Body      *StartAttributionJSONRequestBody
+}
+
+type StartAttributionResponseObject interface {
+	VisitStartAttributionResponse(w http.ResponseWriter) error
+}
+
+type StartAttribution202JSONResponse ChapterAttribution
+
+func (response StartAttribution202JSONResponse) VisitStartAttributionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAttribution404JSONResponse struct{ ErrorJSONResponse }
+
+func (response StartAttribution404JSONResponse) VisitStartAttributionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAttribution409JSONResponse Error
+
+func (response StartAttribution409JSONResponse) VisitStartAttributionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAttributiondefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response StartAttributiondefaultJSONResponse) VisitStartAttributionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetChapterAudioRequestObject struct {
 	ChapterId ChapterId `json:"chapterId"`
 }
@@ -4108,6 +4375,75 @@ type MergeChapterWithNextdefaultJSONResponse struct {
 }
 
 func (response MergeChapterWithNextdefaultJSONResponse) VisitMergeChapterWithNextResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuoteRequestObject struct {
+	ChapterId ChapterId `json:"chapterId"`
+	QuoteRef  int       `json:"quoteRef"`
+	Body      *UpdateQuoteJSONRequestBody
+}
+
+type UpdateQuoteResponseObject interface {
+	VisitUpdateQuoteResponse(w http.ResponseWriter) error
+}
+
+type UpdateQuote200JSONResponse ChapterDetail
+
+func (response UpdateQuote200JSONResponse) VisitUpdateQuoteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuote400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateQuote400JSONResponse) VisitUpdateQuoteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuote404JSONResponse Error
+
+func (response UpdateQuote404JSONResponse) VisitUpdateQuoteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuotedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response UpdateQuotedefaultJSONResponse) VisitUpdateQuoteResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -5367,12 +5703,18 @@ type StrictServerInterface interface {
 	// UpdateChapter Rename a chapter or exclude it from narration
 	// (PATCH /chapters/{chapterId})
 	UpdateChapter(ctx context.Context, request UpdateChapterRequestObject) (UpdateChapterResponseObject, error)
+	// StartAttribution Attribute the chapter's quotations to their speakers
+	// (POST /chapters/{chapterId}/attribution)
+	StartAttribution(ctx context.Context, request StartAttributionRequestObject) (StartAttributionResponseObject, error)
 	// GetChapterAudio The chapter's audio (AAC in MP4); supports HTTP range requests
 	// (GET /chapters/{chapterId}/audio)
 	GetChapterAudio(ctx context.Context, request GetChapterAudioRequestObject) (GetChapterAudioResponseObject, error)
 	// MergeChapterWithNext Append the following chapter to this one
 	// (POST /chapters/{chapterId}/merge-next)
 	MergeChapterWithNext(ctx context.Context, request MergeChapterWithNextRequestObject) (MergeChapterWithNextResponseObject, error)
+	// UpdateQuote Choose the speaker or emotion of a quotation
+	// (PATCH /chapters/{chapterId}/quotes/{quoteRef})
+	UpdateQuote(ctx context.Context, request UpdateQuoteRequestObject) (UpdateQuoteResponseObject, error)
 	// RenderChapter Queue a chapter for rendering (again)
 	// (POST /chapters/{chapterId}/render)
 	RenderChapter(ctx context.Context, request RenderChapterRequestObject) (RenderChapterResponseObject, error)
@@ -6053,6 +6395,42 @@ func (sh *strictHandler) UpdateChapter(w http.ResponseWriter, r *http.Request, c
 	}
 }
 
+// StartAttribution operation middleware
+func (sh *strictHandler) StartAttribution(w http.ResponseWriter, r *http.Request, chapterId ChapterId) {
+	var request StartAttributionRequestObject
+
+	request.ChapterId = chapterId
+
+	var body StartAttributionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartAttribution(ctx, request.(StartAttributionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartAttribution")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartAttributionResponseObject); ok {
+		if err := validResponse.VisitStartAttributionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetChapterAudio operation middleware
 func (sh *strictHandler) GetChapterAudio(w http.ResponseWriter, r *http.Request, chapterId ChapterId) {
 	var request GetChapterAudioRequestObject
@@ -6098,6 +6476,40 @@ func (sh *strictHandler) MergeChapterWithNext(w http.ResponseWriter, r *http.Req
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(MergeChapterWithNextResponseObject); ok {
 		if err := validResponse.VisitMergeChapterWithNextResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateQuote operation middleware
+func (sh *strictHandler) UpdateQuote(w http.ResponseWriter, r *http.Request, chapterId ChapterId, quoteRef int) {
+	var request UpdateQuoteRequestObject
+
+	request.ChapterId = chapterId
+	request.QuoteRef = quoteRef
+
+	var body UpdateQuoteJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateQuote(ctx, request.(UpdateQuoteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateQuote")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateQuoteResponseObject); ok {
+		if err := validResponse.VisitUpdateQuoteResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

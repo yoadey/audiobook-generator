@@ -399,6 +399,73 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /chapters/{chapterId}/attribution:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      operationId: startAttribution
+      summary: Attribute the chapter's quotations to their speakers
+      description: >-
+        Queues the speaker attribution (a render does this by itself). With
+        force, automatic speakers are discarded and attributed again;
+        speakers chosen by hand stay. Needs a finished character analysis.
+      tags: [chapters]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionStart"
+      responses:
+        "202":
+          description: The attribution is queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterAttribution"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/quotes/{quoteRef}:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+      - name: quoteRef
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    patch:
+      operationId: updateQuote
+      summary: Choose the speaker or emotion of a quotation
+      description: >-
+        Applies to every piece of the quotation and protects it from being
+        attributed again. The chapter's audio becomes outdated.
+      tags: [chapters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteUpdate"
+      responses:
+        "200":
+          description: The chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /chapters/{chapterId}/render:
     parameters:
       - $ref: "#/components/parameters/ChapterId"
@@ -1192,7 +1259,8 @@ components:
       enum: [none, queued, rendering, ready, failed]
     Chapter:
       type: object
-      required: [id, bookId, idx, title, wordCount, quoteCount, excluded, status, audioStatus, audioStale]
+      required: [id, bookId, idx, title, wordCount, quoteCount, excluded, status, audioStatus, audioStale,
+        attributionStatus]
       properties:
         id:
           type: integer
@@ -1226,7 +1294,11 @@ components:
           type: string
         audioStale:
           type: boolean
-          description: The audio was rendered with another narrator voice or speed
+          description: The audio was rendered with other voices (narrator, speakers or their voices changed)
+        attributionStatus:
+          $ref: "#/components/schemas/AttributionStatus"
+        attributionError:
+          type: string
         narration:
           $ref: "#/components/schemas/Narration"
         povCharacterId:
@@ -1253,9 +1325,60 @@ components:
     SegmentKind:
       type: string
       enum: [narration, quote]
+    AttributionStatus:
+      type: string
+      enum: [none, queued, running, done, failed]
+    Emotion:
+      type: string
+      enum: [neutral, happy, sad, angry, afraid, surprised, whispering, shouting, sarcastic]
+    AttributionStart:
+      type: object
+      properties:
+        force:
+          type: boolean
+          description: Attribute again, discarding automatic speakers
+    ChapterAttribution:
+      type: object
+      required: [status, quotes, attributed, unsure, unsureBelow]
+      properties:
+        status:
+          $ref: "#/components/schemas/AttributionStatus"
+        error:
+          type: string
+        prompt:
+          type: string
+          description: Prompt version of the last attribution
+        attributedAt:
+          type: string
+          format: date-time
+        quotes:
+          type: integer
+          description: Quotations in the chapter
+        attributed:
+          type: integer
+          description: Quotations with a speaker
+        unsure:
+          type: integer
+          description: Quotations attributed automatically with a confidence below unsureBelow (or to nobody)
+        unsureBelow:
+          type: number
+        job:
+          $ref: "#/components/schemas/Job"
+    QuoteUpdate:
+      type: object
+      properties:
+        speakerId:
+          type: integer
+          format: int64
+          description: The character who speaks it
+        narrator:
+          type: boolean
+          description: Read by the narrator (no speaker); instead of speakerId
+        emotion:
+          $ref: "#/components/schemas/Emotion"
     Segment:
       type: object
-      required: [id, idx, kind, quoteRef, text]
+      required: [id, idx, kind, quoteRef, text, confidence, speakerManual]
       properties:
         id:
           type: integer
@@ -1269,6 +1392,17 @@ components:
           description: Number of the quotation within the chapter (0 for narration)
         text:
           type: string
+        speakerId:
+          type: integer
+          format: int64
+          description: Who speaks the quotation (absent - the narrator reads it)
+        emotion:
+          type: string
+        confidence:
+          type: number
+          description: How sure the attribution is (0..1; 1 for a speaker chosen by hand)
+        speakerManual:
+          type: boolean
     Paragraph:
       type: object
       required: [id, idx, kind, text, segments]
@@ -1307,6 +1441,13 @@ components:
               description: Characters appearing in the chapter, most important first
               items:
                 $ref: "#/components/schemas/CharacterRef"
+            speakers:
+              type: array
+              description: Characters who speak a quotation of the chapter
+              items:
+                $ref: "#/components/schemas/CharacterRef"
+            attribution:
+              $ref: "#/components/schemas/ChapterAttribution"
     ChapterUpdate:
       type: object
       properties:
