@@ -116,6 +116,20 @@ func (s *Store) PendingBookJob(ctx context.Context, jobType string, bookID int64
 	return &j, err
 }
 
+// PendingRenderChapters returns the chapters of a book with a queued or
+// running job of a type.
+func (s *Store) PendingRenderChapters(ctx context.Context, jobType string, bookID int64) (map[int64]bool, error) {
+	var ids []int64
+	err := s.db.WithContext(ctx).Model(&Job{}).
+		Where("type = ? AND book_id = ? AND status IN ? AND chapter_id IS NOT NULL", jobType, bookID,
+			[]JobStatus{JobQueued, JobRunning}).Pluck("chapter_id", &ids).Error
+	out := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, err
+}
+
 // PendingChapterJob returns the queued or running job of a type for a
 // chapter.
 func (s *Store) PendingChapterJob(ctx context.Context, jobType string, chapterID int64) (*Job, error) {

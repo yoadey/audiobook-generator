@@ -733,6 +733,9 @@ type Chapter struct {
 	AudioDurationMs   *int64            `json:"audioDurationMs,omitempty"`
 	AudioError        *string           `json:"audioError,omitempty"`
 
+	// AudioRerendering Existing audio (still playable) is being rendered again
+	AudioRerendering bool `json:"audioRerendering"`
+
 	// AudioStale The audio was rendered with other voices (narrator, speakers or their voices changed)
 	AudioStale  bool        `json:"audioStale"`
 	AudioStatus AudioStatus `json:"audioStatus"`
@@ -782,6 +785,9 @@ type ChapterDetail struct {
 	AttributionStatus AttributionStatus   `json:"attributionStatus"`
 	AudioDurationMs   *int64              `json:"audioDurationMs,omitempty"`
 	AudioError        *string             `json:"audioError,omitempty"`
+
+	// AudioRerendering Existing audio (still playable) is being rendered again
+	AudioRerendering bool `json:"audioRerendering"`
 
 	// AudioStale The audio was rendered with other voices (narrator, speakers or their voices changed)
 	AudioStale  bool        `json:"audioStale"`

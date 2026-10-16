@@ -6,20 +6,27 @@ import { formatDuration } from '../lib/format';
 /** Audio state of a chapter: duration when ready, otherwise its status. */
 export function AudioBadge({ chapter }: { chapter: Chapter }) {
   switch (chapter.audioStatus) {
-    case 'ready':
+    case 'ready': {
+      const label = chapter.audioRerendering
+        ? 'Being rendered again; the current audio stays playable until then'
+        : chapter.audioError
+          ? `Rendering it again failed: ${chapter.audioError}`
+          : chapter.audioStale
+            ? 'Outdated: the narrator, speakers or their voices changed since'
+            : 'Audio ready';
       return (
-        <Tooltip
-          label={chapter.audioStale ? 'Rendered with another narrator setting' : 'Audio ready'}
-        >
+        <Tooltip label={label} multiline w={320}>
           <Badge
             variant="light"
-            color={chapter.audioStale ? 'yellow' : 'green'}
+            color={chapter.audioError ? 'orange' : chapter.audioStale ? 'yellow' : 'green'}
+            leftSection={chapter.audioRerendering ? <Loader size={10} color="yellow" /> : undefined}
             style={{ flexShrink: 0 }}
           >
             {formatDuration(chapter.audioDurationMs ?? 0)}
           </Badge>
         </Tooltip>
       );
+    }
     case 'queued':
       return (
         <Badge variant="light" color="gray" style={{ flexShrink: 0 }}>

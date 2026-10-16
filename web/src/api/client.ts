@@ -99,7 +99,8 @@ export const volumesQuery = (bookId: number) =>
     queryFn: () => unwrap(api.GET('/books/{bookId}/volumes', { params: { path: { bookId } } })),
   });
 
-const audioPending = (s: AudioStatus) => s === 'queued' || s === 'rendering';
+const audioPending = (c: { audioStatus: AudioStatus; audioRerendering: boolean }) =>
+  c.audioStatus === 'queued' || c.audioStatus === 'rendering' || c.audioRerendering;
 
 export const chaptersQuery = (bookId: number) =>
   queryOptions({
@@ -107,7 +108,7 @@ export const chaptersQuery = (bookId: number) =>
     queryFn: () => unwrap(api.GET('/books/{bookId}/chapters', { params: { path: { bookId } } })),
     // Keep polling while audio is being rendered.
     refetchInterval: (q) =>
-      q.state.data?.items.some((c) => audioPending(c.audioStatus)) ? POLL_MS * 2 : false,
+      q.state.data?.items.some((c) => audioPending(c)) ? POLL_MS * 2 : false,
   });
 
 const attributionActive = (s?: ChapterAttribution['status']) => s === 'queued' || s === 'running';
@@ -121,6 +122,9 @@ export const chapterQuery = (chapterId: number) =>
       if (!c) {
         return false;
       }
+      if (c.audioStatus === 'rendering') {
+        return POLL_MS;
+      }
       // An attribution deferred (LLM quota, retry) holds up the render too:
       // look again rarely.
       const until = c.attribution?.job?.notBefore;
@@ -131,7 +135,7 @@ export const chapterQuery = (chapterId: number) =>
       ) {
         return 60_000;
       }
-      if (audioPending(c.audioStatus) || c.attributionStatus === 'running') {
+      if (audioPending(c) || c.attributionStatus === 'running') {
         return POLL_MS;
       }
       return attributionActive(c.attributionStatus) ? 10_000 : false;

@@ -98,7 +98,9 @@ func (s *Scheduler) RenderAhead(ctx context.Context, b *store.Book, from, count 
 	queued := 0
 	for k := range cs {
 		c := &cs[k]
-		if c.AudioStatus == store.AudioFailed && time.Since(c.UpdatedAt) < RetryFailedAfter {
+		// A failed render (also of outdated audio, which stays ready with
+		// its error) is not retried on every progress save.
+		if (c.AudioStatus == store.AudioFailed || c.AudioError != "") && time.Since(c.UpdatedAt) < RetryFailedAfter {
 			continue
 		}
 		ok, err := s.enqueue(ctx, b, c, priorityLookahead-k, false)

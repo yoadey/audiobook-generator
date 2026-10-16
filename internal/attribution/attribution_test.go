@@ -514,3 +514,32 @@ func TestRenderDoesNotWaitForJobsThatCannotRun(t *testing.T) {
 		require.NoError(t, r.Render(ctx, f.chapters[3].ID, func(float64) {}))
 	})
 }
+
+func TestFailedRerendersBackOffAndOldAudioIsReplaced(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		f := setup(t, s)
+		ch := f.chapters[3] // no quotes
+		require.NoError(t, s.SetChapterAudio(ctx, ch.ID, store.ChapterAudio{Path: "old.m4a", Voice: "af_heart@1.00"}))
+		require.NoError(t, s.UpdateBook(ctx, f.book.ID, map[string]any{"NarratorVoice": "bf_emma", "Lookahead": 5}))
+		book, err := s.GetBook(ctx, f.book.ID)
+		require.NoError(t, err)
+		sched := &render.Scheduler{Store: s, Jobs: f.jobs, DefaultVoice: "af_heart"}
+		n, err := sched.RenderAhead(ctx, book, 3, 1)
+		require.NoError(t, err)
+		assert.Equal(t, 1, n, "outdated audio is rendered again")
+		// The re-render fails: the old audio stays, with its error, and the
+		// lookahead leaves the chapter alone for a while.
+		job := f.jobs.jobs[len(f.jobs.jobs)-1]
+		require.NoError(t, s.FailJob(ctx, job.ID, "tts down"))
+		r := &render.Renderer{Store: s, DataDir: f.dir, Log: slog.New(slog.DiscardHandler)}
+		r.Handler().OnFail(ctx, &job, errors.New("tts down"))
+		got, err := s.GetChapter(ctx, ch.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AudioReady, got.AudioStatus)
+		assert.Equal(t, "tts down", got.AudioError)
+		n, err = sched.RenderAhead(ctx, book, 3, 1)
+		require.NoError(t, err)
+		assert.Zero(t, n)
+	})
+}

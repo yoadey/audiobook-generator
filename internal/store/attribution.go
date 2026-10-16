@@ -167,10 +167,11 @@ func (s *Store) TouchCharacterVoices(ctx context.Context, characterIDs ...int64)
 		Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
 }
 
-// TouchBookVoices bumps the voice revision of all chapters of a book (a
-// change that may affect every voice, e.g. a recast).
+// TouchBookVoices bumps the voice revision of a book's narrated chapters
+// with quotations (their speakers may sound different now).
 func (s *Store) TouchBookVoices(ctx context.Context, bookID int64) error {
-	return s.db.WithContext(ctx).Model(&Chapter{}).Where("book_id = ?", bookID).
+	return s.db.WithContext(ctx).Model(&Chapter{}).
+		Where("book_id = ? AND quote_count > 0 AND excluded = ?", bookID, false).
 		Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
 }
 

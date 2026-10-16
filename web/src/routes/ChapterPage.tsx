@@ -361,7 +361,11 @@ export function ChapterPage() {
           variant="default"
           leftSection={<IconWaveSine size={14} />}
           loading={render.isPending}
-          disabled={chapter.audioStatus === 'queued' || chapter.audioStatus === 'rendering'}
+          disabled={
+            chapter.audioStatus === 'queued' ||
+            chapter.audioStatus === 'rendering' ||
+            chapter.audioRerendering
+          }
           onClick={() => render.mutate()}
         >
           {chapter.audioStatus === 'ready' ? 'Render again' : 'Render audio'}

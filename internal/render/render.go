@@ -82,9 +82,12 @@ const (
 	maxSynthErrLen = 300
 )
 
-// AudioPath is where a chapter's audio is stored, relative to the data dir.
-func AudioPath(bookID, chapterID int64) string {
-	return filepath.Join(importer.BookDir(bookID), "audio", strconv.FormatInt(chapterID, 10)+".m4a")
+// AudioPath is where a render of a chapter's audio is stored, relative to
+// the data dir. Every render gets its own file (version): a listener may
+// still be streaming the previous one.
+func AudioPath(bookID, chapterID, version int64) string {
+	return filepath.Join(importer.BookDir(bookID), "audio",
+		strconv.FormatInt(chapterID, 10)+"-"+strconv.FormatInt(version, 36)+".m4a")
 }
 
 // CacheDir holds the synthesized pieces of a chapter while it renders
@@ -308,7 +311,7 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	}
 
 	// 2. Join with pauses and encode.
-	rel := AudioPath(book.ID, ch.ID)
+	rel := AudioPath(book.ID, ch.ID, time.Now().UnixNano())
 	out := filepath.Join(r.DataDir, rel)
 	pr, pw := io.Pipe()
 	written := make(chan int64, 1)
@@ -338,10 +341,19 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 		return err
 	}
 	duration := audio.Duration(pcmBytes)
+	previous := ""
+	if cur, err := r.Store.GetChapter(ctx, ch.ID); err == nil {
+		previous = cur.AudioPath
+	}
 	if err := r.Store.SetChapterAudio(ctx, ch.ID, store.ChapterAudio{
 		Path: rel, DurationMs: duration.Milliseconds(), Size: st.Size(), Voice: key, VoiceRev: ch.VoiceRev,
 	}); err != nil {
 		return err
+	}
+	if previous != "" && previous != rel {
+		if err := os.Remove(filepath.Join(r.DataDir, previous)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			r.Log.Warn("remove previous audio", "chapter", ch.ID, "err", err)
+		}
 	}
 	if err := os.RemoveAll(cacheDir); err != nil {
 		r.Log.Warn("remove render cache", "chapter", ch.ID, "err", err)

@@ -153,10 +153,12 @@ func TestCharacterAnalysisAndEditing(t *testing.T) {
 		assert.Equal(t, api.AnalysisStatusPaused, an.Status)
 		require.Equal(t, http.StatusOK, c.json(http.MethodPost, "/api/chapters/"+itoa(ch1.Id)+"/merge-next", nil, nil))
 
-		// Restart discards everything.
+		// Restart discards everything, the corrections too (the restarted
+		// analysis may already have found the characters again).
 		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, "/api/books/"+id+"/analysis",
 			map[string]any{"restart": true}, &an))
-		assert.EqualValues(t, 0, an.CharacterCount)
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/books/"+id+"/characters?search=Baker", nil, &chars))
+		assert.Empty(t, chars.Items, "the renamed Tom Baker is gone")
 	})
 }
 

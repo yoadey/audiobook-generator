@@ -1260,7 +1260,7 @@ components:
     Chapter:
       type: object
       required: [id, bookId, idx, title, wordCount, quoteCount, excluded, status, audioStatus, audioStale,
-        attributionStatus]
+        audioRerendering, attributionStatus]
       properties:
         id:
           type: integer
@@ -1295,6 +1295,9 @@ components:
         audioStale:
           type: boolean
           description: The audio was rendered with other voices (narrator, speakers or their voices changed)
+        audioRerendering:
+          type: boolean
+          description: Existing audio (still playable) is being rendered again
         attributionStatus:
           $ref: "#/components/schemas/AttributionStatus"
         attributionError:

@@ -148,7 +148,7 @@ func (s *Server) RenderChapter(ctx context.Context, req RenderChapterRequestObje
 	if err != nil {
 		return nil, err
 	}
-	return RenderChapter202JSONResponse(s.toChapter(b, c)), nil
+	return RenderChapter202JSONResponse(s.toChapter(b, c, true)), nil
 }
 
 // audioFile serves a file with Range support (http.ServeContent).
@@ -247,6 +247,13 @@ func (s *Server) RetryJob(ctx context.Context, req RetryJobRequestObject) (Retry
 		return RetryJob404JSONResponse{ErrorJSONResponse(errMsg("job not found"))}, nil
 	} else if err != nil {
 		return nil, err
+	}
+	if j.Type == render.JobType && j.ChapterID != nil {
+		if p, err := s.Store.PendingRenderJob(ctx, render.JobType, *j.ChapterID); err != nil {
+			return nil, err
+		} else if p != nil {
+			return RetryJob409JSONResponse{Message: "the chapter is already queued for rendering"}, nil
+		}
 	}
 	if err := s.Store.RetryFailedJob(ctx, j.ID); errors.Is(err, store.ErrInvalid) {
 		return RetryJob409JSONResponse{Message: "only failed or canceled jobs can be retried"}, nil

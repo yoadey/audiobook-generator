@@ -13,8 +13,8 @@ import (
 )
 
 // toChapter converts a chapter; b (the chapter's book) decides whether the
-// audio is stale.
-func (s *Server) toChapter(b *store.Book, c *store.Chapter) Chapter {
+// audio is stale, rendering whether a render of it is pending.
+func (s *Server) toChapter(b *store.Book, c *store.Chapter, rendering bool) Chapter {
 	out := Chapter{
 		Id:         c.ID,
 		BookId:     c.BookID,
@@ -29,6 +29,8 @@ func (s *Server) toChapter(b *store.Book, c *store.Chapter) Chapter {
 		AudioStatus: AudioStatus(c.AudioStatus),
 		AudioError:  nonEmpty(c.AudioError),
 		AudioStale:  b != nil && s.Scheduler != nil && s.Scheduler.Stale(b, c),
+
+		AudioRerendering: rendering && c.AudioStatus == store.AudioReady,
 
 		PovCharacterId: c.POVCharacterID,
 
@@ -129,9 +131,13 @@ func (s *Server) ListChapters(ctx context.Context, req ListChaptersRequestObject
 	if err != nil {
 		return nil, err
 	}
+	rendering, err := s.Store.PendingRenderChapters(ctx, render.JobType, req.BookId)
+	if err != nil {
+		return nil, err
+	}
 	out := ChapterPage{Items: make([]Chapter, 0, len(cs)), Total: total}
 	for i := range cs {
-		out.Items = append(out.Items, s.toChapter(b, &cs[i]))
+		out.Items = append(out.Items, s.toChapter(b, &cs[i], rendering[cs[i].ID]))
 	}
 	return ListChapters200JSONResponse(out), nil
 }
@@ -179,13 +185,17 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		}
 		byPara[sg.ParagraphID] = append(byPara[sg.ParagraphID], seg)
 	}
-	ch := s.toChapter(b, c)
+	pending, err := s.Store.PendingRenderJob(ctx, render.JobType, c.ID)
+	if err != nil {
+		return ChapterDetail{}, err
+	}
+	ch := s.toChapter(b, c, pending != nil)
 	out := ChapterDetail{
 		Id: ch.Id, BookId: ch.BookId, VolumeId: ch.VolumeId, Idx: ch.Idx, Title: ch.Title,
 		WordCount: ch.WordCount, QuoteCount: ch.QuoteCount, Excluded: ch.Excluded, Status: ch.Status,
 		AudioStatus: ch.AudioStatus, AudioDurationMs: ch.AudioDurationMs, AudioError: ch.AudioError,
-		AudioStale: ch.AudioStale, Narration: ch.Narration, PovCharacterId: ch.PovCharacterId,
-		AttributionStatus: ch.AttributionStatus, AttributionError: ch.AttributionError,
+		AudioStale: ch.AudioStale, AudioRerendering: ch.AudioRerendering, Narration: ch.Narration,
+		PovCharacterId: ch.PovCharacterId, AttributionStatus: ch.AttributionStatus, AttributionError: ch.AttributionError,
 		Paragraphs: make([]Paragraph, 0, len(paras)),
 	}
 	att, err := s.toAttribution(ctx, c)
@@ -245,7 +255,7 @@ func (s *Server) UpdateChapter(ctx context.Context, req UpdateChapterRequestObje
 	} else if err != nil {
 		return nil, err
 	}
-	return UpdateChapter200JSONResponse(s.toChapter(nil, c)), nil
+	return UpdateChapter200JSONResponse(s.toChapter(nil, c, false)), nil
 }
 
 // MergeChapterWithNext appends the following chapter.
@@ -285,7 +295,7 @@ func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithN
 	if err != nil {
 		return nil, err
 	}
-	return MergeChapterWithNext200JSONResponse(s.toChapter(nil, c)), nil
+	return MergeChapterWithNext200JSONResponse(s.toChapter(nil, c, false)), nil
 }
 
 // SplitChapter starts a new chapter at a paragraph.
@@ -309,5 +319,5 @@ func (s *Server) SplitChapter(ctx context.Context, req SplitChapterRequestObject
 		return nil, err
 	}
 	s.dropAudio(ctx, req.ChapterId)
-	return SplitChapter200JSONResponse(s.toChapter(nil, c)), nil
+	return SplitChapter200JSONResponse(s.toChapter(nil, c, false)), nil
 }

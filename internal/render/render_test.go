@@ -109,7 +109,8 @@ func TestRenderChapter(t *testing.T) {
 		got, err := s.GetChapter(ctx, ch1.ID)
 		require.NoError(t, err)
 		assert.Equal(t, store.AudioReady, got.AudioStatus)
-		assert.Equal(t, render.AudioPath(b.ID, ch1.ID), got.AudioPath)
+		assert.True(t, strings.HasPrefix(got.AudioPath, filepath.Join(importer.BookDir(b.ID), "audio", strconv.FormatInt(ch1.ID, 10)+"-")),
+			got.AudioPath)
 		assert.Equal(t, "af_heart@1.00", got.AudioVoice)
 		// 8 pieces × 100 ms plus lead-in and pauses.
 		assert.Greater(t, got.AudioDurationMs, int64(3000))
@@ -118,6 +119,16 @@ func TestRenderChapter(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, st.Size(), got.AudioSize)
 		assert.NoDirExists(t, filepath.Join(dir, "cache", "render", strconv.FormatInt(ch1.ID, 10)), "cache removed")
+
+		// A render again writes a new file and removes the previous one
+		// (a listener may still stream it until the switch).
+		first := got.AudioPath
+		require.NoError(t, r.Render(ctx, ch1.ID, func(float64) {}))
+		again, err := s.GetChapter(ctx, ch1.ID)
+		require.NoError(t, err)
+		assert.NotEqual(t, first, again.AudioPath)
+		assert.FileExists(t, filepath.Join(dir, again.AudioPath))
+		assert.NoFileExists(t, filepath.Join(dir, first))
 
 		// Chapters without a heading paragraph get their title spoken first
 		// (sequentially here, so the order of requests is the spoken order).
@@ -188,7 +199,8 @@ func TestRenderNoticesTextChanges(t *testing.T) {
 		got, err := s.GetChapter(ctx, ch.ID)
 		require.NoError(t, err)
 		assert.NotEqual(t, store.AudioReady, got.AudioStatus)
-		assert.NoFileExists(t, filepath.Join(dir, render.AudioPath(b.ID, ch.ID)))
+		files, _ := filepath.Glob(filepath.Join(dir, importer.BookDir(b.ID), "audio", strconv.FormatInt(ch.ID, 10)+"-*"))
+		assert.Empty(t, files)
 
 		require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
 		got, err = s.GetChapter(ctx, ch.ID)
@@ -214,7 +226,8 @@ func TestRenderOfDeletedBook(t *testing.T) {
 		err := r.Render(ctx, cs[1].ID, func(float64) {})
 		var perm jobs.PermanentError
 		require.ErrorAs(t, err, &perm)
-		assert.NoFileExists(t, filepath.Join(dir, render.AudioPath(b.ID, cs[1].ID)))
+		files, _ := filepath.Glob(filepath.Join(dir, importer.BookDir(b.ID), "audio", strconv.FormatInt(cs[1].ID, 10)+"-*"))
+		assert.Empty(t, files)
 	})
 }
 

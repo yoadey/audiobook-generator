@@ -729,6 +729,8 @@ export interface components {
       audioError?: string;
       /** @description The audio was rendered with other voices (narrator, speakers or their voices changed) */
       audioStale: boolean;
+      /** @description Existing audio (still playable) is being rendered again */
+      audioRerendering: boolean;
       attributionStatus: components['schemas']['AttributionStatus'];
       attributionError?: string;
       narration?: components['schemas']['Narration'];
