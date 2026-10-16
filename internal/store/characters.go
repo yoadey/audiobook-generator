@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -203,7 +204,7 @@ func (s *Store) AddCharacterAliases(ctx context.Context, c *Character, aliases .
 	for _, a := range aliases {
 		a = strings.TrimSpace(a)
 		n := NormName(a)
-		if n == "" || seen[n] || len(a) > 200 {
+		if n == "" || seen[n] || utf8.RuneCountInString(a) > 120 {
 			continue
 		}
 		seen[n] = true
@@ -531,11 +532,15 @@ func (s *Store) NextAnalysisBatch(ctx context.Context, bookID int64) (*AnalysisB
 func (s *Store) CompleteAnalysisBatch(ctx context.Context, b *AnalysisBatch) error {
 	now := time.Now().UTC()
 	b.Status, b.CompletedAt = BatchDone, &now
-	return s.db.WithContext(ctx).Model(&AnalysisBatch{ID: b.ID}).Updates(map[string]any{
+	fields := map[string]any{
 		"status": BatchDone, "prompt": b.Prompt, "provider": b.Provider, "model": b.Model,
 		"input_tokens": b.InputTokens, "output_tokens": b.OutputTokens, "result": CleanText(b.Result),
 		"completed_at": now,
-	}).Error
+	}
+	if b.Parts != "" {
+		fields["parts"] = b.Parts
+	}
+	return s.db.WithContext(ctx).Model(&AnalysisBatch{ID: b.ID}).Updates(fields).Error
 }
 
 // ReplaceAnalysisBatch swaps a pending batch for smaller ones (a batch

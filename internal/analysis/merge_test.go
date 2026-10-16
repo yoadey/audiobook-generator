@@ -54,6 +54,18 @@ func TestNameHelpers(t *testing.T) {
 	assert.False(t, properName("Ma", "ma"))
 }
 
+func TestRelatedNeedsANameNotADescription(t *testing.T) {
+	b := newBible()
+	b.add(&store.Character{ID: 1, Name: "Erin Solstice"})
+	b.addName(1, "the girl")
+	b.addName(1, "erin")
+	assert.True(t, b.related(1, "Erin Solstice", nil))
+	assert.True(t, b.related(1, "Innkeeper", []string{"Erin"}))
+	assert.True(t, b.related(1, "Erin", nil))
+	assert.False(t, b.related(1, "the girl", nil), "a shared description proves nothing")
+	assert.False(t, b.related(1, "Lyonette", []string{"the girl"}))
+}
+
 func TestRelevantCharacters(t *testing.T) {
 	b := newBible()
 	b.add(&store.Character{ID: 1, Name: "Erin Solstice", Importance: 5})

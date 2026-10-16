@@ -261,7 +261,7 @@ func (a *Analyzer) mergeRound(ctx context.Context, bookID int64, progress func(f
 	isDistinct := func(x, y int64) bool { return distinct[[2]int64{min(x, y), max(x, y)}] }
 	group := a.mergeGroupSize()
 	for start := 0; start < len(pairs); start += group {
-		if paused, err := a.paused(ctx, bookID); err != nil || paused {
+		if paused, err := a.paused(ctx, bookID, store.AnalysisMerging); err != nil || paused {
 			return false, false, err
 		}
 		progress(float64(start) / float64(len(pairs)))
@@ -292,10 +292,12 @@ func (a *Analyzer) mergeRound(ctx context.Context, bookID int64, progress func(f
 		var (
 			rejected *llm.RejectedError
 			tooLarge *llm.TooLargeError
+			invalid  *llm.InvalidOutputError
 		)
-		if errors.As(err, &rejected) || errors.As(err, &tooLarge) {
-			// No provider takes this group: leave its pairs undecided
-			// rather than failing the whole analysis.
+		if errors.As(err, &rejected) || errors.As(err, &tooLarge) || errors.As(err, &invalid) {
+			// No provider takes this group, or the model cannot answer it:
+			// leave its pairs undecided rather than failing the whole
+			// analysis.
 			a.Log.Warn("duplicate check request refused, skipping its pairs", "book", bookID, "err", err)
 			continue
 		}

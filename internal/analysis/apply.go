@@ -170,8 +170,14 @@ func (b *bible) related(id int64, name string, aliases []string) bool {
 			knownFirst[ws[0]] = true
 		}
 	}
+	// A shared description ("the girl") proves nothing; a shared name or
+	// name-like alias does.
+	canonical := ""
+	if c := b.chars[id]; c != nil {
+		canonical = store.NormName(c.Name)
+	}
 	for _, s := range append([]string{name}, aliases...) {
-		if known[store.NormName(s)] {
+		if n := store.NormName(s); known[n] && (n == canonical || identifying(s)) {
 			return true
 		}
 	}

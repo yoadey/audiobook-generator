@@ -508,6 +508,25 @@ func TestRejectionsAndTruncatedRepairs(t *testing.T) {
 		var inv *llm.InvalidOutputError
 		require.ErrorAs(t, err, &inv)
 		assert.True(t, inv.Truncated, "a cut-off repair answer counts as truncated")
+
+		// Content filters: a withheld answer is not repaired.
+		before := len(srv.Requests())
+		srv.Enqueue(llmtest.Reply{Content: "", FinishReason: "content_filter"})
+		_, err = pool.CompleteJSON(ctx, req, nil)
+		require.ErrorAs(t, err, &inv)
+		assert.True(t, inv.Blocked)
+		assert.Len(t, srv.Requests(), before+1)
+		srv.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":{"message":"Request blocked by the safety system"}}`})
+		other.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":"content_filter"}`})
+		_, err = pool.Complete(ctx, userReq("x"))
+		require.ErrorAs(t, err, &rej)
+		assert.True(t, rej.Blocked())
+		assert.False(t, rej.TooLong())
+		srv.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":"blocked"}`})
+		other.Enqueue(llmtest.Reply{Status: 400, Body: `{"error":"unsupported parameter"}`})
+		_, err = pool.Complete(ctx, userReq("x"))
+		require.ErrorAs(t, err, &rej)
+		assert.False(t, rej.Blocked(), "only when every provider's filter refused")
 	})
 }
 

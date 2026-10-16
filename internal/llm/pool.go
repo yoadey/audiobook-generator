@@ -136,6 +136,30 @@ func (e *RejectedError) TooLong() bool {
 	return false
 }
 
+// Phrases providers use when a content filter refused the input.
+var blockedHints = []string{
+	"safety", "blocked", "prohibited", "content policy", "content_filter", "content management policy",
+}
+
+// Blocked reports whether every provider's refusal came from a content
+// filter: a smaller part of the text may pass.
+func (e *RejectedError) Blocked() bool {
+	if len(e.Errs) == 0 {
+		return false
+	}
+	for _, err := range e.Errs {
+		var he *HTTPError
+		if !errors.As(err, &he) {
+			return false
+		}
+		body := strings.ToLower(he.Body)
+		if !slices.ContainsFunc(blockedHints, func(h string) bool { return strings.Contains(body, h) }) {
+			return false
+		}
+	}
+	return true
+}
+
 // TooLargeError means the request exceeds the limits of every provider;
 // waiting cannot help, a smaller request might.
 type TooLargeError struct{ Reasons []string }
@@ -472,6 +496,10 @@ func (p *Pool) CompleteJSON(ctx context.Context, req Request, out any) (*Result,
 		return res, nil
 	}
 	p.Metrics.request(res.Provider, outcomeInvalid)
+	if res.FinishReason == "content_filter" {
+		return nil, &InvalidOutputError{Err: fmt.Errorf("answer withheld by the content filter: %w", verr),
+			Content: res.Content, Blocked: true}
+	}
 	if res.FinishReason == "length" {
 		return nil, &InvalidOutputError{Err: fmt.Errorf("answer truncated at the output token limit: %w", verr),
 			Content: res.Content, Truncated: true}
@@ -489,7 +517,8 @@ func (p *Pool) CompleteJSON(ctx context.Context, req Request, out any) (*Result,
 	}
 	if verr := validate(req.Schema, extractJSON(res2.Content), out); verr != nil {
 		p.Metrics.request(res2.Provider, outcomeInvalid)
-		return nil, &InvalidOutputError{Err: verr, Content: res2.Content, Truncated: res2.FinishReason == "length"}
+		return nil, &InvalidOutputError{Err: verr, Content: res2.Content,
+			Truncated: res2.FinishReason == "length", Blocked: res2.FinishReason == "content_filter"}
 	}
 	return res2, nil
 }

@@ -22,6 +22,9 @@ type InvalidOutputError struct {
 	// Truncated is set when the answer hit the output token limit (a
 	// smaller request may fit).
 	Truncated bool
+	// Blocked is set when the provider's content filter withheld the
+	// answer (a smaller request may pass).
+	Blocked bool
 }
 
 func (e *InvalidOutputError) Error() string { return "invalid model output: " + e.Err.Error() }

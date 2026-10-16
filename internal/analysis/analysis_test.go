@@ -609,3 +609,134 @@ func TestChaptersIncludedOrExcludedLater(t *testing.T) {
 		assert.Contains(t, userMessage(reqs[0]), "=== [1] Chapter 2 ===")
 	})
 }
+
+func TestResumeDuringTheDuplicateCheck(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, _ := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		a.MergeGroup = 1
+		require.NoError(t, a.Start(ctx, b, false))
+		srv.Respond = func(r llmtest.Request) llmtest.Reply {
+			if strings.Contains(userMessage(r), "Pairs (") {
+				// Paused and resumed while a group is asked.
+				require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"AnalysisStatus": store.AnalysisQueued}))
+				return llmtest.Reply{Content: `{"decisions": [{"pair": "p1", "same": false}]}`}
+			}
+			return answer(t, []char{
+				{Name: "Anna", Gender: "female", Importance: 3, Chapters: []int{1}},
+				{Name: "Anna Smith", Gender: "female", Importance: 2, Chapters: []int{2}},
+			})
+		}
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+		got, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AnalysisDone, got.AnalysisStatus, "not stuck in a running state")
+	})
+}
+
+func TestChapterExcludedWhileItsBatchWaits(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, chs := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		a.BatchTokens = 40 // a batch per chapter
+		require.NoError(t, a.Start(ctx, b, false))
+		first := true
+		srv.Respond = func(r llmtest.Request) llmtest.Reply {
+			if strings.Contains(userMessage(r), "Pairs (") {
+				return llmtest.Reply{Content: `{"decisions": []}`}
+			}
+			if first {
+				// Chapter 2 is excluded while chapter 1 is analysed.
+				first = false
+				excl := true
+				_, err := s.UpdateChapter(ctx, chs[2].ID, store.ChapterUpdate{Excluded: &excl})
+				require.NoError(t, err)
+			}
+			return answer(t, nil)
+		}
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+
+		incl := false
+		_, err := s.UpdateChapter(ctx, chs[2].ID, store.ChapterUpdate{Excluded: &incl})
+		require.NoError(t, err)
+		before := len(srv.Requests())
+		got, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		require.NoError(t, a.Start(ctx, got, false))
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+		reqs := srv.Requests()[before:]
+		require.Len(t, reqs, 1, "the chapter included again is analysed")
+		assert.Contains(t, userMessage(reqs[0]), "=== [1] Chapter 2 ===")
+	})
+}
+
+func TestContentFilterRefusalsAreNarrowedDownAndSkipped(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, _ := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		require.NoError(t, a.Start(ctx, b, false))
+		srv.Respond = func(r llmtest.Request) llmtest.Reply {
+			msg := userMessage(r)
+			if strings.Contains(msg, "Pairs (") {
+				return llmtest.Reply{Content: `{"decisions": []}`}
+			}
+			if strings.Contains(msg, "Chapter 2 ===") {
+				return llmtest.Reply{Status: 400, Body: `{"error":{"message":"Request blocked by the safety system"}}`}
+			}
+			return answer(t, []char{{Name: "Anna", Gender: "female", Importance: 2, Chapters: []int{1}}})
+		}
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+		got, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AnalysisDone, got.AnalysisStatus)
+		assert.Contains(t, characters(t, s, b.ID), "Anna", "the rest of the book is analysed")
+	})
+}
+
+func TestUnanswerableDuplicateCheckIsSkipped(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, _ := setup(t, s)
+		a, srv := newAnalyzer(t, s)
+		require.NoError(t, a.Start(ctx, b, false))
+		srv.Respond = func(r llmtest.Request) llmtest.Reply {
+			if strings.Contains(userMessage(r), "Pairs (") {
+				return llmtest.Reply{Content: `not json at all`}
+			}
+			return answer(t, []char{
+				{Name: "Anna", Gender: "female", Importance: 3, Chapters: []int{1}},
+				{Name: "Anna Smith", Gender: "female", Importance: 2, Chapters: []int{2}},
+			})
+		}
+		require.NoError(t, a.Run(ctx, b.ID, func(float64) {}))
+		got, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AnalysisDone, got.AnalysisStatus)
+		assert.Len(t, characters(t, s, b.ID), 2, "undecided pairs stay apart")
+	})
+}
+
+func TestFailureKeepsAPausedStatus(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b, _ := setup(t, s)
+		a, _ := newAnalyzer(t, s)
+		require.NoError(t, a.Start(ctx, b, false))
+		j := a.Jobs.(*enqueuer).jobs[0]
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"AnalysisStatus": store.AnalysisPaused}))
+		a.Handler().OnFail(ctx, &j, assert.AnError)
+		got, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AnalysisPaused, got.AnalysisStatus)
+
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"AnalysisStatus": store.AnalysisRunning}))
+		a.Handler().OnFail(ctx, &j, assert.AnError)
+		got, err = s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AnalysisFailed, got.AnalysisStatus)
+		assert.Contains(t, got.AnalysisError, "assert.AnError")
+	})
+}

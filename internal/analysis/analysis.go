@@ -234,9 +234,11 @@ func (a *Analyzer) Handler() jobs.Handler {
 			if j.BookID == nil {
 				return
 			}
-			if uerr := a.Store.UpdateBook(ctx, *j.BookID, map[string]any{
-				"AnalysisStatus": store.AnalysisFailed, "AnalysisError": store.CleanText(err.Error()),
-			}); uerr != nil {
+			// Only a running analysis fails: one paused or reset meanwhile
+			// keeps its status.
+			if _, uerr := a.Store.TransitionAnalysis(ctx, *j.BookID, store.AnalysisFailed,
+				map[string]any{"analysis_error": store.CleanText(err.Error())},
+				store.AnalysisQueued, store.AnalysisRunning, store.AnalysisMerging); uerr != nil {
 				a.Log.Error("mark analysis failed", "book", *j.BookID, "err", uerr)
 			}
 		},
@@ -282,7 +284,7 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 	}
 
 	for {
-		if paused, err := a.paused(ctx, bookID); err != nil || paused {
+		if paused, err := a.paused(ctx, bookID, store.AnalysisRunning); err != nil || paused {
 			return err
 		}
 		next, err := a.Store.NextAnalysisBatch(ctx, bookID)
@@ -303,7 +305,7 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 		}
 	}
 
-	if paused, err := a.paused(ctx, bookID); err != nil || paused {
+	if paused, err := a.paused(ctx, bookID, store.AnalysisRunning); err != nil || paused {
 		return err
 	}
 	if ok, err := a.Store.TransitionAnalysis(ctx, bookID, store.AnalysisMerging, nil,
@@ -313,7 +315,7 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 	if err := a.mergeDuplicates(ctx, bookID, func(p float64) { progress(0.95 + 0.05*p) }); err != nil {
 		return err
 	}
-	if paused, err := a.paused(ctx, bookID); err != nil || paused {
+	if paused, err := a.paused(ctx, bookID, store.AnalysisMerging); err != nil || paused {
 		return err
 	}
 	if err := a.Store.RefreshBookCharacterStats(ctx, bookID); err != nil {
@@ -327,9 +329,9 @@ func (a *Analyzer) Run(ctx context.Context, bookID int64, progress func(float64)
 }
 
 // paused reports whether the user paused (or reset) the analysis; a
-// "queued" status (resumed while this job was still running) becomes
-// "running" again.
-func (a *Analyzer) paused(ctx context.Context, bookID int64) (bool, error) {
+// "queued" status (resumed while this job was still running) becomes the
+// current phase again.
+func (a *Analyzer) paused(ctx context.Context, bookID int64, phase store.AnalysisStatus) (bool, error) {
 	b, err := a.Store.GetBook(ctx, bookID)
 	if err != nil {
 		return false, err
@@ -338,13 +340,24 @@ func (a *Analyzer) paused(ctx context.Context, bookID int64) (bool, error) {
 	case store.AnalysisPaused, store.AnalysisNone:
 		return true, nil
 	case store.AnalysisQueued:
-		ok, err := a.Store.TransitionAnalysis(ctx, bookID, store.AnalysisRunning, nil, store.AnalysisQueued)
+		ok, err := a.Store.TransitionAnalysis(ctx, bookID, phase, nil, store.AnalysisQueued)
 		if err != nil || ok {
 			return false, err
 		}
-		return a.paused(ctx, bookID) // changed meanwhile: look again
+		return a.paused(ctx, bookID, phase) // changed meanwhile: look again
 	}
 	return false, nil
+}
+
+// sentParts encodes the parts a batch actually covered: a chapter excluded
+// while the batch waited is planned again when it is included.
+func sentParts(parts []chapterPart) string {
+	ps := make([]part, len(parts))
+	for i, p := range parts {
+		ps[i] = p.part
+	}
+	raw, _ := json.Marshal(ps)
+	return string(raw)
 }
 
 // analyzeBatch sends one batch and merges the answer. A batch the model
@@ -359,8 +372,9 @@ func (a *Analyzer) analyzeBatch(ctx context.Context, bookID int64, batch *store.
 		return err
 	}
 	if len(parts) == 0 {
-		// Its chapters were deleted: nothing to do.
+		// Its chapters were deleted or excluded: nothing to do.
 		batch.Prompt = analysisPrompt.ID()
+		batch.Parts = sentParts(parts)
 		return a.Store.CompleteAnalysisBatch(ctx, batch)
 	}
 	bib, err := loadBible(ctx, a.Store, bookID)
@@ -396,11 +410,22 @@ func (a *Analyzer) analyzeBatch(ctx context.Context, bookID int64, batch *store.
 		invalid  *llm.InvalidOutputError
 		rejected *llm.RejectedError
 	)
-	if errors.As(err, &tooLarge) || (errors.As(err, &invalid) && invalid.Truncated) ||
+	// A content filter may object to one passage only: narrow it down and
+	// skip what is still refused, rather than failing the whole book.
+	blocked := (errors.As(err, &invalid) && invalid.Blocked) || (errors.As(err, &rejected) && rejected.Blocked())
+	if blocked || errors.As(err, &tooLarge) || (errors.As(err, &invalid) && invalid.Truncated) ||
 		(errors.As(err, &rejected) && rejected.TooLong()) {
 		first, second, ok, herr := halves(bookID, ps, parts)
 		if herr != nil {
 			return herr
+		}
+		if !ok && blocked {
+			a.Log.Warn("analysis batch refused by the content filter, skipping it",
+				"book", bookID, "batch", batch.ID, "chapter", batch.FirstChapterIdx+1, "err", err)
+			batch.Prompt = analysisPrompt.ID()
+			batch.Parts = sentParts(parts)
+			batch.Result = `{"skipped":"content filter"}`
+			return a.Store.CompleteAnalysisBatch(ctx, batch)
 		}
 		if !ok {
 			return jobs.Permanent(fmt.Errorf("batch at chapter %d cannot be split further: %w", batch.FirstChapterIdx+1, err))
@@ -424,6 +449,7 @@ func (a *Analyzer) analyzeBatch(ctx context.Context, bookID int64, batch *store.
 	batch.Prompt, batch.Provider, batch.Model = analysisPrompt.ID(), out.Provider, out.Model
 	batch.InputTokens, batch.OutputTokens = out.Usage.InputTokens, out.Usage.OutputTokens
 	batch.Result = string(raw)
+	batch.Parts = sentParts(parts)
 	return a.Store.Tx(ctx, func(tx *store.Store) error {
 		if err := apply(ctx, tx, bookID, bib, sent, parts, &res); err != nil {
 			return err
