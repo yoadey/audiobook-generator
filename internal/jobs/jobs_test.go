@@ -1,0 +1,230 @@
+package jobs_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/store"
+	"github.com/yoadey/audiobook-generator/internal/store/storetest"
+)
+
+func start(t *testing.T, r *jobs.Runner) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = r.Run(ctx)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+}
+
+func waitStatus(t *testing.T, s *store.Store, id int64, want store.JobStatus) *store.Job {
+	t.Helper()
+	var j *store.Job
+	require.Eventually(t, func() bool {
+		var err error
+		j, err = s.GetJob(context.Background(), id)
+		require.NoError(t, err)
+		return j.Status == want
+	}, 10*time.Second, 10*time.Millisecond, "job %d never reached %s", id, want)
+	return j
+}
+
+func newRunner(s *store.Store) *jobs.Runner {
+	r := jobs.New(s, slog.New(slog.DiscardHandler))
+	r.PollInterval = 20 * time.Millisecond
+	r.Backoff = func(int) time.Duration { return 0 }
+	return r
+}
+
+func TestRunsJobs(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		var ran atomic.Int32
+		r.Handle("ok", jobs.Handler{Queue: "q", Run: func(_ context.Context, _ *store.Job, progress func(float64)) error {
+			progress(0.5)
+			ran.Add(1)
+			return nil
+		}})
+		r.SetConcurrency("q", 3)
+		start(t, r)
+
+		var ids []int64
+		for range 5 {
+			j := &store.Job{Type: "ok"}
+			require.NoError(t, r.Enqueue(context.Background(), j))
+			ids = append(ids, j.ID)
+		}
+		for _, id := range ids {
+			j := waitStatus(t, s, id, store.JobDone)
+			assert.Equal(t, 1, j.Attempts)
+			assert.InDelta(t, 1.0, j.Progress, 0.001)
+		}
+		assert.EqualValues(t, 5, ran.Load())
+	})
+}
+
+func TestRetriesThenFails(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		var failed atomic.Bool
+		r.Handle("flaky", jobs.Handler{
+			Queue: "q",
+			Run: func(context.Context, *store.Job, func(float64)) error {
+				return errors.New("boom")
+			},
+			OnFail: func(_ context.Context, _ *store.Job, err error) { failed.Store(err != nil) },
+		})
+		start(t, r)
+
+		j := &store.Job{Type: "flaky", MaxAttempts: 3}
+		require.NoError(t, r.Enqueue(context.Background(), j))
+		got := waitStatus(t, s, j.ID, store.JobFailed)
+		assert.Equal(t, 3, got.Attempts)
+		assert.Equal(t, "boom", got.Error)
+		assert.Eventually(t, failed.Load, time.Second, 10*time.Millisecond)
+	})
+}
+
+func TestPermanentErrorSkipsRetries(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		r.Handle("bad", jobs.Handler{Queue: "q", Run: func(context.Context, *store.Job, func(float64)) error {
+			return jobs.Permanent(errors.New("not an EPUB"))
+		}})
+		start(t, r)
+
+		j := &store.Job{Type: "bad", MaxAttempts: 5}
+		require.NoError(t, r.Enqueue(context.Background(), j))
+		got := waitStatus(t, s, j.ID, store.JobFailed)
+		assert.Equal(t, 1, got.Attempts)
+	})
+}
+
+func TestDeferDoesNotCountAttempts(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		var calls atomic.Int32
+		r.Handle("quota", jobs.Handler{Queue: "q", Run: func(context.Context, *store.Job, func(float64)) error {
+			// Deferred twice (into the past, so it is due again at once),
+			// then it succeeds: none of the deferrals uses up an attempt.
+			if calls.Add(1) <= 2 {
+				return fmt.Errorf("analyze: %w", jobs.Defer(time.Now().Add(-time.Second), "all providers out of quota"))
+			}
+			return nil
+		}})
+		start(t, r)
+
+		j := &store.Job{Type: "quota", MaxAttempts: 1}
+		require.NoError(t, r.Enqueue(context.Background(), j))
+		got := waitStatus(t, s, j.ID, store.JobDone)
+		assert.Equal(t, 1, got.Attempts)
+		assert.EqualValues(t, 3, calls.Load())
+	})
+}
+
+func TestDeferKeepsJobQueuedUntilDue(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		until := time.Now().Add(time.Hour).UTC()
+		r.Handle("quota", jobs.Handler{Queue: "q", Run: func(context.Context, *store.Job, func(float64)) error {
+			return jobs.Defer(until, "quota exhausted")
+		}})
+		start(t, r)
+
+		j := &store.Job{Type: "quota"}
+		require.NoError(t, r.Enqueue(context.Background(), j))
+		require.Eventually(t, func() bool {
+			got, err := s.GetJob(context.Background(), j.ID)
+			require.NoError(t, err)
+			return got.Status == store.JobQueued && got.Error == "quota exhausted"
+		}, 10*time.Second, 10*time.Millisecond)
+		got, err := s.GetJob(context.Background(), j.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 0, got.Attempts)
+		assert.WithinDuration(t, until, got.NotBefore, time.Second)
+	})
+}
+
+func TestRequeuesInterruptedJobs(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		// A job left "running" by a crashed process.
+		j := &store.Job{Type: "ok", Queue: "q"}
+		require.NoError(t, s.EnqueueJob(ctx, j))
+		claimed, err := s.ClaimJob(ctx, "q", time.Now().UTC())
+		require.NoError(t, err)
+		require.Equal(t, j.ID, claimed.ID)
+
+		// Nothing else is claimable while it runs.
+		none, err := s.ClaimJob(ctx, "q", time.Now().UTC())
+		require.NoError(t, err)
+		assert.Nil(t, none)
+
+		r := newRunner(s)
+		r.Handle("ok", jobs.Handler{Queue: "q", Run: func(context.Context, *store.Job, func(float64)) error { return nil }})
+		start(t, r)
+		waitStatus(t, s, j.ID, store.JobDone)
+	})
+}
+
+func TestFailsJobsInterruptedOnTheirLastAttempt(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		// A job that crashed the process on its last attempt (e.g. OOM).
+		j := &store.Job{Type: "oom", Queue: "q", MaxAttempts: 1}
+		require.NoError(t, s.EnqueueJob(ctx, j))
+		_, err := s.ClaimJob(ctx, "q", time.Now().UTC())
+		require.NoError(t, err)
+
+		r := newRunner(s)
+		var ran, failed atomic.Int32
+		r.Handle("oom", jobs.Handler{
+			Queue:  "q",
+			Run:    func(context.Context, *store.Job, func(float64)) error { ran.Add(1); return nil },
+			OnFail: func(context.Context, *store.Job, error) { failed.Add(1) },
+		})
+		start(t, r)
+		got := waitStatus(t, s, j.ID, store.JobFailed)
+		assert.Equal(t, store.InterruptedMessage, got.Error)
+		assert.Eventually(t, func() bool { return failed.Load() == 1 }, time.Second, 10*time.Millisecond)
+		assert.Zero(t, ran.Load(), "not started again")
+	})
+}
+
+func TestStoresUncleanErrors(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		// An HTTP body cut in the middle of a rune, plus a NUL byte:
+		// PostgreSQL would reject both.
+		msg := "tts: 500: “broken" + string([]byte{0xe2, 0x80}) + "\x00end"
+		r.Handle("bad", jobs.Handler{Queue: "q", Run: func(context.Context, *store.Job, func(float64)) error {
+			return jobs.Permanent(errors.New(msg))
+		}})
+		start(t, r)
+		j := &store.Job{Type: "bad"}
+		require.NoError(t, r.Enqueue(context.Background(), j))
+		got := waitStatus(t, s, j.ID, store.JobFailed)
+		assert.Equal(t, "tts: 500: “broken\uFFFDend", got.Error)
+	})
+}
+
+func TestUnknownJobType(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		r := newRunner(s)
+		assert.Error(t, r.Enqueue(context.Background(), &store.Job{Type: "nope"}))
+	})
+}

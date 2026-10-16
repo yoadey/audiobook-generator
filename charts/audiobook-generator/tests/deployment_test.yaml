@@ -1,0 +1,259 @@
+suite: app deployment
+templates:
+  - templates/deployment.yaml
+  - templates/secret.yaml
+release:
+  name: abg
+tests:
+  - it: defaults to SQLite on the data volume and the bundled Kokoro
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/yoadey/audiobook-generator:0.1.0
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_TYPE
+            value: sqlite
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_URL
+            value: http://abg-audiobook-generator-kokoro:8880
+      - equal:
+          path: spec.template.spec.volumes[0].persistentVolumeClaim.claimName
+          value: abg-audiobook-generator-data
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_MAX_UPLOAD_MB
+            value: "512"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_DEFAULT_VOICE
+            value: af_heart
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - notExists:
+          path: spec.template.metadata.annotations
+
+  - it: uses an existing claim
+    template: templates/deployment.yaml
+    set:
+      persistence.existingClaim: my-claim
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].persistentVolumeClaim.claimName
+          value: my-claim
+
+  - it: falls back to emptyDir without persistence
+    template: templates/deployment.yaml
+    set:
+      persistence.enabled: false
+    asserts:
+      - exists:
+          path: spec.template.spec.volumes[0].emptyDir
+
+  - it: connects to an external Postgres with a chart-managed password
+    set:
+      database.type: postgres
+      database.postgres.host: db.example
+      database.postgres.password: s3cr3t
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_HOST
+            value: db.example
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: abg-audiobook-generator
+                key: postgres-password
+      - template: templates/deployment.yaml
+        exists:
+          path: spec.template.metadata.annotations["checksum/secret"]
+      - template: templates/secret.yaml
+        equal:
+          path: data["postgres-password"]
+          value: czNjcjN0
+
+  - it: reads the Postgres password from an existing secret
+    set:
+      database.type: postgres
+      database.postgres.host: db.example
+      database.postgres.password: ignored
+      database.postgres.existingSecret: db-creds
+      database.postgres.existingSecretPasswordKey: pw
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: db-creds
+                key: pw
+      - template: templates/secret.yaml
+        hasDocuments:
+          count: 0
+
+  - it: wires the CNPG cluster's app secret
+    template: templates/deployment.yaml
+    set:
+      database.type: postgres
+      database.postgres.mode: cnpg
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_HOST
+            value: abg-audiobook-generator-db-rw
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_DB_POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: abg-audiobook-generator-db-app
+                key: password
+
+  - it: uses an external TTS server
+    template: templates/deployment.yaml
+    set:
+      tts.kokoro.enabled: false
+      tts.externalUrl: http://tts.example:8880
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_URL
+            value: http://tts.example:8880
+
+  - it: rejects a missing external TTS URL
+    template: templates/deployment.yaml
+    set:
+      tts.kokoro.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: tts.externalUrl is required when tts.kokoro.enabled=false
+
+  - it: rejects external Postgres without a host
+    template: templates/deployment.yaml
+    set:
+      database.type: postgres
+    asserts:
+      - failedTemplate:
+          errorMessage: database.postgres.host is required when database.postgres.mode=external
+
+  - it: passes LLM providers as JSON with keys from secrets
+    template: templates/deployment.yaml
+    set:
+      llm.providers:
+        - name: gemini
+          baseUrl: https://generativelanguage.googleapis.com/v1beta/openai/
+          model: gemini-flash
+          apiKeySecret: { name: llm-keys, key: gemini }
+          limits: { rpm: 10, tpm: 250000, rpd: 250 }
+          quotaTimezone: America/Los_Angeles
+          extraParams: { reasoning_effort: low }
+        - name: local
+          baseUrl: http://ollama:11434/v1/
+          model: qwen3
+          structuredOutput: json_object
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_PROVIDERS
+            value: '[{"apiKeyEnv":"ABG_LLM_PROVIDER_0_API_KEY","baseUrl":"https://generativelanguage.googleapis.com/v1beta/openai/","extraParams":{"reasoning_effort":"low"},"limits":{"rpd":250,"rpm":10,"tpm":250000},"model":"gemini-flash","name":"gemini","quotaTimezone":"America/Los_Angeles"},{"baseUrl":"http://ollama:11434/v1/","model":"qwen3","name":"local","structuredOutput":"json_object"}]'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_PROVIDER_0_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: llm-keys
+                key: gemini
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_PROVIDER_1_API_KEY
+          any: true
+
+  - it: has no provider list by default
+    template: templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_MAX_WAIT
+            value: 70s
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_ANALYSIS_BATCH_TOKENS
+            value: "30000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_CASTING_MAIN_CHARACTERS
+            value: "50"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_ATTRIBUTION_TOKENS
+            value: "12000"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_PROVIDERS
+          any: true
+
+  - it: rejects duplicate provider names
+    template: templates/deployment.yaml
+    set:
+      llm.providers:
+        - { name: a, baseUrl: "http://x", model: m }
+        - { name: a, baseUrl: "http://y", model: m }
+    asserts:
+      - failedTemplate:
+          errorMessage: 'llm.providers: duplicate name "a"'
+
+  - it: renders large numbers as plain integers
+    template: templates/deployment.yaml
+    set:
+      llm.analysisBatchTokens: 1000000
+      maxUploadMB: 2000000
+      casting.mainCharacters: 120
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_LLM_ANALYSIS_BATCH_TOKENS
+            value: "1000000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_MAX_UPLOAD_MB
+            value: "2000000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_CASTING_MAIN_CHARACTERS
+            value: "120"

@@ -1,0 +1,2515 @@
+openapi: 3.0.3
+info:
+  title: audiobook-generator API
+  description: >-
+    HTTP API of the audiobook-generator service. This file is the single source
+    of truth: the Go server (internal/api) and the TypeScript client
+    (web/src/api) are generated from it.
+  version: 0.4.0
+servers:
+  - url: /api
+paths:
+  /system:
+    get:
+      operationId: getSystemInfo
+      summary: Version, database and TTS status
+      tags: [system]
+      responses:
+        "200":
+          description: System information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemInfo"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books:
+    get:
+      operationId: listBooks
+      summary: List books
+      tags: [books]
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of books
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookPage"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: uploadBook
+      summary: Upload an EPUB and start its import
+      tags: [books]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "202":
+          description: The book was stored; the import runs in the background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "400":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getBook
+      summary: Get a book
+      tags: [books]
+      responses:
+        "200":
+          description: The book
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateBook
+      summary: Change the narrator voice, speed or lookahead
+      tags: [books]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BookUpdate"
+      responses:
+        "200":
+          description: The updated book
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteBook
+      summary: Delete a book with all its data and files
+      tags: [books]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/cover:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getBookCover
+      summary: The book's cover image
+      tags: [books]
+      responses:
+        "200":
+          description: Cover image
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/volumes:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listVolumes
+      summary: List a book's volumes
+      tags: [chapters]
+      responses:
+        "200":
+          description: Volumes in reading order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Volume"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/chapters:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listChapters
+      summary: List a book's chapters in reading order
+      tags: [chapters]
+      parameters:
+        - name: volumeId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: characterId
+          in: query
+          required: false
+          description: Only chapters this character appears in
+          schema:
+            type: integer
+            format: int64
+        - $ref: "#/components/parameters/Offset"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 10000
+            default: 10000
+      responses:
+        "200":
+          description: A page of chapters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterPage"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    get:
+      operationId: getChapter
+      summary: A chapter with its paragraphs and segments
+      tags: [chapters]
+      responses:
+        "200":
+          description: The chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterDetail"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateChapter
+      summary: Rename a chapter or exclude it from narration
+      tags: [chapters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChapterUpdate"
+      responses:
+        "200":
+          description: The updated chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/merge-next:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      operationId: mergeChapterWithNext
+      summary: Append the following chapter to this one
+      tags: [chapters]
+      responses:
+        "200":
+          description: The merged chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/split:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      operationId: splitChapter
+      summary: Start a new chapter at the given paragraph
+      tags: [chapters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChapterSplit"
+      responses:
+        "200":
+          description: The new chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /jobs:
+    get:
+      operationId: listJobs
+      summary: List background jobs, newest first
+      tags: [jobs]
+      parameters:
+        - name: bookId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/JobStatus"
+          style: form
+          explode: true
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of jobs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobPage"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/render:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    post:
+      operationId: renderBookChapters
+      summary: Queue the next chapters without audio for rendering
+      tags: [audio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenderRequest"
+      responses:
+        "202":
+          description: Number of chapters queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenderResult"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/progress:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getProgress
+      summary: The listening position
+      tags: [audio]
+      responses:
+        "200":
+          description: The position (chapterId is absent when nothing was played yet)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Progress"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: saveProgress
+      summary: Store the listening position (keeps the lookahead window rendered)
+      tags: [audio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProgressUpdate"
+      responses:
+        "200":
+          description: The stored position
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Progress"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/attribution:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      operationId: startAttribution
+      summary: Attribute the chapter's quotations to their speakers
+      description: >-
+        Queues the speaker attribution (a render does this by itself). With
+        force, automatic speakers are discarded and attributed again;
+        speakers chosen by hand stay. Needs a finished character analysis.
+      tags: [chapters]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionStart"
+      responses:
+        "202":
+          description: The attribution is queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterAttribution"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/quotes/{quoteRef}:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+      - name: quoteRef
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    patch:
+      operationId: updateQuote
+      summary: Choose the speaker or emotion of a quotation
+      description: >-
+        Applies to every piece of the quotation and protects it from being
+        attributed again. The chapter's audio becomes outdated.
+      tags: [chapters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteUpdate"
+      responses:
+        "200":
+          description: The chapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/render:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      operationId: renderChapter
+      summary: Queue a chapter for rendering (again)
+      tags: [audio]
+      parameters:
+        - name: force
+          in: query
+          required: false
+          description: Render even if the audio is current
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "202":
+          description: The chapter with its new audio state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /chapters/{chapterId}/audio:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    get:
+      operationId: getChapterAudio
+      summary: The chapter's audio (AAC in MP4); supports HTTP range requests
+      description: >-
+        With v (the chapter's audioVersion), that render is served while it
+        is kept (the current and the previous one), so a player keeps
+        streaming the file it started with when the chapter is rendered again.
+      tags: [audio]
+      parameters:
+        - name: v
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 20
+      responses:
+        "200":
+          description: Audio file
+          content:
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/export:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: exportBook
+      summary: Export the book with its analysis, voices, speakers, edits and pronunciations (zip, without audio)
+      tags: [books]
+      responses:
+        "200":
+          description: Export file
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /import:
+    post:
+      operationId: importBook
+      summary: Restore an exported book as a new book (the restore runs as a job)
+      tags: [books]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "202":
+          description: The new book, being restored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "400":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/downloads:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listDownloads
+      summary: The book's M4B downloads, one per volume (or one for the whole book without volumes)
+      tags: [audio]
+      responses:
+        "200":
+          description: Downloads in reading order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Download"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/downloads/{volumeId}:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+      - $ref: "#/components/parameters/VolumeId"
+    post:
+      operationId: assembleDownload
+      summary: Build the M4B of a volume (missing chapters are rendered first)
+      tags: [audio]
+      responses:
+        "202":
+          description: Queued (or already pending)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Download"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/downloads/{volumeId}/file:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+      - $ref: "#/components/parameters/VolumeId"
+    get:
+      operationId: getDownloadFile
+      summary: The assembled M4B with chapter markers; supports HTTP range requests
+      tags: [audio]
+      responses:
+        "200":
+          description: Audiobook file
+          content:
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /me:
+    get:
+      operationId: getMe
+      summary: The signed-in user
+      tags: [system]
+      responses:
+        "200":
+          description: The user, or authEnabled false when sign-in is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /voices:
+    get:
+      operationId: listVoices
+      summary: The voice catalogue, reconciled with the voices the TTS server offers
+      tags: [audio]
+      responses:
+        "200":
+          description: Voices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Voice"
+        "502":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /voices/preview:
+    post:
+      operationId: previewVoice
+      summary: Speak a sample text with a voice
+      tags: [audio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoicePreview"
+      responses:
+        "200":
+          description: MP3 audio
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /jobs/{jobId}/retry:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      operationId: retryJob
+      summary: Queue a failed or canceled job again
+      tags: [jobs]
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /jobs/{jobId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      operationId: cancelJob
+      summary: Cancel a queued job
+      tags: [jobs]
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /llm/providers:
+    get:
+      operationId: listLLMProviders
+      summary: LLM providers in the order they are tried, with quota usage
+      tags: [llm]
+      responses:
+        "200":
+          description: Providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LLMProvider"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createLLMProvider
+      summary: Add an LLM provider
+      tags: [llm]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LLMProviderInput"
+      responses:
+        "201":
+          description: The provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMProvider"
+        "400":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /llm/providers/{providerId}:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    patch:
+      operationId: updateLLMProvider
+      summary: Change an LLM provider (providers from the Helm values are read-only)
+      tags: [llm]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LLMProviderUpdate"
+      responses:
+        "200":
+          description: The provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMProvider"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteLLMProvider
+      summary: Remove an LLM provider and its usage history
+      tags: [llm]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /llm/providers/{providerId}/test:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    post:
+      operationId: testLLMProvider
+      summary: Send a small structured-output request to the provider and check the answer
+      description: Counts against the provider's limits like any other request.
+      tags: [llm]
+      responses:
+        "200":
+          description: Test outcome (also when the provider failed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMTestResult"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /llm/models:
+    post:
+      operationId: listLLMModels
+      summary: Models offered by an OpenAI-compatible server (GET /models)
+      tags: [llm]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LLMModelsRequest"
+      responses:
+        "200":
+          description: Model IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/analysis:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getAnalysis
+      summary: State of the book's character analysis (or an estimate before it starts)
+      tags: [characters]
+      responses:
+        "200":
+          description: Analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: startAnalysis
+      summary: Start or resume the character analysis
+      description: >-
+        Resumes where a paused or failed analysis stopped. With restart, all
+        results so far, including manual corrections, are discarded first.
+      tags: [characters]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalysisStart"
+      responses:
+        "202":
+          description: The analysis is queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/analysis/pause:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    post:
+      operationId: pauseAnalysis
+      summary: Pause the character analysis (a running batch finishes first)
+      tags: [characters]
+      responses:
+        "200":
+          description: Analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/casting:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: getCasting
+      summary: State of the book's voice casting
+      tags: [casting]
+      responses:
+        "200":
+          description: Casting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Casting"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: startCasting
+      summary: Cast voices for the main characters that have none
+      description: >-
+        Gives every main character without a voice its own recipe. With
+        restart, all tiers and voices the user did not choose are cast
+        anew. Needs a finished character analysis.
+      tags: [casting]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CastingStart"
+      responses:
+        "202":
+          description: The casting is queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Casting"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/lexicon:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listLexicon
+      summary: The book's pronunciation lexicon
+      tags: [lexicon]
+      responses:
+        "200":
+          description: Entries by term
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LexiconEntry"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createLexiconEntry
+      summary: Add a pronunciation (chapters containing the term become outdated)
+      tags: [lexicon]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LexiconEntryInput"
+      responses:
+        "201":
+          description: The entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LexiconEntry"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /lexicon/{entryId}:
+    parameters:
+      - name: entryId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    patch:
+      operationId: updateLexiconEntry
+      summary: Change a pronunciation
+      tags: [lexicon]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LexiconEntryUpdate"
+      responses:
+        "200":
+          description: The entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LexiconEntry"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteLexiconEntry
+      summary: Remove a pronunciation
+      tags: [lexicon]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/characters:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    get:
+      operationId: listCharacters
+      summary: A book's characters
+      tags: [characters]
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Substring of a name or alias
+          schema:
+            type: string
+            maxLength: 100
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [importance, name, chapters, first]
+            default: importance
+        - name: tier
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Tier"
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of characters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterPage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/characters/merge:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    post:
+      operationId: mergeCharacters
+      summary: Merge characters into one (their names become aliases)
+      tags: [characters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CharacterMerge"
+      responses:
+        "200":
+          description: The merged character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /characters/{characterId}:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    get:
+      operationId: getCharacter
+      summary: A character with aliases and chapters
+      tags: [characters]
+      responses:
+        "200":
+          description: Character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateCharacter
+      summary: Correct a character (protects it from being overwritten by the analysis)
+      tags: [characters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CharacterUpdate"
+      responses:
+        "200":
+          description: Character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteCharacter
+      summary: Delete a character (e.g. not a person)
+      tags: [characters]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /characters/{characterId}/quotes:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    get:
+      operationId: listCharacterQuotes
+      summary: Quotes the character speaks in the book (for voice previews)
+      tags: [casting]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: Quotes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Quote"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /characters/{characterId}/split:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    post:
+      operationId: splitCharacter
+      summary: Move aliases of a character to a new character
+      tags: [characters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CharacterSplit"
+      responses:
+        "201":
+          description: The new character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  parameters:
+    BookId:
+      name: bookId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    VolumeId:
+      name: volumeId
+      in: path
+      required: true
+      description: A volume, or 0 for the whole book
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+    ChapterId:
+      name: chapterId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    CharacterId:
+      name: characterId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ProviderId:
+      name: providerId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    Offset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        default: 0
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 500
+        default: 50
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    SystemInfo:
+      type: object
+      required: [version, commit, database, tts, maxUploadBytes]
+      properties:
+        version:
+          type: string
+          example: 0.1.0
+        commit:
+          type: string
+        database:
+          $ref: "#/components/schemas/DatabaseInfo"
+        tts:
+          $ref: "#/components/schemas/TTSInfo"
+        maxUploadBytes:
+          type: integer
+          format: int64
+    DatabaseInfo:
+      type: object
+      required: [dialect, schemaVersion]
+      properties:
+        dialect:
+          type: string
+          enum: [sqlite, postgres]
+        schemaVersion:
+          type: string
+          description: ID of the last applied migration
+    TTSInfo:
+      type: object
+      required: [url, reachable]
+      properties:
+        url:
+          type: string
+        reachable:
+          type: boolean
+        voiceCount:
+          type: integer
+          description: Number of voices the TTS server offers (when reachable)
+        error:
+          type: string
+
+    BookStatus:
+      type: string
+      enum: [importing, imported, analyzing, ready, failed]
+    Book:
+      type: object
+      required:
+        - id
+        - title
+        - author
+        - language
+        - status
+        - progress
+        - wordCount
+        - chapterCount
+        - hasCover
+        - narratorVoice
+        - narratorSpeed
+        - lookahead
+        - analysisStatus
+        - castingStatus
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        author:
+          type: string
+        language:
+          type: string
+        status:
+          $ref: "#/components/schemas/BookStatus"
+        progress:
+          type: number
+          description: Progress of the running import (0..1)
+        error:
+          type: string
+          description: Why the import failed
+        wordCount:
+          type: integer
+          format: int64
+        chapterCount:
+          type: integer
+        hasCover:
+          type: boolean
+        narratorVoice:
+          type: string
+          description: Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)"
+        narratorSpeed:
+          type: number
+        lookahead:
+          type: integer
+          description: Chapters after the listening position that are kept rendered
+        analysisStatus:
+          $ref: "#/components/schemas/AnalysisStatus"
+        analysisProgress:
+          type: number
+          description: Share of analysed batches (0..1) once the analysis is planned
+        castingStatus:
+          $ref: "#/components/schemas/CastingStatus"
+        feedPath:
+          type: string
+          description: Path of the book's podcast feed (absent when feeds are disabled); works without a login, so treat it like a password
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    BookUpdate:
+      type: object
+      properties:
+        narratorVoice:
+          type: string
+          maxLength: 200
+        narratorSpeed:
+          type: number
+          minimum: 0.5
+          maximum: 2
+        lookahead:
+          type: integer
+          minimum: 0
+          maximum: 50
+    BookPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Book"
+        total:
+          type: integer
+          format: int64
+
+    Volume:
+      type: object
+      required: [id, idx, title, chapterCount, wordCount]
+      properties:
+        id:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+        title:
+          type: string
+        chapterCount:
+          type: integer
+        wordCount:
+          type: integer
+          format: int64
+
+    ChapterStatus:
+      type: string
+      enum: [imported]
+    AudioStatus:
+      type: string
+      enum: [none, queued, rendering, ready, failed]
+    Chapter:
+      type: object
+      required: [id, bookId, idx, title, wordCount, quoteCount, excluded, status, audioStatus, audioStale,
+        audioRerendering, attributionStatus]
+      properties:
+        id:
+          type: integer
+          format: int64
+        bookId:
+          type: integer
+          format: int64
+        volumeId:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+          description: Position in the book (0-based)
+        title:
+          type: string
+        wordCount:
+          type: integer
+        quoteCount:
+          type: integer
+        excluded:
+          type: boolean
+          description: Front/back matter that is not narrated
+        status:
+          $ref: "#/components/schemas/ChapterStatus"
+        audioStatus:
+          $ref: "#/components/schemas/AudioStatus"
+        audioDurationMs:
+          type: integer
+          format: int64
+        audioError:
+          type: string
+        audioStale:
+          type: boolean
+          description: The audio was rendered with other voices (narrator, speakers or their voices changed)
+        audioRerendering:
+          type: boolean
+          description: Existing audio (still playable) is being rendered again
+        audioVersion:
+          type: string
+          description: Version of the current audio file (for the audio URL's v parameter)
+        attributionStatus:
+          $ref: "#/components/schemas/AttributionStatus"
+        attributionError:
+          type: string
+        narration:
+          $ref: "#/components/schemas/Narration"
+        povCharacterId:
+          type: integer
+          format: int64
+          description: Point-of-view character found by the analysis
+    Narration:
+      type: string
+      enum: [first_person, third_person, mixed, unknown]
+    ChapterPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Chapter"
+        total:
+          type: integer
+          format: int64
+    ParagraphKind:
+      type: string
+      enum: [text, heading, scene_break]
+    SegmentKind:
+      type: string
+      enum: [narration, quote]
+    AttributionStatus:
+      type: string
+      enum: [none, queued, running, done, failed]
+    Emotion:
+      type: string
+      enum: [neutral, happy, sad, angry, afraid, surprised, whispering, shouting, sarcastic]
+    AttributionStart:
+      type: object
+      properties:
+        force:
+          type: boolean
+          description: Attribute again, discarding automatic speakers
+    ChapterAttribution:
+      type: object
+      required: [status, quotes, attributed, unsure, unsureBelow]
+      properties:
+        status:
+          $ref: "#/components/schemas/AttributionStatus"
+        error:
+          type: string
+        prompt:
+          type: string
+          description: Prompt version of the last attribution
+        attributedAt:
+          type: string
+          format: date-time
+        quotes:
+          type: integer
+          description: Quotations in the chapter
+        attributed:
+          type: integer
+          description: Quotations with a speaker
+        unsure:
+          type: integer
+          description: >-
+            Quotations attributed automatically with a confidence below unsureBelow (or to nobody);
+            0 unless the status is done
+        unsureBelow:
+          type: number
+        job:
+          $ref: "#/components/schemas/Job"
+    QuoteUpdate:
+      type: object
+      properties:
+        speakerId:
+          type: integer
+          format: int64
+          description: The character who speaks it
+        narrator:
+          type: boolean
+          description: Read by the narrator (no speaker); instead of speakerId
+        emotion:
+          $ref: "#/components/schemas/Emotion"
+    Segment:
+      type: object
+      required: [id, idx, kind, quoteRef, text, confidence, speakerManual]
+      properties:
+        id:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+        kind:
+          $ref: "#/components/schemas/SegmentKind"
+        quoteRef:
+          type: integer
+          description: Number of the quotation within the chapter (0 for narration)
+        text:
+          type: string
+        speakerId:
+          type: integer
+          format: int64
+          description: Who speaks the quotation (absent - the narrator reads it)
+        emotion:
+          $ref: "#/components/schemas/Emotion"
+        confidence:
+          type: number
+          description: How sure the attribution is (0..1; 1 for a speaker chosen by hand)
+        speakerManual:
+          type: boolean
+    Paragraph:
+      type: object
+      required: [id, idx, kind, text, segments]
+      properties:
+        id:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+        kind:
+          $ref: "#/components/schemas/ParagraphKind"
+        text:
+          type: string
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Segment"
+    ChapterDetail:
+      allOf:
+        - $ref: "#/components/schemas/Chapter"
+        - type: object
+          required: [paragraphs]
+          properties:
+            prevChapterId:
+              type: integer
+              format: int64
+            nextChapterId:
+              type: integer
+              format: int64
+            paragraphs:
+              type: array
+              items:
+                $ref: "#/components/schemas/Paragraph"
+            characters:
+              type: array
+              description: Characters appearing in the chapter, most important first
+              items:
+                $ref: "#/components/schemas/CharacterRef"
+            speakers:
+              type: array
+              description: Characters who speak a quotation of the chapter
+              items:
+                $ref: "#/components/schemas/CharacterRef"
+            attribution:
+              $ref: "#/components/schemas/ChapterAttribution"
+    ChapterUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        excluded:
+          type: boolean
+    ChapterSplit:
+      type: object
+      required: [paragraphId, title]
+      properties:
+        paragraphId:
+          type: integer
+          format: int64
+          description: First paragraph of the new chapter
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    JobStatus:
+      type: string
+      enum: [queued, running, done, failed, canceled]
+    Job:
+      type: object
+      required: [id, type, status, attempts, maxAttempts, progress, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        type:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        bookId:
+          type: integer
+          format: int64
+        chapterId:
+          type: integer
+          format: int64
+        attempts:
+          type: integer
+        maxAttempts:
+          type: integer
+        progress:
+          type: number
+        error:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        notBefore:
+          type: string
+          format: date-time
+          description: Queued jobs do not start before this time (retry backoff, exhausted LLM quota)
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+    JobPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"
+        total:
+          type: integer
+          format: int64
+
+    RenderRequest:
+      type: object
+      required: [count]
+      properties:
+        fromChapterId:
+          type: integer
+          format: int64
+          description: First chapter to consider (default the listening position)
+        count:
+          type: integer
+          minimum: 1
+          maximum: 500
+    RenderResult:
+      type: object
+      required: [queued]
+      properties:
+        queued:
+          type: integer
+
+    Progress:
+      type: object
+      required: [positionMs]
+      properties:
+        chapterId:
+          type: integer
+          format: int64
+        positionMs:
+          type: integer
+          format: int64
+        updatedAt:
+          type: string
+          format: date-time
+    ProgressUpdate:
+      type: object
+      required: [chapterId, positionMs]
+      properties:
+        chapterId:
+          type: integer
+          format: int64
+        positionMs:
+          type: integer
+          format: int64
+          minimum: 0
+
+    Voice:
+      type: object
+      required: [id, language, gender, traits, available, inCatalog]
+      properties:
+        id:
+          type: string
+        language:
+          type: string
+          description: e.g. en-US, en-GB
+        gender:
+          type: string
+          enum: [female, male, unknown]
+        grade:
+          type: string
+          description: Overall quality grade from the Kokoro model card (A best)
+        traits:
+          type: string
+          description: Timbre, as a hint for casting ("" for voices outside the catalogue)
+        available:
+          type: boolean
+          description: Offered by the TTS server
+        inCatalog:
+          type: boolean
+          description: Described by the built-in catalogue (otherwise only known to the server)
+    Me:
+      type: object
+      required: [authEnabled]
+      properties:
+        authEnabled:
+          type: boolean
+        subject:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+    Download:
+      type: object
+      required: [volumeId, title, chapterCount, renderedCount, status, hasFile, outdated]
+      properties:
+        volumeId:
+          type: integer
+          format: int64
+          description: The volume (0 - the whole book)
+        title:
+          type: string
+        chapterCount:
+          type: integer
+          description: Narrated chapters
+        renderedCount:
+          type: integer
+          description: Narrated chapters with current audio
+        status:
+          type: string
+          enum: [none, queued, assembling, ready, failed]
+          description: queued also covers waiting for chapters to be rendered
+        error:
+          type: string
+        hasFile:
+          type: boolean
+          description: An assembled file can be downloaded (also while a new one is built)
+        outdated:
+          type: boolean
+          description: Chapters were rendered again or changed since the file was assembled
+        sizeBytes:
+          type: integer
+          format: int64
+        durationMs:
+          type: integer
+          format: int64
+        job:
+          $ref: "#/components/schemas/Job"
+    LexiconEntry:
+      type: object
+      required: [id, bookId, term, replacement, phonemes]
+      properties:
+        id:
+          type: integer
+          format: int64
+        bookId:
+          type: integer
+          format: int64
+        term:
+          type: string
+          description: Word or name as written in the book (whole words, any case)
+        replacement:
+          type: string
+          description: What is said instead, or phonemes when phonemes is true
+        phonemes:
+          type: boolean
+          description: The replacement is a pronunciation in Kokoro's phoneme notation (IPA)
+    LexiconEntryInput:
+      type: object
+      required: [term, replacement]
+      properties:
+        term:
+          type: string
+          minLength: 1
+          maxLength: 100
+        replacement:
+          type: string
+          minLength: 1
+          maxLength: 200
+        phonemes:
+          type: boolean
+    LexiconEntryUpdate:
+      type: object
+      properties:
+        term:
+          type: string
+          minLength: 1
+          maxLength: 100
+        replacement:
+          type: string
+          minLength: 1
+          maxLength: 200
+        phonemes:
+          type: boolean
+    VoicePreview:
+      type: object
+      required: [voice]
+      properties:
+        bookId:
+          type: integer
+          format: int64
+          description: Apply this book's pronunciation lexicon to the text
+        voice:
+          type: string
+          maxLength: 200
+        speed:
+          type: number
+          minimum: 0.5
+          maximum: 2
+        text:
+          type: string
+          maxLength: 500
+
+    LLMLimits:
+      type: object
+      description: Provider limits; 0 means no limit. Daily limits reset at midnight in quotaTimezone.
+      properties:
+        rpm:
+          type: integer
+          minimum: 0
+          description: Requests per minute
+        tpm:
+          type: integer
+          minimum: 0
+          description: Tokens per minute
+        rpd:
+          type: integer
+          minimum: 0
+          description: Requests per day
+        tpd:
+          type: integer
+          minimum: 0
+          description: Tokens per day
+    LLMStructuredOutput:
+      type: string
+      enum: [json_schema, json_object, prompt]
+      description: >-
+        json_schema sends the schema as response_format; json_object asks for
+        any JSON object and puts the schema into the prompt; prompt only puts
+        the schema into the prompt. Answers are validated in every mode.
+    LLMProviderState:
+      type: string
+      enum: [ready, waiting, exhausted, disabled, no_key]
+    LLMUsageDay:
+      type: object
+      required: [day, requests, inputTokens, outputTokens, errors, rateLimited]
+      properties:
+        day:
+          type: string
+          format: date
+        requests:
+          type: integer
+          format: int64
+        inputTokens:
+          type: integer
+          format: int64
+        outputTokens:
+          type: integer
+          format: int64
+        errors:
+          type: integer
+          format: int64
+        rateLimited:
+          type: integer
+          format: int64
+    LLMProviderStatus:
+      type: object
+      required: [state, today, minuteRequests, minuteTokens, quotaResetAt]
+      properties:
+        state:
+          $ref: "#/components/schemas/LLMProviderState"
+        reason:
+          type: string
+          description: Why the provider is not ready
+        availableAt:
+          type: string
+          format: date-time
+        today:
+          $ref: "#/components/schemas/LLMUsageDay"
+        minuteRequests:
+          type: integer
+        minuteTokens:
+          type: integer
+        quotaResetAt:
+          type: string
+          format: date-time
+        lastError:
+          type: string
+        lastErrorAt:
+          type: string
+          format: date-time
+    LLMProvider:
+      type: object
+      required: [id, name, source, position, enabled, baseUrl, model, hasApiKey, structuredOutput,
+        limits, maxOutputTokens, timeoutSeconds, quotaTimezone, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        source:
+          type: string
+          enum: [ui, config]
+          description: config providers come from the Helm values and are read-only
+        position:
+          type: integer
+        enabled:
+          type: boolean
+        baseUrl:
+          type: string
+        model:
+          type: string
+        hasApiKey:
+          type: boolean
+          description: The key itself is never returned
+        apiKeyEnv:
+          type: string
+          description: Environment variable holding the key (config providers)
+        structuredOutput:
+          $ref: "#/components/schemas/LLMStructuredOutput"
+        extraParams:
+          type: string
+          description: JSON object merged into every request body
+        limits:
+          $ref: "#/components/schemas/LLMLimits"
+        maxOutputTokens:
+          type: integer
+        timeoutSeconds:
+          type: integer
+        quotaTimezone:
+          type: string
+        status:
+          $ref: "#/components/schemas/LLMProviderStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    LLMProviderInput:
+      type: object
+      required: [name, baseUrl, model]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        baseUrl:
+          type: string
+          maxLength: 500
+          example: https://generativelanguage.googleapis.com/v1beta/openai/
+        model:
+          type: string
+          maxLength: 200
+        apiKey:
+          type: string
+          maxLength: 1000
+        enabled:
+          type: boolean
+        position:
+          type: integer
+          description: Defaults to after the last provider
+        structuredOutput:
+          $ref: "#/components/schemas/LLMStructuredOutput"
+        extraParams:
+          type: string
+          maxLength: 4000
+        limits:
+          $ref: "#/components/schemas/LLMLimits"
+        maxOutputTokens:
+          type: integer
+          minimum: 0
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+        quotaTimezone:
+          type: string
+          maxLength: 64
+    LLMProviderUpdate:
+      type: object
+      description: Only the given fields change; an empty apiKey removes the key.
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        baseUrl:
+          type: string
+          maxLength: 500
+        model:
+          type: string
+          maxLength: 200
+        apiKey:
+          type: string
+          maxLength: 1000
+        enabled:
+          type: boolean
+        position:
+          type: integer
+        structuredOutput:
+          $ref: "#/components/schemas/LLMStructuredOutput"
+        extraParams:
+          type: string
+          maxLength: 4000
+        limits:
+          $ref: "#/components/schemas/LLMLimits"
+        maxOutputTokens:
+          type: integer
+          minimum: 0
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+        quotaTimezone:
+          type: string
+          maxLength: 64
+    LLMTestResult:
+      type: object
+      required: [ok, message]
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        model:
+          type: string
+          description: Model that answered, as reported by the provider
+        latencyMs:
+          type: integer
+          format: int64
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+    LLMModelsRequest:
+      type: object
+      description: >-
+        Either an existing provider (its stored key is used unless apiKey is
+        given) or a base URL for a provider that is not saved yet.
+      properties:
+        providerId:
+          type: integer
+          format: int64
+        baseUrl:
+          type: string
+          maxLength: 500
+        apiKey:
+          type: string
+          maxLength: 1000
+
+    AnalysisStatus:
+      type: string
+      enum: [none, queued, running, merging, paused, done, failed]
+    AnalysisStart:
+      type: object
+      properties:
+        restart:
+          type: boolean
+          description: Discard all results (including manual corrections) and start over
+    Analysis:
+      type: object
+      required: [status, batchesTotal, batchesDone, estimatedTokens, inputTokens, outputTokens,
+        characterCount, batchTokens, prompt]
+      properties:
+        status:
+          $ref: "#/components/schemas/AnalysisStatus"
+        error:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        batchesTotal:
+          type: integer
+          description: LLM requests of the analysis; before it starts, the estimate
+        batchesDone:
+          type: integer
+        estimatedTokens:
+          type: integer
+          format: int64
+          description: Input tokens of all batches (estimated)
+        inputTokens:
+          type: integer
+          format: int64
+          description: Tokens used so far, as reported by the providers
+        outputTokens:
+          type: integer
+          format: int64
+        characterCount:
+          type: integer
+          format: int64
+        batchTokens:
+          type: integer
+          description: Configured input size of one request
+        prompt:
+          type: string
+          description: Prompt version new batches use
+        job:
+          $ref: "#/components/schemas/Job"
+    Tier:
+      type: string
+      enum: [main, minor]
+    CastingStatus:
+      type: string
+      enum: [none, queued, running, done, failed]
+    CastingStart:
+      type: object
+      properties:
+        restart:
+          type: boolean
+          description: Cast all tiers and voices anew, except those chosen by hand
+    CastingWarning:
+      type: object
+      required: [kind, characterId, characterName, distance]
+      properties:
+        kind:
+          type: string
+          enum: [narrator, similar]
+          description: "narrator: sounds like the narrator; similar: sounds like another character"
+        characterId:
+          type: integer
+          format: int64
+        characterName:
+          type: string
+        otherId:
+          type: integer
+          format: int64
+        otherName:
+          type: string
+        distance:
+          type: number
+          description: How different the voices are (0 same … 1 nothing in common, plus speed difference)
+    Casting:
+      type: object
+      required: [status, mainCount, minorCount, voicedCount, mainLimit, narratorVoice, narratorSpeed, prompt,
+        warnings]
+      properties:
+        status:
+          $ref: "#/components/schemas/CastingStatus"
+        error:
+          type: string
+        finishedAt:
+          type: string
+          format: date-time
+        mainCount:
+          type: integer
+          format: int64
+        minorCount:
+          type: integer
+          format: int64
+        voicedCount:
+          type: integer
+          format: int64
+          description: Main characters with their own recipe
+        mainLimit:
+          type: integer
+          description: Configured number of main characters the casting picks
+        narratorVoice:
+          type: string
+        narratorSpeed:
+          type: number
+        prompt:
+          type: string
+        warnings:
+          type: array
+          description: Main characters whose voices are hard to tell apart (e.g. after a narrator change)
+          items:
+            $ref: "#/components/schemas/CastingWarning"
+        job:
+          $ref: "#/components/schemas/Job"
+    Quote:
+      type: object
+      required: [text, chapterId, chapterIdx, chapterTitle]
+      properties:
+        text:
+          type: string
+        chapterId:
+          type: integer
+          format: int64
+        chapterIdx:
+          type: integer
+        chapterTitle:
+          type: string
+    Gender:
+      type: string
+      enum: [female, male, unknown]
+    AgeGroup:
+      type: string
+      enum: [child, teen, adult, elderly, unknown]
+    CharacterRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+    Character:
+      type: object
+      required: [id, bookId, name, aliases, gender, ageGroup, role, description, speechStyle, importance,
+        speaks, chapterCount, firstChapterIdx, userEdited, tier, tierManual, voice, voiceSpeed, voiceSource,
+        voiceManual, voiceNote]
+      properties:
+        id:
+          type: integer
+          format: int64
+        bookId:
+          type: integer
+          format: int64
+        name:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        gender:
+          $ref: "#/components/schemas/Gender"
+        ageGroup:
+          $ref: "#/components/schemas/AgeGroup"
+        role:
+          type: string
+        description:
+          type: string
+        speechStyle:
+          type: string
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 5
+        speaks:
+          type: boolean
+        chapterCount:
+          type: integer
+        firstChapterIdx:
+          type: integer
+        userEdited:
+          type: boolean
+          description: Corrected by hand; the analysis does not overwrite the profile
+        tier:
+          $ref: "#/components/schemas/Tier"
+        tierManual:
+          type: boolean
+          description: The tier was chosen by hand; the casting keeps it
+        voice:
+          type: string
+          description: The recipe the character speaks with (its own, or its pool voice)
+        voiceSpeed:
+          type: number
+        voiceSource:
+          type: string
+          enum: [own, pool, narrator]
+          description: >-
+            own: the character's recipe; pool: a pool voice by gender and
+            age; narrator: no fitting voice, the narrator speaks
+        voiceManual:
+          type: boolean
+          description: The recipe was chosen by hand; the casting keeps it
+        voiceNote:
+          type: string
+          description: Why the casting chose the recipe
+    CharacterPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Character"
+        total:
+          type: integer
+          format: int64
+    ChapterRef:
+      type: object
+      required: [id, idx, title]
+      properties:
+        id:
+          type: integer
+          format: int64
+        idx:
+          type: integer
+        title:
+          type: string
+    CharacterDetail:
+      allOf:
+        - $ref: "#/components/schemas/Character"
+        - type: object
+          required: [chapters]
+          properties:
+            chapters:
+              type: array
+              items:
+                $ref: "#/components/schemas/ChapterRef"
+    CharacterUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        aliases:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+            maxLength: 120
+        gender:
+          $ref: "#/components/schemas/Gender"
+        ageGroup:
+          $ref: "#/components/schemas/AgeGroup"
+        role:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 1000
+        speechStyle:
+          type: string
+          maxLength: 200
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 5
+        tier:
+          type: string
+          enum: [main, minor, auto]
+          description: main/minor fixes the tier; auto leaves it to the casting
+        voice:
+          type: string
+          maxLength: 200
+          description: >-
+            A recipe like "bf_emma(0.7)+af_bella(0.3)" (chosen by hand, kept by
+            the casting); empty to leave the voice to the casting again
+        voiceSpeed:
+          type: number
+          minimum: 0.5
+          maximum: 2
+    CharacterMerge:
+      type: object
+      required: [targetId, sourceIds]
+      properties:
+        targetId:
+          type: integer
+          format: int64
+        sourceIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: integer
+            format: int64
+    CharacterSplit:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        aliases:
+          type: array
+          maxItems: 200
+          items:
+            type: string

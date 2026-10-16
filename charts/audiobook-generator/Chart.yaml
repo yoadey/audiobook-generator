@@ -1,0 +1,18 @@
+apiVersion: v2
+name: audiobook-generator
+description: >-
+  Turns very large English EPUBs into multi-voice audiobooks (character
+  analysis, one voice per character, chapter-by-chapter rendering). Ships the
+  app, the Kokoro TTS server and storage.
+type: application
+# Chart and app are released together from the same Git tag.
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/yoadey/audiobook-generator
+sources:
+  - https://github.com/yoadey/audiobook-generator
+keywords:
+  - audiobook
+  - epub
+  - tts
+  - kokoro

@@ -1,0 +1,287 @@
+# Default values for audiobook-generator.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/yoadey/audiobook-generator
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Size limit of the /tmp emptyDir (render scratch space).
+tmpSizeLimit: 4Gi
+
+# Largest accepted EPUB upload in MiB. Reverse proxies have their own limit
+# (ingress-nginx: nginx.ingress.kubernetes.io/proxy-body-size; Traefik has
+# none by default).
+maxUploadMB: 512
+
+log:
+  level: info # debug | info | warn | error
+  format: json # json | text
+
+# Additional environment variables for the app container.
+extraEnv: []
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: audiobooks.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: audiobooks-tls
+  #    hosts:
+  #      - audiobooks.example.com
+
+# External URL of the service (https://audiobooks.example.com), used in
+# podcast feeds. Empty: taken from each request; behind a TLS-terminating
+# proxy that needs X-Forwarded-Proto: https.
+publicUrl: ""
+
+# Podcast RSS feed per book. Feed URLs carry a token instead of needing a
+# login, so podcast apps can subscribe; anyone with the URL can listen.
+feed:
+  enabled: true
+  # Secret holding the token key (at least 16 characters). Empty: the chart
+  # generates one and keeps it across upgrades. Changing the key
+  # invalidates every feed URL.
+  existingSecret: ""
+  existingSecretKey: feed-secret
+
+# Sign-in with OpenID Connect (e.g. Zitadel). Register a web application
+# with the redirect URI <publicUrl>/auth/callback (and, for sign-out,
+# the post-logout URI <publicUrl>/); PKCE is always used, so a public
+# client without secret works too. Probes, /metrics and the podcast feeds
+# stay reachable without a sign-in.
+auth:
+  oidc:
+    enabled: false
+    issuer: ""
+    clientId: ""
+    # Existing Secret with the client secret (empty: public client).
+    clientSecret:
+      existingSecret: ""
+      key: client-secret
+      # Also read the client ID from this Secret (when clientId is empty),
+      # e.g. one that Terraform writes for the identity provider's app.
+      clientIdKey: ""
+    scopes: openid profile email
+    # How long a sign-in lasts without use.
+    sessionTTL: 720h
+    # Key encrypting the session cookie (at least 32 characters). Empty
+    # existingSecret: the chart generates one and keeps it across upgrades.
+    sessionKey:
+      existingSecret: ""
+      key: session-key
+
+# Data volume: uploaded EPUBs, rendered audio and, in SQLite mode, the
+# database file. A single huge book needs ~10-20 GB of audio.
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes: [ReadWriteOnce]
+  size: 50Gi
+  annotations: {}
+
+database:
+  # sqlite: self-contained, the database file lives on the data volume.
+  # postgres: see database.postgres.mode.
+  type: sqlite
+  postgres:
+    # external: connect to an existing server (host/user/password below).
+    # cnpg: render a CloudNativePG Cluster (needs the CNPG operator).
+    mode: external
+    host: ""
+    port: 5432
+    database: audiobook
+    user: audiobook
+    # Plain-text password, only used when existingSecret is empty.
+    password: ""
+    existingSecret: ""
+    existingSecretPasswordKey: password
+    sslMode: prefer
+    cnpg:
+      instances: 1
+      # Empty: the operator's default PostgreSQL image.
+      imageName: ""
+      storage:
+        size: 5Gi
+        storageClass: ""
+      resources: {}
+
+backup:
+  # Continuous backup of the SQLite database to S3 (e.g. Garage, MinIO)
+  # with Litestream: a sidecar streams every change; on a fresh volume an
+  # init container restores the latest state before the app starts. Audio
+  # files are not backed up: after a restore the app notices they are gone
+  # and renders them again. Needs Kubernetes 1.29+. PostgreSQL is
+  # backed up with its own tools (e.g. CNPG's barman).
+  litestream:
+    enabled: false
+    image:
+      repository: litestream/litestream
+      tag: 0.3.13
+      pullPolicy: IfNotPresent
+    s3:
+      # Empty for AWS S3; e.g. http://garage.garage.svc:3900
+      endpoint: ""
+      # The region the S3 server signs with (Garage: "garage" by default).
+      region: us-east-1
+      bucket: ""
+      path: audiobook-generator
+      forcePathStyle: true
+      # Secret with the S3 credentials.
+      existingSecret: ""
+      accessKeyIdKey: access-key-id
+      secretAccessKeyKey: secret-access-key
+    syncInterval: 10s
+    # How long snapshots and WAL are kept.
+    retention: 168h
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+
+# AAC bitrate of the rendered chapter files (mono speech: 48k-64k is plenty).
+audioBitrate: 64k
+
+tts:
+  # Used when tts.kokoro.enabled is false, e.g. http://kokoro.tts:8880
+  externalUrl: ""
+  # Timeout for a single synthesis request.
+  timeout: 5m
+  # Parallel synthesis requests while rendering a chapter; about
+  # 1-2 per Kokoro replica.
+  concurrency: 2
+  # Narrator of books without an own voice (see the voice list in the UI).
+  defaultVoice: af_heart
+  kokoro:
+    enabled: true
+    image:
+      repository: ghcr.io/remsky/kokoro-fastapi-cpu
+      tag: v0.9.0
+      pullPolicy: IfNotPresent
+    replicas: 1
+    podAnnotations: {}
+    priorityClassName: ""
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    # The image runs as "appuser" (uid 1000) and writes temp files below
+    # /app, so the root filesystem stays writable.
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+    # Extra environment for Kokoro-FastAPI (see its api/src/core/config.py).
+    extraEnv: []
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        memory: 4Gi
+
+casting:
+  # How many speaking characters (the most important ones) get a voice
+  # recipe of their own; everyone else speaks with a pool voice by gender
+  # and age.
+  mainCharacters: 50
+
+llm:
+  # How long a request waits for a provider's per-minute window before it
+  # falls back to the next provider.
+  maxWait: 70s
+  # Input tokens per character analysis request. Larger batches need fewer
+  # requests (daily request quotas) but a provider with a large enough
+  # tokens-per-minute limit and context; batches that are too large for
+  # every provider are split automatically.
+  analysisBatchTokens: 30000
+  # Input tokens per speaker attribution request; longer chapters are sent
+  # in parts.
+  attributionTokens: 12000
+  # OpenAI-compatible providers for character analysis and speaker
+  # attribution, tried in this order. More can be added in the UI (Settings);
+  # providers listed here appear there read-only. Book text is sent to them:
+  # free tiers may use it for training.
+  providers: []
+  # - name: gemini
+  #   baseUrl: https://generativelanguage.googleapis.com/v1beta/openai/
+  #   model: gemini-2.5-flash           # see "Load models" in the UI
+  #   apiKeySecret:                      # an existing Secret
+  #     name: audiobook-llm-keys
+  #     key: gemini
+  #   # Limits of your plan (0 or unset: none). Daily limits reset at
+  #   # midnight in quotaTimezone (Gemini: Pacific time).
+  #   limits: { rpm: 10, tpm: 250000, rpd: 250, tpd: 0 }
+  #   quotaTimezone: America/Los_Angeles
+  #   # json_schema | json_object | prompt (when the provider rejects schemas)
+  #   structuredOutput: json_schema
+  #   maxOutputTokens: 0                 # 0: server default
+  #   timeoutSeconds: 300
+  #   extraParams: { reasoning_effort: low }   # merged into every request
+  #   enabled: true
+
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+networkPolicy:
+  # Restricts the Kokoro pods to traffic from the app pods.
+  enabled: false

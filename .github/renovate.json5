@@ -1,0 +1,76 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":timezone(Europe/Berlin)",
+  ],
+  postUpdateOptions: ["gomodTidy"],
+  // Kokoro image in charts/*/values.yaml.
+  "helm-values": {
+    managerFilePatterns: ["/(^|/)charts/.+/values\\.ya?ml$/"],
+  },
+  // Plain manifests used by the e2e test.
+  kubernetes: {
+    managerFilePatterns: ["/(^|/)hack/.+\\.ya?ml$/"],
+  },
+  customManagers: [
+    {
+      description: "Tool versions pinned as env in GitHub workflows",
+      customType: "regex",
+      managerFilePatterns: ["/(^|/)\\.github/workflows/.+\\.ya?ml$/"],
+      matchStrings: [
+        "GOLANGCI_LINT_VERSION: (?<currentValue>v\\S+)",
+      ],
+      depNameTemplate: "golangci/golangci-lint",
+      datasourceTemplate: "github-releases",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/(^|/)\\.github/workflows/.+\\.ya?ml$/"],
+      matchStrings: ["HELM_VERSION: (?<currentValue>v\\S+)"],
+      depNameTemplate: "helm/helm",
+      datasourceTemplate: "github-releases",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/(^|/)\\.github/workflows/.+\\.ya?ml$/"],
+      matchStrings: ["HELM_UNITTEST_VERSION: (?<currentValue>v\\S+)"],
+      depNameTemplate: "helm-unittest/helm-unittest",
+      datasourceTemplate: "github-releases",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/(^|/)\\.github/workflows/.+\\.ya?ml$/"],
+      matchStrings: ["KUBECONFORM_VERSION: (?<currentValue>v\\S+)"],
+      depNameTemplate: "yannh/kubeconform",
+      datasourceTemplate: "github-releases",
+    },
+    {
+      description: "Images inside Helm templates (not covered by helm-values)",
+      customType: "regex",
+      managerFilePatterns: ["/(^|/)charts/.+/templates/.+\\.ya?ml$/"],
+      matchStrings: ["image: (?<depName>[a-z0-9./-]+):(?<currentValue>[0-9][\\w.-]*)"],
+      datasourceTemplate: "docker",
+    },
+  ],
+  packageRules: [
+    {
+      description: "Keep Helm on v3 for now",
+      matchPackageNames: ["helm/helm"],
+      allowedVersions: "<4",
+    },
+    {
+      description: "openapi-typescript requires TypeScript 5",
+      matchPackageNames: ["typescript"],
+      allowedVersions: "<6",
+    },
+    {
+      description: "Group frontend tooling",
+      matchManagers: ["npm"],
+      matchDepTypes: ["devDependencies"],
+      groupName: "frontend tooling",
+    },
+  ],
+}

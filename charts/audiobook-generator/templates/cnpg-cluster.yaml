@@ -1,0 +1,30 @@
+{{- if and (eq .Values.database.type "postgres") (eq .Values.database.postgres.mode "cnpg") }}
+{{- $pg := .Values.database.postgres }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "abg.cnpg.clusterName" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  instances: {{ $pg.cnpg.instances }}
+  {{- with $pg.cnpg.imageName }}
+  imageName: {{ . }}
+  {{- end }}
+  bootstrap:
+    initdb:
+      # The operator creates the Secret <cluster>-app with this owner's
+      # password; the app reads it from there.
+      database: {{ $pg.database }}
+      owner: {{ $pg.user }}
+  storage:
+    size: {{ $pg.cnpg.storage.size }}
+    {{- with $pg.cnpg.storage.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
+  {{- with $pg.cnpg.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

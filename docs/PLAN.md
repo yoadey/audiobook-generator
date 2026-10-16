@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-15 · Status: **agreed design, implementation not started**
+Last updated: 2026-10-16 · Status: **M0–M7 implemented** (feature-complete v1.0: multi-voice audiobook, lexicon, podcast RSS, M4B, OIDC, metrics, Litestream, export/import); M8 optional
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -84,7 +84,7 @@ configuration.
 
 | | SQLite (default) | PostgreSQL |
 |---|---|---|
-| Driver | `github.com/glebarez/sqlite` (GORM driver on `modernc.org/sqlite`, pure Go, **no CGO**) | `gorm.io/driver/postgres` (pgx) |
+| Driver | `github.com/ncruces/go-sqlite3/gormlite` (SQLite compiled to Go via wasm2go, pure Go, **no CGO**, actively maintained; `glebarez/sqlite` has had no release since 2024) | `gorm.io/driver/postgres` (pgx) |
 | Where | file on the data PVC, WAL mode | external server or a CNPG `Cluster` rendered by the chart |
 | Backup | optional **Litestream** sidecar → S3 (e.g. Garage) | the database's own backup (e.g. CNPG barman) |
 | Use case | self-contained, zero dependencies | clusters that already run Postgres operators and backups |
@@ -187,6 +187,41 @@ an optional later feature (M8), not a requirement.
    [Innkeeper]") go to an LLM merge request as compact profiles.
 3. Manual correction in the UI: merge, split, move an alias.
 
+As implemented in M4 (`internal/analysis`):
+
+- One `analyze_book` job per book on the `llm` queue (one at a time, the
+  quotas are shared). Batches of about `llm.analysisBatchTokens` (30k)
+  tokens of whole chapters; oversized chapters are split at paragraphs.
+  The plan and every validated answer are stored (`analysis_batches`, with
+  prompt version, provider, model and tokens); each answer is merged into
+  the bible in the same transaction that completes its batch, so pausing,
+  quota deferrals and restarts lose nothing.
+- Per batch, only the known characters the batch text mentions (all words
+  of a name or alias occur in it) are sent, with ids (`c12`), at most 250.
+  A reported character is matched by `ref`, else by its full name, else by
+  aliases that all point to one character; otherwise it is new.
+  Profiles are filled in, never overwritten (and not at all once edited by
+  hand); importance and "speaks" keep the strongest signal.
+- An answer cut off at the output limit, or a batch no provider accepts
+  (tokens per minute), is split in two and retried.
+- Duplicate check after the last batch: single-word proper names that are
+  the first or last word of another's full name, and names equal apart
+  from titles, go to the `merge_characters` prompt in groups of 20; "same"
+  merges (the character with more chapters survives), "different" is
+  stored (`character_distincts`) and never asked again. Pairs with
+  different known genders are distinct without asking ("Mr." vs. "Mrs.
+  Bennet"). Generic words ("Mom", "the guard") never match.
+- Per chapter: narration (first/third person, mixed) and point-of-view
+  character.
+- While an analysis is queued or running (including a paused one whose
+  job still finishes its current request), characters cannot be edited,
+  merged, split or deleted and the book cannot be deleted (409). Chapters
+  cannot be merged or split while planned batches are pending (they refer
+  to the chapters); before the start and once done, they can. An analysis
+  can be paused, resumed or restarted (restart discards all results).
+- Batches that every provider rejects as too long (400/413 with a context
+  hint) are split like cut-off answers.
+
 ### 3.5 Voice casting
 
 - **Voice catalogue**: Kokoro voices with metadata (gender, US/UK accent,
@@ -205,6 +240,41 @@ an optional later feature (M8), not a requirement.
   freely; previews use a **real quote of that character**.
 - Unknown speakers ("a guard") → generic pool voice by gender.
 
+As implemented in M5 (`internal/casting`):
+
+- The catalogue (`internal/casting/voices.json`: the 28 English Kokoro
+  voices with gender, accent, model-card grade and a timbre hint) is merged
+  with the server's `/v1/audio/voices` (cached 5 min): catalogue voices the
+  server lacks are unavailable, server-only voices are described from their
+  IDs. Casting only uses available English voices.
+- One `cast_book` job per book on the `llm` queue, started automatically
+  when the analysis finishes (and by hand). The `casting.mainCharacters`
+  (50) most important speaking characters become main characters unless
+  their tier was chosen by hand. Main characters without a voice are sent
+  to the `cast_voices` prompt in groups of 8, most important first, with
+  the catalogue, the narrator and the voices already taken.
+- Code checks every proposal: unknown or wrong-gender base voices are
+  dropped, weights normalized, speed clamped to 0.85–1.15. The distance
+  between two voices is the share of blend weight they do not have in
+  common plus their speed difference; a recipe must be ≥ 0.6 from the
+  narrator and ≥ 0.3 from every other recipe. A proposal that fails is
+  replaced by the fitting blend closest to it (singles, 50/50 and 70/30
+  pairs of fitting voices); without a usable answer (refused, invalid) the
+  best-graded fitting blend is taken. The reason is stored with the voice.
+- Minor characters have no stored voice: a pool voice (a single base voice
+  of their gender, suited to their age where the catalogue says so, not a
+  main part of the narrator's voice, at an age-dependent speed) is picked
+  by hashing the character ID, so it stays the same.
+- Tiers and voices chosen in the UI are flags (`TierManual`,
+  `VoiceManual`) the casting never overrides; "Recast all" resets only
+  automatic ones. Promoting a character (or resetting its voice) queues a
+  casting for it; a gender change drops an automatic recipe. The casting
+  view warns about main characters that sound like the narrator (after a
+  narrator change) or like each other.
+- Previews use a real quote: until speaker attribution exists, a quote in
+  a paragraph whose narration names the character next to a speech verb
+  ("said Erin"). Previews are cached in memory (LRU, 32 MB).
+
 ### 3.6 Speaker attribution (per chapter, just in time)
 
 - Input: chapter text with quote markers (`[q12]“…”`), the characters
@@ -218,6 +288,50 @@ an optional later feature (M8), not a requirement.
 - Low confidence is flagged in the UI.
 - Optional later: narrate first-person chapters with the POV character's
   voice.
+
+As implemented in M6 (`internal/attribution`):
+
+- One `attribute_chapter` job per chapter on the `llm` queue. A render of
+  a chapter that needs speakers (finished analysis, quotes, not yet
+  attributed) queues it and waits (the render job is deferred and looks
+  again every 30 s); a failed attribution leaves the quotes with the
+  narrator instead of blocking the render.
+- The request (`attribute_chapter@v1`) lists the chapter's characters
+  (appearances, point-of-view character, the last speakers of the previous
+  chapter, at most 120) and the text with every quotation marked once, at
+  the paragraph it starts in. The answer per quotation: speaker (a listed
+  id, `new:Name` or `unknown`), emotion and confidence.
+- Validation in code: quotations not answered, or answered with an id that
+  was not listed, stay with the narrator at confidence 0; `new:` names are
+  matched against names and aliases or added as minor characters.
+- Chapters longer than `llm.attributionTokens` (12k) go in parts, cut at
+  scene breaks where possible, later parts with three paragraphs of
+  context. Each part is stored when answered, together with the speakers it
+  names for the first time and the number of paragraphs done, only while
+  the attribution still runs from that point (a reset, chapter merge or
+  split drops a late answer); a resumed job continues after those
+  paragraphs.
+- Waiting: a render waits for the attribution it needs and, if the chapter
+  has speakers, for a pending casting (queued above attributions) — but
+  not for jobs deferred more than two minutes (LLM quota, no provider):
+  then it renders with the voices there are and is rendered again when
+  they change. A finished analysis marks the audio of chapters with
+  quotations outdated (it was narrated only). Outdated audio stays playable
+  while it is re-rendered, and a failed re-render keeps it (the lookahead
+  then backs off for 30 minutes). Every render is a new file; the one it
+  replaces is kept until the next render, and the player asks for the
+  version it started with (`?v=`), so a seek after a re-render still
+  reads the same file. Cut-off answers, requests too large for every provider and
+  content-filter refusals split the part; a single paragraph still refused
+  stays with the narrator.
+- Speakers chosen in the chapter editor are flags (`SpeakerManual`) an
+  attribution never overrides. Confidence below 0.6 is flagged for review.
+- Rendering speaks quotes with the speaker's own recipe or pool voice,
+  narration and unknown speakers with the narrator. A per-chapter voice
+  revision is bumped by attribution, speaker edits, character voice,
+  tier, gender or age changes, merges and the casting; audio rendered at an
+  older revision is stale and re-rendered by the lookahead. Emotions are
+  stored and shown, not yet spoken (Kokoro has no emotion control).
 
 ### 3.7 Rendering and assembly
 
@@ -260,6 +374,34 @@ an optional later feature (M8), not a requirement.
 - Documented caveat: free tiers often may use inputs for training; limits
   change frequently ⇒ everything is configuration, nothing hard-coded.
 
+As implemented in M3 (`internal/llm`):
+
+- Providers live in the database. Those from the Helm values
+  (`llm.providers`, passed as `ABG_LLM_PROVIDERS` JSON, keys from Secrets
+  via `apiKeyEnv`) are synced on start-up and read-only in the UI; more can
+  be added in the UI (key stored in the database, never returned by the
+  API). Order: `position`, then creation.
+- Limits: RPM/TPM as a sliding 60 s window in memory, RPD/TPD as persistent
+  daily counters (`llm_usages`) that reset at midnight in the provider's
+  `quotaTimezone` (Gemini: Pacific time). A provider whose minute window
+  frees up within `llm.maxWait` (70 s) is waited for, otherwise the next
+  one is used.
+- Errors: `429` → cooldown from `Retry-After`/Google's `retryDelay`, else
+  exponential (15 s … 15 min); a 429 naming a per-day quota → cooldown
+  until the reset; `401/403/404` → 5 min cooldown (misconfiguration);
+  `400/413/422` → only this request skips the provider; network/`5xx` →
+  30 s cooldown.
+- When no provider can take a request, jobs are **deferred** (back to the
+  queue until the earliest provider is available, without using up an
+  attempt); likewise while no provider is configured.
+- Structured output per provider: `json_schema` (response_format),
+  `json_object` or `prompt` (schema in the system prompt). Answers are
+  always validated against the schema (santhosh-tekuri/jsonschema), with
+  one repair request quoting the validation errors; Markdown fences and
+  `<think>` blocks are stripped.
+- The provider test sends a small prompt (add two random numbers, echo a
+  word) and checks connectivity, key, structured output and content.
+
 ---
 
 ## 4. Data model (sketch, GORM models)
@@ -300,11 +442,11 @@ key plus `(chapter_id, idx)`.
 |---|---|
 | Language | Go (current stable, ≥ 1.25) |
 | HTTP | `net/http` (ServeMux patterns) + **oapi-codegen** (strict server) |
-| API contract | **OpenAPI 3.1** in `api/openapi.yaml` as the single source of truth |
-| Persistence | **GORM**; `github.com/glebarez/sqlite` + `gorm.io/driver/postgres`; migrations with **gormigrate** |
+| API contract | **OpenAPI 3.0.3** in `api/openapi.yaml` as the single source of truth (3.0 because oapi-codegen's 3.1 support is incomplete) |
+| Persistence | **GORM**; `github.com/ncruces/go-sqlite3/gormlite` + `gorm.io/driver/postgres`; migrations with **gormigrate** |
 | OIDC | `github.com/coreos/go-oidc/v3` + `golang.org/x/oauth2`, session cookie; can be disabled |
 | Logging / metrics | `log/slog` (JSON), Prometheus `/metrics` (jobs, quotas, render time, real-time factor) |
-| Configuration | environment variables + optional YAML file (provider list, limits) |
+| Configuration | environment variables (`ABG_*`); the provider list as JSON in `ABG_LLM_PROVIDERS` |
 | Audio | `ffmpeg`/`ffprobe` as subprocesses (shipped in the image) |
 | Frontend delivery | `embed.FS`, SPA fallback to `index.html` |
 | Tests | `testing` + testify, golden files, fake LLM and fake TTS servers (httptest); store tests against **both** SQLite and PostgreSQL (testcontainers / CI service container) |
@@ -319,7 +461,8 @@ internal/store/              GORM models, repositories, gormigrate migrations,
                              dialect-specific bits (job claiming) behind interfaces
 internal/epub/               OPF/NCX/nav parser, XHTML → paragraphs, chapter split
 internal/segment/            quote state machine, sentence chunking
-internal/llm/                OpenAI-compatible client, providers, rate limiter, usage
+internal/llm/                OpenAI-compatible client, providers, rate limiter, usage,
+                             embedded versioned prompts (internal/llm/prompts)
 internal/analysis/           character analysis batches, merge, POV
 internal/casting/            voice catalogue, recipe assignment, pools
 internal/attribution/        per-chapter speaker attribution + validation
@@ -329,7 +472,6 @@ internal/jobs/               queue, worker pools, lookahead policy, SSE events
 internal/api/                oapi-codegen handlers
 internal/auth/               OIDC, sessions
 internal/feed/               podcast RSS
-internal/prompts/            embedded, versioned prompt templates
 web/                         React app (own package.json)
 api/openapi.yaml
 charts/audiobook-generator/
@@ -354,12 +496,16 @@ GET    /api/voices/catalog                Kokoro base voices
 POST   /api/voices/preview                recipe + text → audio (cached)
 GET    /api/books/{id}/lexicon  (+ CRUD)
 GET    /api/jobs  · POST /api/jobs/{id}/retry|cancel · POST /api/queue/pause
-GET    /api/llm/usage
+GET    /api/llm/providers (+ CRUD, /{id}/test) · POST /api/llm/models
+GET    /api/books/{id}/analysis · POST …/analysis (start/resume/restart) · POST …/analysis/pause
+POST   /api/books/{id}/characters/merge · GET|PATCH|DELETE /api/characters/{id} · POST …/split
 GET    /api/events                        SSE: job and progress events
 GET    /api/chapters/{id}/audio           range requests for the player
 PUT    /api/books/{id}/progress           listening position
 GET    /feed/{token}/{bookId}.xml         podcast RSS (token instead of session)
-GET    /api/export/{bookId} · POST /api/import
+GET    /api/books/{id}/downloads · POST …/downloads/{volumeId} · GET …/downloads/{volumeId}/file   M4B
+GET    /api/books/{id}/export · POST /api/import
+GET    /auth/login|callback|logout · GET /api/me
 GET    /healthz · /readyz · /metrics
 ```
 
@@ -369,7 +515,7 @@ GET    /healthz · /readyz · /metrics
 
 | Area | Choice |
 |---|---|
-| Build | **Vite** + React + TypeScript (strict) |
+| Build | **Vite** + React + TypeScript 5 (strict; openapi-typescript does not support TS 6+ yet) |
 | Routing / data | **TanStack Router** + **TanStack Query** |
 | API client | **openapi-typescript** + **openapi-fetch** (types from `api/openapi.yaml`) |
 | Tables | Mantine tables + **TanStack Virtual** (1000+ chapters, 1000+ characters) |
@@ -431,8 +577,8 @@ want to replace externally can be switched off.
 | Deployment `app` (1 replica, `Recreate`) | always |
 | Service, ServiceAccount | always |
 | PVC `data` (audio, EPUBs, SQLite file; default 50Gi) | `persistence.enabled` (otherwise `existingClaim`) |
-| ConfigMap (provider list, limits, lookahead, pauses) | always |
-| Secret (LLM keys, OIDC client secret, session key, feed token secret, DB password) | unless `existingSecret` is set |
+| LLM providers (`llm.providers`, keys via `apiKeySecret` from existing Secrets) | as environment of the app |
+| Secret (OIDC client secret, session key, feed token secret, DB password) | unless `existingSecret` is set |
 | Deployment + Service `kokoro` | `tts.kokoro.enabled` (default `true`), otherwise `tts.externalUrl` |
 | CNPG `Cluster` | `database.type=postgres` + `database.postgres.mode=cnpg` (needs the CNPG operator) |
 | — (DSN/host from values or `existingSecret`) | `database.type=postgres` + `database.postgres.mode=external` |
@@ -464,7 +610,8 @@ RuntimeDefault`, `/tmp` as an emptyDir with `sizeLimit`), pinned image tags
 (explicit Kokoro-FastAPI version), `values.schema.json` for validation.
 
 Probes: generous `startupProbe` (migrations), `readinessProbe` on `/readyz`
-(database reachable, Kokoro reachable), `livenessProbe` on `/healthz`
+(database reachable only — the UI must stay usable while Kokoro restarts or
+loads its model; Kokoro's state is shown in the UI instead), `livenessProbe` on `/healthz`
 (independent of running jobs, so long renders never trigger a restart).
 Kokoro: generous startup probe (model load).
 

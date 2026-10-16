@@ -1,0 +1,161 @@
+package api_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/yoadey/audiobook-generator/internal/api"
+	"github.com/yoadey/audiobook-generator/internal/epub/epubtest"
+	"github.com/yoadey/audiobook-generator/internal/llm"
+	"github.com/yoadey/audiobook-generator/internal/llm/llmtest"
+	"github.com/yoadey/audiobook-generator/internal/store"
+	"github.com/yoadey/audiobook-generator/internal/store/storetest"
+)
+
+var (
+	quoteRe   = regexp.MustCompile(`\[q(\d+)\]`)
+	listedRe  = regexp.MustCompile(`(?m)^c(\d+) \| (\w+)`)
+	saidAnnaR = regexp.MustCompile(`\[q(\d+)\][^\[]*said Anna`)
+)
+
+// attributionAnswer: quotes with "said Anna" are Anna's, the rest Tom's.
+func attributionAnswer(r llmtest.Request) llmtest.Reply {
+	ms := r.Messages()
+	msg, _ := ms[len(ms)-1]["content"].(string)
+	if !strings.Contains(msg, "Quotations to attribute") {
+		return castingAnswer(r)
+	}
+	ids := map[string]string{}
+	for _, m := range listedRe.FindAllStringSubmatch(msg, -1) {
+		ids[m[2]] = "c" + m[1]
+	}
+	anna := map[string]bool{}
+	for _, m := range saidAnnaR.FindAllStringSubmatch(msg, -1) {
+		anna[m[1]] = true
+	}
+	var qs []map[string]any
+	for _, m := range quoteRe.FindAllStringSubmatch(msg, -1) {
+		n, _ := strconv.Atoi(m[1])
+		who := ids["Tom"]
+		if anna[m[1]] {
+			who = ids["Anna"]
+		}
+		qs = append(qs, map[string]any{"q": n, "speaker": who, "emotion": "neutral", "confidence": 0.5})
+	}
+	raw, _ := json.Marshal(map[string]any{"quotes": qs})
+	return llmtest.Reply{Content: string(raw)}
+}
+
+func TestAttributionFlow(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		c := newAPI(t, s, 10<<20)
+		fake := llmtest.New(t)
+		fake.Respond = attributionAnswer
+		p := &store.LLMProvider{Name: "fake", Enabled: true, BaseURL: fake.BaseURL(), Model: "m"}
+		llm.Normalize(p)
+		require.NoError(t, s.CreateLLMProvider(ctx, p))
+
+		data, err := epubtest.Sample()
+		require.NoError(t, err)
+		var book api.Book
+		require.Equal(t, http.StatusAccepted, c.upload("sample.epub", data, &book))
+		waitImported(t, c, book.Id)
+		id := itoa(book.Id)
+		ids, err := s.ChapterIDs(ctx, book.Id)
+		require.NoError(t, err)
+		ch1 := "/api/chapters/" + itoa(ids[1])
+
+		var e api.Error
+		require.Equal(t, http.StatusConflict, c.json(http.MethodPost, ch1+"/attribution", nil, &e))
+		assert.Contains(t, e.Message, "analysis must finish")
+
+		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, "/api/books/"+id+"/analysis", nil, nil))
+		waitCasting(t, c, id)
+
+		var att api.ChapterAttribution
+		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, ch1+"/attribution", nil, &att))
+		var d api.ChapterDetail
+		require.Eventually(t, func() bool {
+			require.Equal(t, http.StatusOK, c.json(http.MethodGet, ch1, nil, &d))
+			return d.AttributionStatus == api.AttributionStatusDone
+		}, 10*time.Second, 20*time.Millisecond)
+		require.NotNil(t, d.Attribution)
+		assert.Equal(t, 3, d.Attribution.Quotes)
+		assert.Equal(t, 3, d.Attribution.Attributed)
+		assert.Equal(t, 3, d.Attribution.Unsure, "confidence 0.5 is flagged")
+		assert.Equal(t, "attribute_chapter@v1", *d.Attribution.Prompt)
+		require.NotNil(t, d.Speakers)
+		names := map[int64]string{}
+		for _, sp := range *d.Speakers {
+			names[sp.Id] = sp.Name
+		}
+		byRef := map[int]api.Segment{}
+		for _, para := range d.Paragraphs {
+			for _, sg := range para.Segments {
+				if sg.QuoteRef > 0 {
+					byRef[sg.QuoteRef] = sg
+				}
+			}
+		}
+		require.NotNil(t, byRef[1].SpeakerId)
+		assert.Equal(t, "Anna", names[*byRef[1].SpeakerId])
+		assert.Equal(t, "Tom", names[*byRef[3].SpeakerId])
+		tomID := *byRef[3].SpeakerId
+
+		// Chosen by hand: the narrator reads quote 1, Tom says quote 2 angrily.
+		// (Fresh structs: decoding into a used one keeps absent pointer fields.)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, ch1+"/quotes/1", map[string]any{"narrator": true}, nil))
+		d = api.ChapterDetail{}
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, ch1+"/quotes/2",
+			map[string]any{"speakerId": tomID, "emotion": "angry"}, &d))
+		for _, para := range d.Paragraphs {
+			for _, sg := range para.Segments {
+				switch sg.QuoteRef {
+				case 1:
+					assert.Nil(t, sg.SpeakerId)
+					assert.True(t, sg.SpeakerManual)
+				case 2:
+					assert.Equal(t, tomID, *sg.SpeakerId)
+					assert.Equal(t, api.EmotionAngry, *sg.Emotion)
+					assert.InDelta(t, 1, sg.Confidence, 1e-6)
+				}
+			}
+		}
+		assert.Equal(t, 1, d.Attribution.Unsure, "only quote 3 is still unsure")
+		for _, bad := range []map[string]any{
+			{"speakerId": tomID, "narrator": true}, {"emotion": "bored"}, {"speakerId": 999999},
+		} {
+			require.Equal(t, http.StatusBadRequest, c.json(http.MethodPatch, ch1+"/quotes/2", bad, nil), bad)
+		}
+		require.Equal(t, http.StatusNotFound, c.json(http.MethodPatch, ch1+"/quotes/99", map[string]any{"narrator": true}, nil))
+
+		// Attributing again keeps the speakers chosen by hand.
+		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, ch1+"/attribution", map[string]any{"force": true}, nil))
+		require.Eventually(t, func() bool {
+			d = api.ChapterDetail{}
+			require.Equal(t, http.StatusOK, c.json(http.MethodGet, ch1, nil, &d))
+			return d.AttributionStatus == api.AttributionStatusDone
+		}, 10*time.Second, 20*time.Millisecond)
+		for _, para := range d.Paragraphs {
+			for _, sg := range para.Segments {
+				if sg.QuoteRef == 1 {
+					assert.Nil(t, sg.SpeakerId)
+				}
+			}
+		}
+		var chapters api.ChapterPage
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/books/"+id+"/chapters", nil, &chapters))
+		assert.Equal(t, api.AttributionStatusDone, chapters.Items[1].AttributionStatus)
+		assert.Equal(t, api.AttributionStatusNone, chapters.Items[2].AttributionStatus)
+	})
+}

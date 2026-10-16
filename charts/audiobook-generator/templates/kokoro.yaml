@@ -1,0 +1,105 @@
+{{- if .Values.tts.kokoro.enabled }}
+{{- $k := .Values.tts.kokoro }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "abg.kokoro.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kokoro
+spec:
+  replicas: {{ $k.replicas }}
+  selector:
+    matchLabels:
+      {{- include "abg.kokoro.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with $k.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "abg.metaLabels" . | nindent 8 }}
+        {{- include "abg.kokoro.selectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $k.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $k.podSecurityContext | nindent 8 }}
+      containers:
+        - name: kokoro
+          image: {{ printf "%s:%s" $k.image.repository $k.image.tag }}
+          imagePullPolicy: {{ $k.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $k.securityContext | nindent 12 }}
+          env:
+            # The model is baked into the image; skip the start-up check that
+            # would otherwise reach out to Hugging Face.
+            - name: DOWNLOAD_MODEL
+              value: "false"
+            {{- with $k.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8880
+              protocol: TCP
+          # Loading the model on CPU takes a while.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          # Synthesis can starve the event loop for a while; be patient.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          resources:
+            {{- toYaml $k.resources | nindent 12 }}
+      {{- with $k.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $k.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $k.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "abg.kokoro.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kokoro
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8880
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "abg.kokoro.selectorLabels" . | nindent 4 }}
+{{- end }}

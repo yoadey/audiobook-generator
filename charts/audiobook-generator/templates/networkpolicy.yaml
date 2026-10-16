@@ -1,0 +1,22 @@
+{{- if and .Values.networkPolicy.enabled .Values.tts.kokoro.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "abg.kokoro.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kokoro
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "abg.kokoro.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "abg.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+{{- end }}

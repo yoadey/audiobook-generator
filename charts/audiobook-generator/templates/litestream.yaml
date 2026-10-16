@@ -1,0 +1,24 @@
+{{- if .Values.backup.litestream.enabled }}
+{{- $ls := .Values.backup.litestream }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "abg.fullname" . }}-litestream
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+data:
+  litestream.yml: |
+    dbs:
+      - path: /data/audiobook-generator.db
+        replicas:
+          - type: s3
+            bucket: {{ $ls.s3.bucket | quote }}
+            path: {{ $ls.s3.path | quote }}
+            {{- with $ls.s3.endpoint }}
+            endpoint: {{ . | quote }}
+            {{- end }}
+            region: {{ $ls.s3.region | quote }}
+            force-path-style: {{ $ls.s3.forcePathStyle }}
+            sync-interval: {{ $ls.syncInterval | quote }}
+            retention: {{ $ls.retention | quote }}
+{{- end }}

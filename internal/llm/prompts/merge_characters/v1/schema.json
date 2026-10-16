@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pair": { "type": "string" },
+          "same": { "type": "boolean" }
+        },
+        "required": ["pair", "same"]
+      }
+    }
+  },
+  "required": ["decisions"]
+}

@@ -1,0 +1,696 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "pullPolicy"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "object": {
+      "type": "object"
+    },
+    "array": {
+      "type": "array"
+    },
+    "quantity": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    }
+  },
+  "properties": {
+    "global": {
+      "$ref": "#/definitions/object"
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "image": {
+      "$ref": "#/definitions/image"
+    },
+    "imagePullSecrets": {
+      "$ref": "#/definitions/array"
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "$ref": "#/definitions/object"
+        }
+      }
+    },
+    "podAnnotations": {
+      "$ref": "#/definitions/object"
+    },
+    "podLabels": {
+      "$ref": "#/definitions/object"
+    },
+    "priorityClassName": {
+      "type": "string"
+    },
+    "nodeSelector": {
+      "$ref": "#/definitions/object"
+    },
+    "tolerations": {
+      "$ref": "#/definitions/array"
+    },
+    "affinity": {
+      "$ref": "#/definitions/object"
+    },
+    "podSecurityContext": {
+      "$ref": "#/definitions/object"
+    },
+    "securityContext": {
+      "$ref": "#/definitions/object"
+    },
+    "resources": {
+      "$ref": "#/definitions/object"
+    },
+    "tmpSizeLimit": {
+      "$ref": "#/definitions/quantity"
+    },
+    "maxUploadMB": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "litestream": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "repository": {
+                  "type": "string"
+                },
+                "tag": {
+                  "type": "string"
+                },
+                "pullPolicy": {
+                  "enum": [
+                    "Always",
+                    "IfNotPresent",
+                    "Never"
+                  ]
+                }
+              }
+            },
+            "s3": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "endpoint": {
+                  "type": "string"
+                },
+                "region": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "bucket": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "forcePathStyle": {
+                  "type": "boolean"
+                },
+                "existingSecret": {
+                  "type": "string"
+                },
+                "accessKeyIdKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "secretAccessKeyKey": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "syncInterval": {
+              "type": "string"
+            },
+            "retention": {
+              "type": "string"
+            },
+            "resources": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "audioBitrate": {
+      "type": "string",
+      "pattern": "^[0-9]+k$"
+    },
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ]
+        },
+        "format": {
+          "enum": [
+            "json",
+            "text"
+          ]
+        }
+      }
+    },
+    "extraEnv": {
+      "$ref": "#/definitions/array"
+    },
+    "publicUrl": {
+      "type": "string",
+      "description": "External URL used in podcast feeds; empty derives it from each request"
+    },
+    "feed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "existingSecretKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "oidc": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "clientSecret": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "existingSecret": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "clientIdKey": {
+                  "type": "string"
+                }
+              }
+            },
+            "scopes": {
+              "type": "string"
+            },
+            "sessionTTL": {
+              "type": "string",
+              "pattern": "^([0-9]+(h|m|s))+$"
+            },
+            "sessionKey": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "existingSecret": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "annotations": {
+          "$ref": "#/definitions/object"
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "host",
+              "paths"
+            ],
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "pathType"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "pathType": {
+                      "enum": [
+                        "Prefix",
+                        "Exact",
+                        "ImplementationSpecific"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tls": {
+          "$ref": "#/definitions/array"
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "existingClaim": {
+          "type": "string"
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "accessModes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "size": {
+          "$ref": "#/definitions/quantity"
+        },
+        "annotations": {
+          "$ref": "#/definitions/object"
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "sqlite",
+            "postgres"
+          ]
+        },
+        "postgres": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "external",
+                "cnpg"
+              ]
+            },
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "database": {
+              "type": "string",
+              "minLength": 1
+            },
+            "user": {
+              "type": "string",
+              "minLength": 1
+            },
+            "password": {
+              "type": "string"
+            },
+            "existingSecret": {
+              "type": "string"
+            },
+            "existingSecretPasswordKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sslMode": {
+              "enum": [
+                "disable",
+                "allow",
+                "prefer",
+                "require",
+                "verify-ca",
+                "verify-full"
+              ]
+            },
+            "cnpg": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "instances": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "imageName": {
+                  "type": "string"
+                },
+                "storage": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "size": {
+                      "$ref": "#/definitions/quantity"
+                    },
+                    "storageClass": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "resources": {
+                  "$ref": "#/definitions/object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "tts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "externalUrl": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "defaultVoice": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kokoro": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "image": {
+              "$ref": "#/definitions/image"
+            },
+            "replicas": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "podAnnotations": {
+              "$ref": "#/definitions/object"
+            },
+            "priorityClassName": {
+              "type": "string"
+            },
+            "nodeSelector": {
+              "$ref": "#/definitions/object"
+            },
+            "tolerations": {
+              "$ref": "#/definitions/array"
+            },
+            "affinity": {
+              "$ref": "#/definitions/object"
+            },
+            "podSecurityContext": {
+              "$ref": "#/definitions/object"
+            },
+            "securityContext": {
+              "$ref": "#/definitions/object"
+            },
+            "extraEnv": {
+              "$ref": "#/definitions/array"
+            },
+            "resources": {
+              "$ref": "#/definitions/object"
+            }
+          }
+        }
+      }
+    },
+    "casting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mainCharacters": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxWait": {
+          "type": "string",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+        },
+        "analysisBatchTokens": {
+          "type": "integer",
+          "minimum": 1000
+        },
+        "attributionTokens": {
+          "type": "integer",
+          "minimum": 1000
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "baseUrl",
+              "model"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+              },
+              "baseUrl": {
+                "type": "string",
+                "pattern": "^https?://"
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apiKeySecret": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "key"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "structuredOutput": {
+                "type": "string",
+                "enum": [
+                  "json_schema",
+                  "json_object",
+                  "prompt"
+                ]
+              },
+              "limits": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "rpm": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "tpm": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "rpd": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "tpd": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              },
+              "quotaTimezone": {
+                "type": "string",
+                "minLength": 1
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3600
+              },
+              "extraParams": {
+                "type": "object"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "interval": {
+              "type": "string"
+            },
+            "labels": {
+              "$ref": "#/definitions/object"
+            }
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

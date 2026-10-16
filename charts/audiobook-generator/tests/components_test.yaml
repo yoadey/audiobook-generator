@@ -1,0 +1,117 @@
+suite: optional components
+release:
+  name: abg
+tests:
+  - it: renders Kokoro by default with a pinned image
+    template: templates/kokoro.yaml
+    asserts:
+      - hasDocuments:
+          count: 2
+      - documentIndex: 0
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/remsky/kokoro-fastapi-cpu:v0.9.0
+      - documentIndex: 0
+        equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /health
+      - documentIndex: 1
+        equal:
+          path: spec.ports[0].port
+          value: 8880
+
+  - it: omits Kokoro when an external TTS is used
+    template: templates/kokoro.yaml
+    set:
+      tts.kokoro.enabled: false
+      tts.externalUrl: http://tts.example:8880
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a CNPG cluster only in cnpg mode
+    template: templates/cnpg-cluster.yaml
+    set:
+      database.type: postgres
+      database.postgres.mode: cnpg
+      database.postgres.cnpg.storage.storageClass: fast
+    asserts:
+      - isKind:
+          of: Cluster
+      - equal:
+          path: metadata.name
+          value: abg-audiobook-generator-db
+      - equal:
+          path: spec.bootstrap.initdb
+          value:
+            database: audiobook
+            owner: audiobook
+      - equal:
+          path: spec.storage.storageClass
+          value: fast
+
+  - it: renders no CNPG cluster with SQLite
+    template: templates/cnpg-cluster.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: keeps the data PVC on uninstall
+    template: templates/pvc.yaml
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+      - equal:
+          path: spec.resources.requests.storage
+          value: 50Gi
+
+  - it: skips the PVC for an existing claim
+    template: templates/pvc.yaml
+    set:
+      persistence.existingClaim: my-claim
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the ingress
+    template: templates/ingress.yaml
+    set:
+      ingress:
+        enabled: true
+        className: traefik
+        hosts:
+          - host: books.example
+            paths:
+              - path: /
+                pathType: Prefix
+    asserts:
+      - equal:
+          path: spec.ingressClassName
+          value: traefik
+      - equal:
+          path: spec.rules[0].host
+          value: books.example
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.name
+          value: abg-audiobook-generator
+
+  - it: renders the ServiceMonitor when enabled
+    template: templates/servicemonitor.yaml
+    set:
+      metrics.serviceMonitor.enabled: true
+    asserts:
+      - isKind:
+          of: ServiceMonitor
+      - equal:
+          path: spec.endpoints[0].path
+          value: /metrics
+
+  - it: restricts Kokoro to the app pods
+    template: templates/networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/component"]
+          value: app

@@ -1,0 +1,193 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+// ChapterAudio is the result of a finished render.
+type ChapterAudio struct {
+	Path       string
+	DurationMs int64
+	Size       int64
+	Voice      string
+	// VoiceRev is the chapter's voice revision the audio was rendered at.
+	VoiceRev int
+}
+
+// SetAudioStatus sets the audio state (and error message) of chapters.
+func (s *Store) SetAudioStatus(ctx context.Context, status AudioStatus, msg string, chapterIDs ...int64) error {
+	if len(chapterIDs) == 0 {
+		return nil
+	}
+	return s.db.WithContext(ctx).Model(&Chapter{}).Where("id IN ?", chapterIDs).
+		Updates(map[string]any{"audio_status": status, "audio_error": CleanText(msg)}).Error
+}
+
+// SetChapterAudio records a finished render.
+func (s *Store) SetChapterAudio(ctx context.Context, chapterID int64, a ChapterAudio) error {
+	now := time.Now().UTC()
+	return s.db.WithContext(ctx).Model(&Chapter{ID: chapterID}).Updates(map[string]any{
+		"audio_status":      AudioReady,
+		"audio_path":        a.Path,
+		"audio_duration_ms": a.DurationMs,
+		"audio_size":        a.Size,
+		"audio_voice":       a.Voice,
+		"audio_voice_rev":   a.VoiceRev,
+		"audio_error":       "",
+		"audio_updated_at":  now,
+	}).Error
+}
+
+// ClearChapterAudio forgets rendered audio (e.g. after the text changed)
+// and returns the audio paths that were set, so callers can delete files.
+func (s *Store) ClearChapterAudio(ctx context.Context, chapterIDs ...int64) ([]string, error) {
+	if len(chapterIDs) == 0 {
+		return nil, nil
+	}
+	var paths []string
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Chapter{}).Where("id IN ? AND audio_path <> ''", chapterIDs).
+			Pluck("audio_path", &paths).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Chapter{}).Where("id IN ?", chapterIDs).Updates(map[string]any{
+			"audio_status": AudioNone, "audio_path": "", "audio_duration_ms": 0, "audio_size": 0,
+			"audio_voice": "", "audio_error": "", "audio_updated_at": nil,
+		}).Error
+	})
+	return paths, err
+}
+
+// ChaptersAhead returns up to n narrated (not excluded) chapters of a book
+// in reading order, starting at index from.
+func (s *Store) ChaptersAhead(ctx context.Context, bookID int64, from, n int) ([]Chapter, error) {
+	var cs []Chapter
+	err := s.db.WithContext(ctx).
+		Where("book_id = ? AND idx >= ? AND excluded = ?", bookID, from, false).
+		Order("idx").Limit(n).Find(&cs).Error
+	return cs, err
+}
+
+// GetProgress returns a user's listening position in a book (nil when
+// none; user "" without authentication).
+func (s *Store) GetProgress(ctx context.Context, bookID int64, user string) (*ListenProgress, error) {
+	var p ListenProgress
+	err := s.db.WithContext(ctx).Where("book_id = ? AND user_id = ?", bookID, user).Take(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &p, err
+}
+
+// LatestProgress returns the most recent listening position in a book of
+// any user (nil when none): the lookahead follows it.
+func (s *Store) LatestProgress(ctx context.Context, bookID int64) (*ListenProgress, error) {
+	var p ListenProgress
+	err := s.db.WithContext(ctx).Where("book_id = ?", bookID).Order("updated_at DESC, id DESC").Take(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &p, err
+}
+
+// SaveProgress upserts a user's listening position in a book.
+func (s *Store) SaveProgress(ctx context.Context, p *ListenProgress) error {
+	p.UpdatedAt = time.Now().UTC()
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "book_id"}, {Name: "user_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"chapter_id", "position_ms", "updated_at"}),
+	}).Create(p).Error
+}
+
+// PendingRenderJob returns the queued or running render job of a chapter.
+func (s *Store) PendingRenderJob(ctx context.Context, jobType string, chapterID int64) (*Job, error) {
+	var j Job
+	err := s.db.WithContext(ctx).
+		Where("type = ? AND chapter_id = ? AND status IN ?", jobType, chapterID, []JobStatus{JobQueued, JobRunning}).
+		Take(&j).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &j, err
+}
+
+// PendingBookJob returns the queued or running job of a type for a book.
+func (s *Store) PendingBookJob(ctx context.Context, jobType string, bookID int64) (*Job, error) {
+	var j Job
+	err := s.db.WithContext(ctx).
+		Where("type = ? AND book_id = ? AND status IN ?", jobType, bookID, []JobStatus{JobQueued, JobRunning}).
+		Order("id DESC").Take(&j).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &j, err
+}
+
+// PendingRenderChapters returns the chapters of a book with a queued or
+// running job of a type.
+func (s *Store) PendingRenderChapters(ctx context.Context, jobType string, bookID int64) (map[int64]bool, error) {
+	var ids []int64
+	err := s.db.WithContext(ctx).Model(&Job{}).
+		Where("type = ? AND book_id = ? AND status IN ? AND chapter_id IS NOT NULL", jobType, bookID,
+			[]JobStatus{JobQueued, JobRunning}).Pluck("chapter_id", &ids).Error
+	out := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, err
+}
+
+// PendingBookJobs returns the queued and running jobs of a type for a book.
+func (s *Store) PendingBookJobs(ctx context.Context, jobType string, bookID int64) ([]Job, error) {
+	var js []Job
+	err := s.db.WithContext(ctx).
+		Where("type = ? AND book_id = ? AND status IN ?", jobType, bookID, []JobStatus{JobQueued, JobRunning}).
+		Order("id").Find(&js).Error
+	return js, err
+}
+
+// PendingChapterJob returns the queued or running job of a type for a
+// chapter.
+func (s *Store) PendingChapterJob(ctx context.Context, jobType string, chapterID int64) (*Job, error) {
+	return s.PendingRenderJob(ctx, jobType, chapterID)
+}
+
+// AudioFile is a stored file of a chapter or download.
+type AudioFile struct {
+	ID   int64
+	Path string
+}
+
+// ChapterAudioFiles lists the chapters that have audio, with its path.
+func (s *Store) ChapterAudioFiles(ctx context.Context) ([]AudioFile, error) {
+	var out []AudioFile
+	err := s.db.WithContext(ctx).Model(&Chapter{}).Select("id, audio_path AS path").
+		Where("audio_path <> ''").Order("id").Scan(&out).Error
+	return out, err
+}
+
+// DownloadFiles lists the downloads that have a file, with its path.
+func (s *Store) DownloadFiles(ctx context.Context) ([]AudioFile, error) {
+	var out []AudioFile
+	err := s.db.WithContext(ctx).Model(&Download{}).Select("id, path").
+		Where("path <> ''").Order("id").Scan(&out).Error
+	return out, err
+}
+
+// ForgetDownloadFiles clears the file of downloads (it is gone); a
+// finished one is to be built again.
+func (s *Store) ForgetDownloadFiles(ctx context.Context, ids ...int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.db.WithContext(ctx).Model(&Download{}).Where("id IN ?", ids).Updates(map[string]any{
+		"path": "", "size": 0, "duration_ms": 0, "source_key": "",
+		"status": gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", DownloadReady, DownloadFailed),
+		"error":  gorm.Expr("CASE WHEN status = ? THEN ? ELSE error END", DownloadReady, "the file is gone; build it again"),
+	}).Error
+}

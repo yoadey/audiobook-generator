@@ -1,0 +1,8 @@
+{{if .Known}}Known characters (id: name, aliases, gender):
+{{range .Known}}{{.}}
+{{end}}
+{{else}}No characters are known yet.
+
+{{end}}Chapters ({{.ChapterCount}}):
+
+{{.Text}}

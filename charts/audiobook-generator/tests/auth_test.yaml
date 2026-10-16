@@ -1,0 +1,110 @@
+suite: oidc
+templates:
+  - templates/deployment.yaml
+release:
+  name: abg
+tests:
+  - it: is off by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: ABG_OIDC_ISSUER
+
+  - it: configures OIDC with generated session key and a client secret
+    set:
+      publicUrl: https://abg.example.com
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://id.example.com
+      auth.oidc.clientId: abg
+      auth.oidc.clientSecret.existingSecret: oidc
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_OIDC_ISSUER
+            value: https://id.example.com
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_OIDC_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: oidc
+                key: client-secret
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_OIDC_SESSION_KEY
+            valueFrom:
+              secretKeyRef:
+                name: abg-audiobook-generator-app
+                key: session-key
+
+  - it: uses a public client and an existing session key
+    set:
+      publicUrl: https://abg.example.com
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://id.example.com
+      auth.oidc.clientId: abg
+      auth.oidc.sessionKey.existingSecret: sess
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: ABG_OIDC_CLIENT_SECRET
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_OIDC_SESSION_KEY
+            valueFrom:
+              secretKeyRef:
+                name: sess
+                key: session-key
+
+  - it: requires an issuer
+    set:
+      publicUrl: https://abg.example.com
+      auth.oidc.enabled: true
+      auth.oidc.clientId: abg
+    asserts:
+      - failedTemplate:
+          errorMessage: auth.oidc.issuer must be an http(s) URL when auth.oidc.enabled
+
+  - it: reads the client ID from the client secret's Secret
+    set:
+      publicUrl: https://abg.example.com
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://id.example.com
+      auth.oidc.clientSecret.existingSecret: abg-oidc
+      auth.oidc.clientSecret.key: OIDC_CLIENT_SECRET
+      auth.oidc.clientSecret.clientIdKey: OIDC_CLIENT_ID
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_OIDC_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: abg-oidc
+                key: OIDC_CLIENT_ID
+
+  - it: requires a client ID
+    set:
+      publicUrl: https://abg.example.com
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://id.example.com
+    asserts:
+      - failedTemplate:
+          errorMessage: auth.oidc.clientId (or clientSecret.existingSecret with clientSecret.clientIdKey) is required when auth.oidc.enabled
+
+  - it: requires the public URL
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://id.example.com
+      auth.oidc.clientId: abg
+    asserts:
+      - failedTemplate:
+          errorMessage: publicUrl is required when auth.oidc.enabled

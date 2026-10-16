@@ -1,0 +1,84 @@
+suite: litestream
+templates:
+  - templates/deployment.yaml
+  - templates/litestream.yaml
+release:
+  name: abg
+set:
+  backup.litestream.enabled: true
+  backup.litestream.s3.bucket: backups
+  backup.litestream.s3.endpoint: http://garage:3900
+  backup.litestream.s3.existingSecret: s3
+tests:
+  - it: restores before the app starts and replicates beside it
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].args
+          value: [restore, -if-db-not-exists, -if-replica-exists, -config, /etc/litestream.yml, /data/audiobook-generator.db]
+      - equal:
+          path: spec.template.spec.initContainers[1].name
+          value: litestream
+      - equal:
+          path: spec.template.spec.initContainers[1].restartPolicy
+          value: Always
+      - equal:
+          path: spec.template.spec.initContainers[1].args
+          value: [replicate, -config, /etc/litestream.yml]
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 1
+      - exists:
+          path: spec.template.metadata.annotations["checksum/litestream"]
+      - contains:
+          path: spec.template.spec.initContainers[1].env
+          content:
+            name: LITESTREAM_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: s3
+                key: access-key-id
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: litestream
+            configMap:
+              name: abg-audiobook-generator-litestream
+
+  - it: writes the replica config
+    template: templates/litestream.yaml
+    asserts:
+      - matchRegex:
+          path: data["litestream.yml"]
+          pattern: 'bucket: "backups"'
+      - matchRegex:
+          path: data["litestream.yml"]
+          pattern: 'endpoint: "http://garage:3900"'
+
+  - it: is off by default
+    set:
+      backup.litestream.enabled: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.initContainers
+        template: templates/deployment.yaml
+      - hasDocuments:
+          count: 0
+        template: templates/litestream.yaml
+
+  - it: needs SQLite
+    template: templates/deployment.yaml
+    set:
+      database.type: postgres
+      database.postgres.host: db
+    asserts:
+      - failedTemplate:
+          errorMessage: backup.litestream needs database.type=sqlite (back up PostgreSQL with its own tools)
+
+  - it: needs a bucket and credentials
+    template: templates/deployment.yaml
+    set:
+      backup.litestream.s3.existingSecret: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: backup.litestream needs s3.bucket and s3.existingSecret

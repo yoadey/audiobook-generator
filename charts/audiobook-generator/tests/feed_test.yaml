@@ -1,0 +1,101 @@
+suite: podcast feed
+templates:
+  - templates/deployment.yaml
+  - templates/app-secret.yaml
+release:
+  name: abg
+tests:
+  - it: generates a feed secret by default
+    template: templates/app-secret.yaml
+    asserts:
+      - isKind:
+          of: Secret
+      - equal:
+          path: metadata.name
+          value: abg-audiobook-generator-app
+      - exists:
+          path: data.feed-secret
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+
+  - it: passes the generated secret to the app
+    template: templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_FEED_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: abg-audiobook-generator-app
+                key: feed-secret
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: ABG_PUBLIC_URL
+
+  - it: uses an existing secret
+    set:
+      feed.existingSecret: my-feed
+      feed.existingSecretKey: key
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: templates/app-secret.yaml
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_FEED_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: my-feed
+                key: key
+        template: templates/deployment.yaml
+
+  - it: disables feeds
+    set:
+      feed.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: templates/app-secret.yaml
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: ABG_FEED_SECRET
+        template: templates/deployment.yaml
+
+  - it: sets the public URL
+    template: templates/deployment.yaml
+    set:
+      publicUrl: https://audiobooks.example.com
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_PUBLIC_URL
+            value: https://audiobooks.example.com
+
+  - it: rejects an invalid public URL
+    template: templates/deployment.yaml
+    set:
+      publicUrl: audiobooks.example.com
+    asserts:
+      - failedTemplate:
+          errorMessage: publicUrl must be an http(s) URL, got "audiobooks.example.com"
+
+  - it: generates the session key with OIDC
+    template: templates/app-secret.yaml
+    set:
+      publicUrl: https://abg.example.com
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://id.example.com
+      auth.oidc.clientId: abg
+    asserts:
+      - exists:
+          path: data.session-key
+      - exists:
+          path: data.feed-secret
