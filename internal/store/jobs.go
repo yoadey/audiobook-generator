@@ -209,3 +209,54 @@ func (s *Store) RetryFailedJob(ctx context.Context, id int64) error {
 func CleanText(s string) string {
 	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "")
 }
+
+// JobCount is the number of jobs of a type in a state.
+type JobCount struct {
+	Type   string
+	Status JobStatus
+	Count  int64
+	// OldestReady is when the longest-waiting runnable queued job became
+	// runnable (zero for other states or when none is runnable).
+	OldestReady time.Time
+}
+
+// CountJobs counts jobs by type and status (for metrics).
+func (s *Store) CountJobs(ctx context.Context) ([]JobCount, error) {
+	var out []JobCount
+	err := s.db.WithContext(ctx).Model(&Job{}).Select("type, status, COUNT(*) AS count").
+		Group("type, status").Scan(&out).Error
+	if err != nil {
+		return nil, err
+	}
+	var oldest []struct {
+		Type string
+		At   time.Time
+	}
+	err = s.db.WithContext(ctx).Model(&Job{}).Select("type, MIN(not_before) AS at").
+		Where("status = ? AND not_before <= ?", JobQueued, time.Now().UTC()).Group("type").Scan(&oldest).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range oldest {
+		for i := range out {
+			if out[i].Type == o.Type && out[i].Status == JobQueued {
+				out[i].OldestReady = o.At
+			}
+		}
+	}
+	return out, nil
+}
+
+// AudioCount is the number of narrated chapters in an audio state.
+type AudioCount struct {
+	Status AudioStatus
+	Count  int64
+}
+
+// CountChapterAudio counts narrated chapters by audio state (for metrics).
+func (s *Store) CountChapterAudio(ctx context.Context) ([]AudioCount, error) {
+	var out []AudioCount
+	err := s.db.WithContext(ctx).Model(&Chapter{}).Select("audio_status AS status, COUNT(*) AS count").
+		Where("excluded = ?", false).Group("audio_status").Scan(&out).Error
+	return out, err
+}

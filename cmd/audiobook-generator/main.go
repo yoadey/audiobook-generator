@@ -31,6 +31,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/llm"
+	"github.com/yoadey/audiobook-generator/internal/metrics"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
@@ -84,6 +85,8 @@ func run() error {
 
 	speech := tts.New(cfg.TTS.URL, cfg.TTS.Timeout)
 	runner := jobs.New(st, log)
+	runner.Metrics = jobs.NewMetrics(reg)
+	reg.MustRegister(metrics.NewCollector(st, log))
 	imp := &importer.Importer{Store: st, DataDir: cfg.DataDir, Log: log}
 	runner.Handle(importer.JobType, imp.Handler())
 	voices := casting.NewCatalog(speech)

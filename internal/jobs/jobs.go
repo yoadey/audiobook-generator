@@ -80,6 +80,8 @@ type Runner struct {
 	PollInterval time.Duration
 	// Backoff returns the delay before retry number attempt (1-based).
 	Backoff func(attempt int) time.Duration
+	// Metrics records job runs (nil: none).
+	Metrics *Metrics
 }
 
 // New returns a Runner without handlers.
@@ -226,6 +228,8 @@ func (r *Runner) execute(ctx context.Context, j *store.Job) {
 	start := time.Now()
 
 	err := r.run(ctx, h, j)
+	outcome := "done"
+	defer func() { r.Metrics.observe(j.Type, outcome, time.Since(start)) }()
 	// Use a fresh context for bookkeeping: ctx may be canceled by now.
 	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
@@ -242,11 +246,13 @@ func (r *Runner) execute(ctx context.Context, j *store.Job) {
 			log.Error("release job", "err", err)
 		}
 		log.Info("job interrupted by shutdown")
+		outcome = "interrupted"
 	default:
 		var deferred Deferrer
 		if errors.As(err, &deferred) {
 			at := deferred.DeferUntil().UTC()
 			log.Info("job deferred", "reason", err, "until", at)
+			outcome = "deferred"
 			if derr := r.st.DeferJob(bg, j.ID, err.Error(), at); derr != nil {
 				log.Error("defer job", "err", derr)
 			}
@@ -255,6 +261,7 @@ func (r *Runner) execute(ctx context.Context, j *store.Job) {
 		var perm PermanentError
 		if errors.As(err, &perm) || j.Attempts >= j.MaxAttempts {
 			log.Error("job failed", "err", err)
+			outcome = "failed"
 			if ferr := r.st.FailJob(bg, j.ID, err.Error()); ferr != nil {
 				log.Error("fail job", "err", ferr)
 			}
@@ -265,6 +272,7 @@ func (r *Runner) execute(ctx context.Context, j *store.Job) {
 		}
 		at := time.Now().UTC().Add(r.Backoff(j.Attempts))
 		log.Warn("job failed, will retry", "err", err, "retry_at", at)
+		outcome = "retry"
 		if rerr := r.st.RetryJob(bg, j.ID, err.Error(), at); rerr != nil {
 			log.Error("retry job", "err", rerr)
 		}
