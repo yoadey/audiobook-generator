@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -257,6 +258,12 @@ func (s *Server) RetryJob(ctx context.Context, req RetryJobRequestObject) (Retry
 			return nil, err
 		}
 	}
+	if j.Type == attribution.JobType && j.ChapterID != nil {
+		if _, err := s.Store.TransitionAttribution(ctx, *j.ChapterID, store.AttributionQueued,
+			map[string]any{"attribution_error": ""}, store.AttributionFailed); err != nil {
+			return nil, err
+		}
+	}
 	if w, ok := s.Jobs.(interface{ Wake(queue string) }); ok {
 		w.Wake(j.Queue)
 	}
@@ -279,6 +286,13 @@ func (s *Server) CancelJob(ctx context.Context, req CancelJobRequestObject) (Can
 		return CancelJob409JSONResponse{Message: "only queued jobs can be canceled"}, nil
 	} else if err != nil {
 		return nil, err
+	}
+	if j.Type == attribution.JobType && j.ChapterID != nil {
+		// Back to "not attributed": the next render queues it again.
+		if _, err := s.Store.TransitionAttribution(ctx, *j.ChapterID, store.AttributionNone, nil,
+			store.AttributionQueued, store.AttributionRunning); err != nil {
+			return nil, err
+		}
 	}
 	if j.Type == render.JobType && j.ChapterID != nil {
 		// A forced or stale re-render may have been canceled: existing

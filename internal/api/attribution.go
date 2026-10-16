@@ -83,6 +83,9 @@ func (s *Server) UpdateQuote(ctx context.Context, req UpdateQuoteRequestObject) 
 	} else if err != nil {
 		return nil, err
 	}
+	if req.QuoteRef < 1 {
+		return UpdateQuote404JSONResponse{Message: "quotation not found"}, nil
+	}
 	u := req.Body
 	narrator := u.Narrator != nil && *u.Narrator
 	if u.SpeakerId != nil && narrator {

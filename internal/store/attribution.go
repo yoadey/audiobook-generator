@@ -30,13 +30,51 @@ type Attribution struct {
 	Confidence  float64
 }
 
+// ErrStale reports that a running attribution was reset, or the chapter
+// restructured, while it waited for an answer: the answer is dropped.
+var ErrStale = errors.New("the attribution was reset meanwhile")
+
 // ApplyAttribution stores speakers of a chapter's quotations (all pieces of
-// each), except where the user chose the speaker, and marks the part as
-// done. It bumps the chapter's voice revision.
-func (s *Store) ApplyAttribution(ctx context.Context, chapterID int64, as []Attribution, partsDone int) error {
+// each), except where the user chose the speaker, and records that the
+// paragraphs before doneParas are attributed — only if the attribution
+// still runs and is at fromParas (else ErrStale, nothing is written).
+// Speakers that no longer exist (deleted or merged meanwhile) are dropped.
+// It bumps the chapter's voice revision.
+func (s *Store) ApplyAttribution(ctx context.Context, chapterID int64, as []Attribution, fromParas, doneParas int,
+) error {
 	return s.Tx(ctx, func(tx *Store) error {
 		db := tx.db
+		res := db.Model(&Chapter{}).
+			Where("id = ? AND attribution_status = ? AND attribution_part = ?", chapterID, AttributionRunning, fromParas).
+			Updates(map[string]any{"attribution_part": doneParas, "voice_rev": gorm.Expr("voice_rev + 1")})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return ErrStale
+		}
+		var ids []int64
 		for _, a := range as {
+			if a.CharacterID != nil {
+				ids = append(ids, *a.CharacterID)
+			}
+		}
+		exist := map[int64]bool{}
+		if len(ids) > 0 {
+			var found []int64
+			if err := db.Model(&Character{}).Where("id IN ? AND book_id = (?)", ids,
+				db.Session(&gorm.Session{NewDB: true}).Model(&Chapter{}).Select("book_id").Where("id = ?", chapterID)).
+				Pluck("id", &found).Error; err != nil {
+				return err
+			}
+			for _, id := range found {
+				exist[id] = true
+			}
+		}
+		for _, a := range as {
+			if a.CharacterID != nil && !exist[*a.CharacterID] {
+				a.CharacterID, a.Confidence = nil, 0
+			}
 			if err := db.Model(&Segment{}).
 				Where("chapter_id = ? AND quote_ref = ? AND speaker_manual = ?", chapterID, a.QuoteRef, false).
 				Updates(map[string]any{
@@ -45,9 +83,7 @@ func (s *Store) ApplyAttribution(ctx context.Context, chapterID int64, as []Attr
 				return err
 			}
 		}
-		return db.Model(&Chapter{ID: chapterID}).Updates(map[string]any{
-			"attribution_part": partsDone, "voice_rev": gorm.Expr("voice_rev + 1"),
-		}).Error
+		return nil
 	})
 }
 
@@ -75,6 +111,9 @@ func (s *Store) ResetAttribution(ctx context.Context, chapterIDs ...int64) error
 func (s *Store) SetQuoteSpeaker(ctx context.Context, chapterID int64, quoteRef int, characterID *int64,
 	emotion string,
 ) error {
+	if quoteRef < 1 {
+		return ErrNotFound
+	}
 	return s.Tx(ctx, func(tx *Store) error {
 		db := tx.db
 		var before Segment

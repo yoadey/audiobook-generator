@@ -254,15 +254,16 @@ func TestLongChaptersInPartsAndResume(t *testing.T) {
 			marked = append(marked, refs)
 			return reply(t, out...)
 		}
-		// A job that stopped after the first part resumes with the second.
+		// A job that stopped after the first part (the heading and the
+		// paragraph with quotes 1 and 2) resumes with the next paragraph.
 		require.NoError(t, f.a.Start(ctx, f.book, &ch, false, 0))
-		require.NoError(t, s.DB().Model(&store.Chapter{}).Where("id = ?", ch.ID).Update("attribution_part", 1).Error)
+		require.NoError(t, s.DB().Model(&store.Chapter{}).Where("id = ?", ch.ID).Update("attribution_part", 2).Error)
 		require.NoError(t, f.a.Run(ctx, ch.ID, func(float64) {}))
 		assert.Equal(t, [][]string{{"3"}}, marked, "only the remaining part, its quote marked once")
 		assert.Equal(t, map[int]int64{1: 0, 2: 0, 3: f.anna.ID}, speakers(t, s, ch.ID))
 		got, err := s.GetChapter(ctx, ch.ID)
 		require.NoError(t, err)
-		assert.Equal(t, 2, got.AttributionPart, "the continuation of quote 3 is no part of its own")
+		assert.Equal(t, 3, got.AttributionPart, "the continuation of quote 3 is no part of its own")
 
 		// From the start: every part, later ones with context.
 		marked = nil
@@ -381,5 +382,104 @@ func TestRenderWaitsForSpeakersAndUsesTheirVoices(t *testing.T) {
 		got, err = s.GetChapter(ctx, ch.ID)
 		require.NoError(t, err)
 		assert.True(t, sched.Stale(f.book, got))
+	})
+}
+
+func TestResetWhileAttributing(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		f := setup(t, s)
+		ch := f.chapters[1]
+		f.srv.Respond = func(llmtest.Request) llmtest.Reply {
+			// The analysis is restarted while the request is answered.
+			require.NoError(t, s.ResetAnalysis(ctx, f.book.ID))
+			require.NoError(t, s.UpdateBook(ctx, f.book.ID, map[string]any{"AnalysisStatus": store.AnalysisDone}))
+			return reply(t, q(1, "new:Ghost", 0.9), q(2, ref(f.anna), 0.9), q(3, ref(f.tom), 0.9))
+		}
+		require.NoError(t, f.a.Start(ctx, f.book, &ch, false, 0))
+		require.NoError(t, f.a.Run(ctx, ch.ID, func(float64) {}), "a reset answer is dropped quietly")
+		assert.Equal(t, map[int]int64{1: 0, 2: 0, 3: 0}, speakers(t, s, ch.ID))
+		n, err := s.CountCharacters(ctx, f.book.ID)
+		require.NoError(t, err)
+		assert.Zero(t, n, "no character from the dropped answer")
+		got, err := s.GetChapter(ctx, ch.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AttributionNone, got.AttributionStatus)
+		assert.Zero(t, got.AttributionPart)
+	})
+}
+
+func TestSpeakerDeletedWhileAttributing(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		f := setup(t, s)
+		ch := f.chapters[1]
+		f.srv.Respond = func(llmtest.Request) llmtest.Reply {
+			require.NoError(t, s.DeleteCharacter(ctx, f.tom.ID))
+			return reply(t, q(1, ref(f.anna), 0.9), q(2, ref(f.anna), 0.9), q(3, ref(f.tom), 0.9))
+		}
+		require.NoError(t, f.a.Start(ctx, f.book, &ch, false, 0))
+		require.NoError(t, f.a.Run(ctx, ch.ID, func(float64) {}))
+		assert.Equal(t, map[int]int64{1: f.anna.ID, 2: f.anna.ID, 3: 0}, speakers(t, s, ch.ID))
+	})
+}
+
+func TestAttributionWaitsForAnAnalysisRunningAgain(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		f := setup(t, s)
+		ch := f.chapters[1]
+		require.NoError(t, f.a.Start(ctx, f.book, &ch, false, 0))
+		require.NoError(t, s.UpdateBook(ctx, f.book.ID, map[string]any{"AnalysisStatus": store.AnalysisQueued}))
+		var d jobs.Deferrer
+		require.ErrorAs(t, f.a.Run(ctx, ch.ID, func(float64) {}), &d)
+		got, err := s.GetChapter(ctx, ch.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.AttributionQueued, got.AttributionStatus)
+	})
+}
+
+func TestRenderRequeuesALostAttributionAndWaitsForTheCasting(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		f := setup(t, s)
+		ch := f.chapters[1]
+		r := &render.Renderer{Store: s, TTS: &fakeTTS{voices: map[string]string{}}, DataDir: f.dir,
+			DefaultVoice: "af_heart", Attribution: f.a, Log: slog.New(slog.DiscardHandler)}
+		// "queued" without a job (canceled, or lost).
+		require.NoError(t, s.DB().Model(&store.Chapter{}).Where("id = ?", ch.ID).
+			Update("attribution_status", store.AttributionQueued).Error)
+		var d jobs.Deferrer
+		require.ErrorAs(t, r.Render(ctx, ch.ID, func(float64) {}), &d)
+		assert.Len(t, f.jobs.jobs, 1, "queued again")
+
+		// Attributed, but a casting is pending: wait for it.
+		f.srv.Respond = func(llmtest.Request) llmtest.Reply {
+			return reply(t, q(1, ref(f.anna), 0.9), q(2, ref(f.anna), 0.9), q(3, ref(f.tom), 0.9))
+		}
+		require.NoError(t, f.a.Run(ctx, ch.ID, func(float64) {}))
+		require.NoError(t, s.EnqueueJob(ctx, &store.Job{Type: "cast_book", Queue: "test-only", BookID: &f.book.ID}))
+		require.ErrorAs(t, r.Render(ctx, ch.ID, func(float64) {}), &d)
+	})
+}
+
+func TestNarratedAudioIsOutdatedOnceSpeakersCanBeFound(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		f := setup(t, s)
+		require.NoError(t, s.SetChapterAudio(ctx, f.chapters[1].ID, store.ChapterAudio{Path: "x.m4a", Voice: "af_heart@1.00"}))
+		require.NoError(t, s.SetChapterAudio(ctx, f.chapters[3].ID, store.ChapterAudio{Path: "y.m4a", Voice: "af_heart@1.00"}))
+		sched := &render.Scheduler{Store: s, DefaultVoice: "af_heart"}
+		ch1, err := s.GetChapter(ctx, f.chapters[1].ID)
+		require.NoError(t, err)
+		assert.True(t, sched.Stale(f.book, ch1), "quotes not attributed yet")
+		ch3, err := s.GetChapter(ctx, f.chapters[3].ID)
+		require.NoError(t, err)
+		assert.False(t, sched.Stale(f.book, ch3), "no quotes")
+		require.NoError(t, s.DB().Model(&store.Chapter{}).Where("id = ?", ch1.ID).
+			Update("attribution_status", store.AttributionFailed).Error)
+		ch1, err = s.GetChapter(ctx, ch1.ID)
+		require.NoError(t, err)
+		assert.False(t, sched.Stale(f.book, ch1), "a failed attribution stays narrated")
 	})
 }

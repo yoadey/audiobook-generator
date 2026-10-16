@@ -110,8 +110,8 @@ type Chapter struct {
 	AudioVoiceRev int `gorm:"not null;default:0"`
 
 	// Speaker attribution (see AttributionStatus). AttributionPart is the
-	// number of parts of the chapter already attributed (a long chapter
-	// is sent in parts; a resumed job continues there).
+	// number of paragraphs (from the start) already attributed: a long
+	// chapter is sent in parts, a resumed job continues there.
 	AttributionStatus AttributionStatus `gorm:"not null;default:'none'"`
 	AttributionError  string            `gorm:"not null;default:''"`
 	AttributionPrompt string            `gorm:"not null;default:''"`

@@ -234,15 +234,22 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return jobs.Permanent(err)
 	}
-	// Character voices need the speakers first.
+	// Character voices need the speakers first (Start does nothing while
+	// a job is pending, and queues one again if it was lost or canceled),
+	// and a casting that runs is waited for, not rendered twice.
 	if r.Attribution != nil && attribution.Needed(book, ch) {
-		if !attribution.Active(ch) {
-			err := r.Attribution.Start(ctx, book, ch, false, AttributionPriority)
-			if err != nil && !errors.Is(err, attribution.ErrNotReady) {
-				return err
-			}
+		err := r.Attribution.Start(ctx, book, ch, false, AttributionPriority)
+		if err != nil && !errors.Is(err, attribution.ErrNotReady) {
+			return err
 		}
 		return attribution.WaitError()
+	}
+	if r.Attribution != nil {
+		if j, err := r.Store.PendingBookJob(ctx, casting.JobType, book.ID); err != nil {
+			return err
+		} else if j != nil {
+			return jobs.Defer(time.Now().Add(time.Minute), "waiting for the voice casting of this book")
+		}
 	}
 	paras, segs, err := r.Store.ChapterText(ctx, ch.ID)
 	if err != nil {

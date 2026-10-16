@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/llm"
@@ -127,12 +128,19 @@ func (a *Attributor) Start(ctx context.Context, b *store.Book, c *store.Chapter,
 	} else if c.AttributionStatus == store.AttributionDone {
 		return nil
 	}
-	if ok, err := a.Store.TransitionAttribution(ctx, c.ID, store.AttributionQueued,
-		map[string]any{"attribution_error": ""},
-		store.AttributionNone, store.AttributionFailed, store.AttributionQueued, store.AttributionRunning); err != nil {
+	// From scratch after a reset; a failed or interrupted one resumes.
+	fresh, err := a.Store.TransitionAttribution(ctx, c.ID, store.AttributionQueued,
+		map[string]any{"attribution_error": "", "attribution_part": 0}, store.AttributionNone)
+	if err != nil {
 		return err
-	} else if !ok {
-		return nil
+	}
+	if !fresh {
+		ok, err := a.Store.TransitionAttribution(ctx, c.ID, store.AttributionQueued,
+			map[string]any{"attribution_error": ""},
+			store.AttributionFailed, store.AttributionQueued, store.AttributionRunning)
+		if err != nil || !ok {
+			return err
+		}
 	}
 	return a.Jobs.Enqueue(ctx, &store.Job{
 		Type: JobType, BookID: &b.ID, ChapterID: &c.ID, Priority: priority, MaxAttempts: 5,
@@ -162,6 +170,10 @@ func (a *Attributor) Handler() jobs.Handler {
 			if j.ChapterID == nil {
 				return
 			}
+			// A newer start queued another job: that one decides.
+			if p, perr := a.Store.PendingChapterJob(ctx, JobType, *j.ChapterID); perr == nil && p != nil && p.ID != j.ID {
+				return
+			}
 			if _, uerr := a.Store.TransitionAttribution(ctx, *j.ChapterID, store.AttributionFailed,
 				map[string]any{"attribution_error": store.CleanText(err.Error())},
 				store.AttributionQueued, store.AttributionRunning); uerr != nil {
@@ -181,8 +193,19 @@ func (a *Attributor) Run(ctx context.Context, chapterID int64, progress func(flo
 	if err != nil {
 		return jobs.Permanent(err)
 	}
-	if b.AnalysisStatus != store.AnalysisDone {
+	switch b.AnalysisStatus {
+	case store.AnalysisDone:
+	case store.AnalysisNone, store.AnalysisFailed:
 		return jobs.Permanent(errors.New("the character analysis has not finished"))
+	default:
+		// Analysed again (or paused meanwhile): wait for it, the bible
+		// changes under it.
+		return jobs.Defer(time.Now().Add(analysisWait), "waiting for the character analysis")
+	}
+	if ch.Excluded {
+		_, err := a.Store.TransitionAttribution(ctx, chapterID, store.AttributionNone, nil,
+			store.AttributionQueued, store.AttributionRunning)
+		return err // not narrated: nothing to attribute
 	}
 	if ok, err := a.Store.TransitionAttribution(ctx, chapterID, store.AttributionRunning, nil,
 		store.AttributionQueued, store.AttributionRunning); err != nil || !ok {
@@ -192,29 +215,81 @@ func (a *Attributor) Run(ctx context.Context, chapterID int64, progress func(flo
 	if err != nil {
 		return err
 	}
-	parts := split(paras, segs, a.partTokens())
+	// Resume after the paragraphs already attributed.
+	done := ch.AttributionPart
+	var parts []part
+	for _, p := range split(paras, segs, a.partTokens()) {
+		if p.to <= done {
+			continue
+		}
+		p.from = max(p.from, done)
+		parts = append(parts, p)
+	}
 	ctxData, err := a.loadContext(ctx, b, ch)
 	if err != nil {
 		return err
 	}
-	for i := ch.AttributionPart; i < len(parts); i++ {
+	for i, p := range parts {
 		progress(float64(i) / float64(len(parts)))
-		p := parts[i]
 		res, err := a.attribute(ctx, ch, ctxData, paras, segs, p.from, p.to, p.from-min(p.from, contextParas))
 		if err != nil {
 			return err
 		}
-		if err := a.Store.ApplyAttribution(ctx, chapterID, res, i+1); err != nil {
+		as, err := a.store(ctx, ch, ctxData, res, done, p.to)
+		if errors.Is(err, store.ErrStale) {
+			a.Log.Info("attribution reset meanwhile, stopping", "chapter", chapterID)
+			return nil
+		}
+		if err != nil {
 			return err
 		}
-		ctxData.remember(res)
-		if done, ok := ctx.Value(partDoneKey{}).(func(context.Context)); ok {
-			done(ctx)
+		done = p.to
+		ctxData.remember(as)
+		if f, ok := ctx.Value(partDoneKey{}).(func(context.Context)); ok {
+			f(ctx)
 		}
 	}
 	progress(1)
 	_, err = a.Store.MarkAttributed(ctx, chapterID, prompt.ID())
 	return err
+}
+
+// analysisWait is how long an attribution waits for an analysis that runs
+// again.
+const analysisWait = 10 * time.Minute
+
+// store saves a part's answers in one transaction with the speakers it
+// names for the first time ("new:"), only if the attribution was not reset
+// meanwhile (store.ErrStale).
+func (a *Attributor) store(ctx context.Context, ch *store.Chapter, c *chapterContext, res []result,
+	from, to int,
+) ([]store.Attribution, error) {
+	as := make([]store.Attribution, len(res))
+	err := a.Store.Tx(ctx, func(tx *store.Store) error {
+		var created []store.Character
+		for i, r := range res {
+			as[i] = r.Attribution
+			if r.newName == "" {
+				continue
+			}
+			id, nc, err := a.newSpeaker(ctx, tx, ch, c, r.newName, r.newGender)
+			if err != nil {
+				return err
+			}
+			as[i].CharacterID = id
+			if nc != nil {
+				created = append(created, *nc)
+			}
+		}
+		if err := tx.ApplyAttribution(ctx, ch.ID, as, from, to); err != nil {
+			return err
+		}
+		for _, nc := range created {
+			a.Log.Info("new character from attribution", "chapter", ch.ID, "name", nc.Name)
+		}
+		return nil
+	})
+	return as, err
 }
 
 // part is a range of paragraphs [from, to) sent in one request.
@@ -419,7 +494,7 @@ type answer struct {
 // filter still refuses on its own is left unattributed.
 func (a *Attributor) attribute(ctx context.Context, ch *store.Chapter, c *chapterContext,
 	paras []store.Paragraph, segs []store.Segment, from, to, ctxFrom int,
-) ([]store.Attribution, error) {
+) ([]result, error) {
 	contextText, text, refs := marked(paras, segs, ctxFrom, from, to)
 	if len(refs) == 0 {
 		return nil, nil
@@ -472,33 +547,37 @@ func (a *Attributor) attribute(ctx context.Context, ch *store.Chapter, c *chapte
 	if err != nil {
 		return nil, err
 	}
-	return a.apply(ctx, ch, c, refs, &ans)
+	return apply(c, refs, &ans), nil
 }
 
-func unknown(refs []int) []store.Attribution {
-	out := make([]store.Attribution, len(refs))
+// result is an attribution, possibly naming a speaker the bible lacks.
+type result struct {
+	store.Attribution
+	newName, newGender string
+}
+
+func unknown(refs []int) []result {
+	out := make([]result, len(refs))
 	for i, r := range refs {
-		out[i] = store.Attribution{QuoteRef: r}
+		out[i] = result{Attribution: store.Attribution{QuoteRef: r}}
 	}
 	return out
 }
 
 // apply validates an answer: every sent quotation gets a result (unknown
 // with confidence 0 when missing or invalid); "new:" speakers are matched
-// by name or created as minor characters.
-func (a *Attributor) apply(ctx context.Context, ch *store.Chapter, c *chapterContext, refs []int,
-	ans *answer,
-) ([]store.Attribution, error) {
+// by name, or noted to be created when the part is stored.
+func apply(c *chapterContext, refs []int, ans *answer) []result {
 	sent := map[int]bool{}
 	for _, r := range refs {
 		sent[r] = true
 	}
-	got := map[int]store.Attribution{}
+	got := map[int]result{}
 	for _, q := range ans.Quotes {
 		if !sent[q.Q] {
 			continue
 		}
-		at := store.Attribution{QuoteRef: q.Q, Emotion: "neutral", Confidence: clamp(q.Confidence)}
+		at := result{Attribution: store.Attribution{QuoteRef: q.Q, Emotion: "neutral", Confidence: clamp(q.Confidence)}}
 		if e := strings.ToLower(strings.TrimSpace(q.Emotion)); emotions[e] {
 			at.Emotion = e
 		}
@@ -506,11 +585,17 @@ func (a *Attributor) apply(ctx context.Context, ch *store.Chapter, c *chapterCon
 		switch {
 		case strings.EqualFold(speaker, "unknown") || speaker == "":
 		case strings.HasPrefix(strings.ToLower(speaker), "new:"):
-			id, err := a.newSpeaker(ctx, ch, c, strings.TrimSpace(speaker[4:]), q.Gender)
-			if err != nil {
-				return nil, err
+			name := strings.TrimSpace(speaker[4:])
+			norm := store.NormName(name)
+			switch ids := c.byNorm[norm]; {
+			case norm == "" || utf8.RuneCountInString(name) > 120 || len(ids) > 1:
+				// unusable or ambiguous: the narrator reads it
+			case len(ids) == 1:
+				id := ids[0]
+				at.CharacterID = &id
+			default:
+				at.newName, at.newGender = name, q.Gender
 			}
-			at.CharacterID = id
 		default:
 			id, err := strconv.ParseInt(strings.TrimPrefix(speaker, "c"), 10, 64)
 			if err == nil && c.listed[id] {
@@ -519,20 +604,20 @@ func (a *Attributor) apply(ctx context.Context, ch *store.Chapter, c *chapterCon
 				at.Confidence = 0 // an id that was not offered
 			}
 		}
-		if at.CharacterID == nil {
+		if at.CharacterID == nil && at.newName == "" {
 			at.Confidence = min(at.Confidence, UnsureBelow/2)
 		}
 		got[q.Q] = at
 	}
-	out := make([]store.Attribution, 0, len(refs))
+	out := make([]result, 0, len(refs))
 	for _, r := range refs {
 		at, ok := got[r]
 		if !ok {
-			at = store.Attribution{QuoteRef: r}
+			at = result{Attribution: store.Attribution{QuoteRef: r}}
 		}
 		out = append(out, at)
 	}
-	return out, nil
+	return out
 }
 
 func clamp(f float64) float64 {
@@ -542,21 +627,14 @@ func clamp(f float64) float64 {
 	return min(max(f, 0), 1)
 }
 
-// newSpeaker finds a named speaker in the bible or adds it as a minor
-// character of this chapter.
-func (a *Attributor) newSpeaker(ctx context.Context, ch *store.Chapter, c *chapterContext, name, gender string,
-) (*int64, error) {
-	name = strings.TrimSpace(name)
-	norm := store.NormName(name)
-	if norm == "" || len([]rune(name)) > 120 {
-		return nil, nil
-	}
-	if ids := c.byNorm[norm]; len(ids) == 1 {
+// newSpeaker adds a speaker the bible lacks as a minor character of this
+// chapter (within tx); one already added by an earlier part is reused.
+func (a *Attributor) newSpeaker(ctx context.Context, tx *store.Store, ch *store.Chapter, c *chapterContext,
+	name, gender string,
+) (*int64, *store.Character, error) {
+	if ids := c.byNorm[store.NormName(name)]; len(ids) == 1 {
 		id := ids[0]
-		c.listed[id] = true
-		return &id, nil
-	} else if len(ids) > 1 {
-		return nil, nil // ambiguous: leave it to the narrator
+		return &id, nil, nil
 	}
 	g := store.Gender(strings.ToLower(gender))
 	if g != store.GenderFemale && g != store.GenderMale {
@@ -564,20 +642,19 @@ func (a *Attributor) newSpeaker(ctx context.Context, ch *store.Chapter, c *chapt
 	}
 	nc := &store.Character{BookID: ch.BookID, Name: name, Gender: g, AgeGroup: store.AgeUnknown,
 		Importance: 1, Speaks: true, Tier: store.TierMinor}
-	if err := a.Store.CreateCharacter(ctx, nc); err != nil {
-		return nil, err
+	if err := tx.CreateCharacter(ctx, nc); err != nil {
+		return nil, nil, err
 	}
-	if err := a.Store.LinkCharacterChapters(ctx, ch.BookID, nc.ID, ch.ID); err != nil {
-		return nil, err
+	if err := tx.LinkCharacterChapters(ctx, ch.BookID, nc.ID, ch.ID); err != nil {
+		return nil, nil, err
 	}
-	if err := a.Store.RefreshCharacterStats(ctx, nc.ID); err != nil {
-		return nil, err
+	if err := tx.RefreshCharacterStats(ctx, nc.ID); err != nil {
+		return nil, nil, err
 	}
-	a.Log.Info("new character from attribution", "chapter", ch.ID, "name", name)
 	c.listed[nc.ID] = true
 	c.names[nc.ID] = name
 	c.addNorm(nc.ID, name)
-	return &nc.ID, nil
+	return &nc.ID, nc, nil
 }
 
 // pollEvery is how often a render waiting for its attribution looks again.

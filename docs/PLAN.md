@@ -306,8 +306,13 @@ As implemented in M6 (`internal/attribution`):
   matched against names and aliases or added as minor characters.
 - Chapters longer than `llm.attributionTokens` (12k) go in parts, cut at
   scene breaks where possible, later parts with three paragraphs of
-  context. Each part is stored when answered; a resumed job continues with
-  the next one. Cut-off answers, requests too large for every provider and
+  context. Each part is stored when answered, together with the speakers it
+  names for the first time and the number of paragraphs done, only while
+  the attribution still runs from that point (a reset, chapter merge or
+  split drops a late answer); a resumed job continues after those
+  paragraphs. A render also waits while a casting job of the book is
+  pending, and narrated audio of a chapter that can now be attributed
+  counts as outdated. Cut-off answers, requests too large for every provider and
   content-filter refusals split the part; a single paragraph still refused
   stays with the narrator.
 - Speakers chosen in the chapter editor are flags (`SpeakerManual`) an
