@@ -1650,7 +1650,8 @@ components:
       enum: [text, heading, scene_break]
     SegmentKind:
       type: string
-      enum: [narration, quote]
+      enum: [narration, quote, thought]
+      description: thought - a character's thought (italics or single marks); attributed like a quote
     AttributionStatus:
       type: string
       enum: [none, queued, running, done, failed]
@@ -1717,9 +1718,18 @@ components:
           $ref: "#/components/schemas/SegmentKind"
         quoteRef:
           type: integer
-          description: Number of the quotation within the chapter (0 for narration)
+          description: Number of the quotation or thought within the chapter (0 for narration)
         text:
           type: string
+        emphasis:
+          type: array
+          description: Italic runs of the text, [start, end) in characters
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: integer
         speakerId:
           type: integer
           format: int64

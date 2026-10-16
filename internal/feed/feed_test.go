@@ -235,3 +235,12 @@ func TestFeedAuthorization(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestWebVTTSentences(t *testing.T) {
+	c := &store.Chapter{Title: "One"}
+	segs := []store.Segment{{ID: 4, Text: "Short one. And a longer second one."}}
+	out := feed.WebVTT(c, segs, &render.Timings{Cues: []render.Cue{{SegmentID: 4, StartMs: 1000, EndMs: 4500}}})
+	// 10 of 34 characters: the first sentence gets 1029 of 3500 ms.
+	assert.Equal(t, "WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.029\nShort one.\n\n"+
+		"2\n00:00:02.029 --> 00:00:04.500\nAnd a longer second one.\n", string(out))
+}

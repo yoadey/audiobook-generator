@@ -211,3 +211,33 @@ func TestIsMatter(t *testing.T) {
 		assert.False(t, epub.IsMatter(s), s)
 	}
 }
+
+func TestEmphasis(t *testing.T) {
+	b := open(t, epubtest.Options{
+		Docs: []epubtest.Doc{{Name: "a.xhtml", Body: `
+<p>She stopped. <em> This is wrong, </em>she thought. It was <i>very</i> late.</p>
+<p><span style="font-style: italic">All of it.</span></p>
+<p class="x">Nested <em>outer <i>inner</i> rest</em> end.</p>
+<div><i><p>Across</p><p>blocks.</p></i></div>
+<h2><em>Heading</em></h2>`}},
+	})
+	got := blocks(t, b)
+	sub := func(blk epub.Block) []string {
+		r := []rune(blk.Text)
+		var out []string
+		for _, s := range blk.Emphasis {
+			out = append(out, string(r[s.Start:s.End]))
+		}
+		return out
+	}
+	require.Len(t, got, 6)
+	assert.Equal(t, "She stopped. This is wrong, she thought. It was very late.", got[0].Text)
+	assert.Equal(t, []string{"This is wrong,", "very"}, sub(got[0]))
+	assert.Equal(t, []string{"All of it."}, sub(got[1]))
+	assert.Equal(t, "Nested outer inner rest end.", got[2].Text)
+	assert.Equal(t, []string{"outer inner rest"}, sub(got[2]))
+	assert.Equal(t, []string{"Across"}, sub(got[3]))
+	assert.Equal(t, []string{"blocks."}, sub(got[4]))
+	assert.Equal(t, "Heading", got[5].Text)
+	assert.Empty(t, got[5].Emphasis)
+}

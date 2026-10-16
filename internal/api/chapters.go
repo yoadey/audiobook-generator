@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -170,6 +171,13 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		}
 		if e := Emotion(sg.Emotion); e.Valid() {
 			seg.Emotion = &e
+		}
+		if spans := store.DecodeSpans(sg.Emphasis, utf8.RuneCountInString(sg.Text)); len(spans) > 0 {
+			emph := make([][]int, len(spans))
+			for i, sp := range spans {
+				emph[i] = []int{sp[0], sp[1]}
+			}
+			seg.Emphasis = &emph
 		}
 		if id := sg.SpeakerCharacterID; id != nil && !seen[*id] {
 			seen[*id] = true

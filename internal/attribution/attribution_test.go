@@ -166,7 +166,7 @@ func TestAttributeChapter(t *testing.T) {
 		got, err := s.GetChapter(ctx, ch.ID)
 		require.NoError(t, err)
 		assert.Equal(t, store.AttributionDone, got.AttributionStatus)
-		assert.Equal(t, "attribute_chapter@v1", got.AttributionPrompt)
+		assert.Equal(t, "attribute_chapter@v2", got.AttributionPrompt)
 		assert.Positive(t, got.VoiceRev)
 		_, segs, err := s.ChapterText(ctx, ch.ID)
 		require.NoError(t, err)

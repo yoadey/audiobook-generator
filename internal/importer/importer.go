@@ -282,24 +282,36 @@ func (w *writer) add(blk epub.Block) {
 		parts = []segment.Part{{Kind: segment.Narration, Text: blk.Text}}
 	default:
 		p.Kind = store.ParagraphText
-		parts = w.seg.Paragraph(blk.Text)
+		emph := make([]segment.Span, len(blk.Emphasis))
+		for i, e := range blk.Emphasis {
+			emph[i] = segment.Span{Start: e.Start, End: e.End}
+		}
+		parts = w.seg.Paragraph(blk.Text, emph...)
 	}
 	c.Paragraphs = append(c.Paragraphs, p)
 	c.Chapter.WordCount += p.WordCount
 
 	for _, part := range parts {
 		kind := store.SegmentNarration
-		if part.Kind == segment.Quote {
+		switch part.Kind {
+		case segment.Quote:
 			kind = store.SegmentQuote
+		case segment.Thought:
+			kind = store.SegmentThought
 		}
-		for _, text := range segment.Chunk(part.Text, segment.MaxChunk) {
+		for _, piece := range segment.ChunkPart(part, segment.MaxChunk) {
+			spans := make([][2]int, len(piece.Emphasis))
+			for i, e := range piece.Emphasis {
+				spans[i] = [2]int{e.Start, e.End}
+			}
 			c.Segments = append(c.Segments, store.Segment{
 				// Index into Paragraphs; CreateChapterContent swaps in the ID.
 				ParagraphID: int64(pi),
 				Idx:         len(c.Segments),
 				Kind:        kind,
-				QuoteRef:    part.Quote,
-				Text:        text,
+				QuoteRef:    piece.Quote,
+				Text:        piece.Text,
+				Emphasis:    store.EncodeSpans(spans),
 			})
 		}
 	}

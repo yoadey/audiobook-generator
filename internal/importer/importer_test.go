@@ -199,3 +199,51 @@ func TestImportRejectsGarbage(t *testing.T) {
 		assert.ErrorContains(t, err, "open EPUB")
 	})
 }
+
+func TestImportThoughtsAndStyles(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		data, err := epubtest.Build(epubtest.Options{
+			Title: "Thinking", Language: "en",
+			Docs: []epubtest.Doc{{Name: "c1.xhtml", Body: `<h1>One</h1>
+<p>'Come in,' said Ann. 'Sit.'</p>
+<p>She frowned. <i>This is wrong.</i> It was <em>very</em> late.</p>
+<p>'Fine.' He left.</p>`}},
+			TOC: []epubtest.Entry{{Title: "One", Href: "c1.xhtml"}},
+		})
+		require.NoError(t, err)
+		im, b := setup(t, s, data)
+		require.NoError(t, im.Import(ctx, b.ID, func(float64) {}))
+		book, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "straight_single", book.QuoteStyle)
+
+		cs, _, err := s.ListChapters(ctx, b.ID, store.ChapterFilter{}, 0, 10)
+		require.NoError(t, err)
+		require.Len(t, cs, 1)
+		assert.Equal(t, 4, cs[0].QuoteCount, "three quotations and a thought")
+		_, segs, err := s.ChapterText(ctx, cs[0].ID)
+		require.NoError(t, err)
+		type seg struct {
+			Kind     store.SegmentKind
+			Ref      int
+			Text     string
+			Emphasis string
+		}
+		var got []seg
+		for _, sg := range segs {
+			got = append(got, seg{sg.Kind, sg.QuoteRef, sg.Text, sg.Emphasis})
+		}
+		assert.Equal(t, []seg{
+			{store.SegmentNarration, 0, "One", ""},
+			{store.SegmentQuote, 1, "'Come in,'", ""},
+			{store.SegmentNarration, 0, "said Ann.", ""},
+			{store.SegmentQuote, 2, "'Sit.'", ""},
+			{store.SegmentNarration, 0, "She frowned.", ""},
+			{store.SegmentThought, 3, "This is wrong.", "[[0,14]]"},
+			{store.SegmentNarration, 0, "It was very late.", "[[7,11]]"},
+			{store.SegmentQuote, 4, "'Fine.'", ""},
+			{store.SegmentNarration, 0, "He left.", ""},
+		}, got)
+	})
+}

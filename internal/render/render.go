@@ -209,6 +209,12 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 	}
 	narrator, narratorSpeed := voiceOf(nil)
 	say := func(segmentID int64, text, voice string, speed float64) {
+		// Cleaned up for the TTS before the book's pronunciations apply
+		// (they may use Kokoro's bracket syntax).
+		text = spoken(text)
+		if speakable(text) == "" {
+			return
+		}
 		items = append(items, item{
 			text: lex.Apply(text), voice: voice, speed: speed, pause: withinPara, segmentID: segmentID,
 		})
@@ -216,7 +222,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 	if len(paras) == 0 || paras[0].Kind != store.ParagraphHeading {
 		if t := speakable(ch.Title); t != "" {
 			say(0, t, narrator, narratorSpeed)
-			items[len(items)-1].pause = afterHeading
+			pauseLast(afterHeading)
 		}
 	}
 	for _, p := range paras {
@@ -464,7 +470,7 @@ func (r *Renderer) speakerVoices(ctx context.Context, b *store.Book, segs []stor
 	var ids []int64
 	seen := map[int64]bool{}
 	for _, s := range segs {
-		if id := s.SpeakerCharacterID; s.Kind == store.SegmentQuote && id != nil && !seen[*id] {
+		if id := s.SpeakerCharacterID; s.QuoteRef > 0 && id != nil && !seen[*id] {
 			seen[*id] = true
 			ids = append(ids, *id)
 		}
@@ -482,7 +488,8 @@ func (r *Renderer) speakerVoices(ctx context.Context, b *store.Book, segs []stor
 		voices[chars[i].ID] = casting.Effective(&chars[i], base, narrator, narratorSpeed)
 	}
 	return func(s *store.Segment) (string, float64) {
-		if s != nil && s.Kind == store.SegmentQuote && s.SpeakerCharacterID != nil {
+		// Quotations and thoughts are spoken by their speaker.
+		if s != nil && s.QuoteRef > 0 && s.SpeakerCharacterID != nil {
 			if v, ok := voices[*s.SpeakerCharacterID]; ok {
 				return v.Recipe, v.Speed
 			}

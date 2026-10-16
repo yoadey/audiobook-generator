@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/render"
+	"github.com/yoadey/audiobook-generator/internal/segment"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
@@ -29,6 +31,8 @@ func (h *Handler) serveTranscript(w http.ResponseWriter, r *http.Request, c *sto
 }
 
 // WebVTT renders timings as a WebVTT transcript with the segments' text.
+// A segment's cue is split into its sentences (timed by their length), so
+// apps show short lines.
 func WebVTT(c *store.Chapter, segs []store.Segment, t *render.Timings) []byte {
 	text := make(map[int64]string, len(segs))
 	for _, s := range segs {
@@ -42,14 +46,45 @@ func WebVTT(c *store.Chapter, segs []store.Segment, t *render.Timings) []byte {
 		if q.SegmentID != 0 {
 			s = text[q.SegmentID]
 		}
-		s = cueText(s)
-		if s == "" || q.EndMs <= q.StartMs {
+		if q.EndMs <= q.StartMs || cueText(s) == "" {
 			continue
 		}
-		n++
-		_, _ = fmt.Fprintf(&b, "\n%d\n%s --> %s\n%s\n", n, vttTime(q.StartMs), vttTime(q.EndMs), s)
+		for _, l := range lines(s, q.StartMs, q.EndMs) {
+			n++
+			_, _ = fmt.Fprintf(&b, "\n%d\n%s --> %s\n%s\n", n, vttTime(l.from), vttTime(l.to), cueText(l.text))
+		}
 	}
 	return b.Bytes()
+}
+
+type line struct {
+	text     string
+	from, to int64
+}
+
+// lines splits a cue's text into sentences over [from, to), each timed by
+// its share of the characters.
+func lines(text string, from, to int64) []line {
+	sentences := segment.Sentences(text)
+	total := 0
+	for _, s := range sentences {
+		total += utf8.RuneCountInString(s)
+	}
+	if len(sentences) < 2 || total == 0 {
+		return []line{{text, from, to}}
+	}
+	out := make([]line, 0, len(sentences))
+	at, done := from, 0
+	for i, s := range sentences {
+		done += utf8.RuneCountInString(s)
+		end := from + (to-from)*int64(done)/int64(total)
+		if i == len(sentences)-1 {
+			end = to
+		}
+		out = append(out, line{s, at, end})
+		at = end
+	}
+	return out
 }
 
 // cueText makes text safe for a cue: one line, no markup, no "-->".

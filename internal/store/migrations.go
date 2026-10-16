@@ -491,6 +491,12 @@ var migrations = []*gormigrate.Migration{
 				Name  string `gorm:"primaryKey"`
 				Value string `gorm:"not null;default:''"`
 			}
+			type Segment struct {
+				Emphasis string `gorm:"not null;default:''"`
+			}
+			if err := tx.Migrator().AddColumn(&Segment{}, "Emphasis"); err != nil {
+				return err
+			}
 			if err := tx.Migrator().AddColumn(&ListenProgress{}, "SegmentID"); err != nil {
 				return err
 			}
@@ -506,7 +512,11 @@ var migrations = []*gormigrate.Migration{
 			type ListenProgress struct{ SegmentID *int64 }
 			type Book struct{ PreviewText string }
 			type Character struct{ PreviewText string }
+			type Segment struct{ Emphasis string }
 			if err := tx.Migrator().DropTable("app_settings"); err != nil {
+				return err
+			}
+			if err := tx.Migrator().DropColumn(&Segment{}, "Emphasis"); err != nil {
 				return err
 			}
 			if err := tx.Migrator().DropColumn(&Character{}, "PreviewText"); err != nil {

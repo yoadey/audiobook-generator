@@ -188,6 +188,9 @@ type SegmentKind string
 const (
 	SegmentNarration SegmentKind = "narration"
 	SegmentQuote     SegmentKind = "quote"
+	// SegmentThought is a character's thought (in italics or single
+	// marks); like a quote it has a QuoteRef and is attributed.
+	SegmentThought SegmentKind = "thought"
 )
 
 // Segment is the unit of speech: a TTS-sized piece of narration or of one
@@ -202,6 +205,9 @@ type Segment struct {
 	// pieces of one quotation share the number.
 	QuoteRef int    `gorm:"not null;default:0"`
 	Text     string `gorm:"not null"`
+	// Emphasis lists the italic runs of Text as JSON [[start,end],…] in
+	// runes ("" for none).
+	Emphasis string `gorm:"not null;default:''"`
 	// Speaker of a quote (nil: narrator voice — not attributed yet, or an
 	// unknown speaker), how it is said and how sure the attribution is
 	// (0..1). SpeakerManual protects a speaker the user chose.

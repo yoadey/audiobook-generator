@@ -954,8 +954,11 @@ export interface components {
     };
     /** @enum {string} */
     ParagraphKind: 'text' | 'heading' | 'scene_break';
-    /** @enum {string} */
-    SegmentKind: 'narration' | 'quote';
+    /**
+     * @description thought - a character's thought (italics or single marks); attributed like a quote
+     * @enum {string}
+     */
+    SegmentKind: 'narration' | 'quote' | 'thought';
     /** @enum {string} */
     AttributionStatus: 'none' | 'queued' | 'running' | 'done' | 'failed';
     /** @enum {string} */
@@ -1004,9 +1007,11 @@ export interface components {
       id: number;
       idx: number;
       kind: components['schemas']['SegmentKind'];
-      /** @description Number of the quotation within the chapter (0 for narration) */
+      /** @description Number of the quotation or thought within the chapter (0 for narration) */
       quoteRef: number;
       text: string;
+      /** @description Italic runs of the text, [start, end) in characters */
+      emphasis?: number[][];
       /**
        * Format: int64
        * @description Who speaks the quotation (absent - the narrator reads it)

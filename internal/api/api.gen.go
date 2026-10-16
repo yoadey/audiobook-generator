@@ -531,6 +531,7 @@ func (e ParagraphKind) Valid() bool {
 const (
 	SegmentKindNarration SegmentKind = "narration"
 	SegmentKindQuote     SegmentKind = "quote"
+	SegmentKindThought   SegmentKind = "thought"
 )
 
 // Valid indicates whether the value is a known member of the SegmentKind enum.
@@ -539,6 +540,8 @@ func (e SegmentKind) Valid() bool {
 	case SegmentKindNarration:
 		return true
 	case SegmentKindQuote:
+		return true
+	case SegmentKindThought:
 		return true
 	default:
 		return false
@@ -1393,13 +1396,18 @@ type RenderResult struct {
 // Segment defines model for Segment.
 type Segment struct {
 	// Confidence How sure the attribution is (0..1; 1 for a speaker chosen by hand)
-	Confidence float32     `json:"confidence"`
-	Emotion    *Emotion    `json:"emotion,omitempty"`
-	Id         int64       `json:"id"`
-	Idx        int         `json:"idx"`
-	Kind       SegmentKind `json:"kind"`
+	Confidence float32  `json:"confidence"`
+	Emotion    *Emotion `json:"emotion,omitempty"`
 
-	// QuoteRef Number of the quotation within the chapter (0 for narration)
+	// Emphasis Italic runs of the text, [start, end) in characters
+	Emphasis *[][]int `json:"emphasis,omitempty"`
+	Id       int64    `json:"id"`
+	Idx      int      `json:"idx"`
+
+	// Kind thought - a character's thought (italics or single marks); attributed like a quote
+	Kind SegmentKind `json:"kind"`
+
+	// QuoteRef Number of the quotation or thought within the chapter (0 for narration)
 	QuoteRef int `json:"quoteRef"`
 
 	// SpeakerId Who speaks the quotation (absent - the narrator reads it)
@@ -1408,7 +1416,7 @@ type Segment struct {
 	Text          string `json:"text"`
 }
 
-// SegmentKind defines model for SegmentKind.
+// SegmentKind thought - a character's thought (italics or single marks); attributed like a quote
 type SegmentKind string
 
 // SystemInfo defines model for SystemInfo.

@@ -437,8 +437,9 @@ func (c *chapterContext) lines() []string {
 	return out
 }
 
-// marked renders paragraphs [from, to) with every quotation marked by its
-// number; context paragraphs [ctxFrom, from) are rendered plain.
+// marked renders paragraphs [from, to) with every quotation and thought
+// marked by its number (thoughts between asterisks); context paragraphs
+// [ctxFrom, from) are rendered plain.
 func marked(paras []store.Paragraph, segs []store.Segment, ctxFrom, from, to int) (context, text string, refs []int) {
 	byPara := map[int64][]store.Segment{}
 	for _, s := range segs {
@@ -471,6 +472,11 @@ func marked(paras []store.Paragraph, segs []store.Segment, ctxFrom, from, to int
 				seen[s.QuoteRef] = true
 				refs = append(refs, s.QuoteRef)
 				fmt.Fprintf(b, "[q%d]", s.QuoteRef)
+			}
+			if s.Kind == store.SegmentThought {
+				// Thoughts have no marks of their own (see the prompt).
+				b.WriteString("*" + s.Text + "*")
+				continue
 			}
 			b.WriteString(s.Text)
 		}

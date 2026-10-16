@@ -7,8 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func q(n int, text string) Part { return Part{Kind: Quote, Quote: n, Text: text} }
-func n(text string) Part        { return Part{Kind: Narration, Text: text} }
+func q(n int, text string) Part  { return Part{Kind: Quote, Quote: n, Text: text} }
+func n(text string) Part         { return Part{Kind: Narration, Text: text} }
+func th(n int, text string) Part { return Part{Kind: Thought, Quote: n, Text: text} }
 
 func TestCurlyDouble(t *testing.T) {
 	s := New(CurlyDouble)
@@ -18,10 +19,12 @@ func TestCurlyDouble(t *testing.T) {
 		q(2, "“Don’t ‘quote’ me.”"),
 	}, s.Paragraph("“Hello,” she said, and then, after a pause: “Don’t ‘quote’ me.”"))
 
-	// Punctuation-only narration between quotes is dropped.
-	assert.Equal(t, []Part{q(3, "“Yes!”"), q(4, "“No!”")}, s.Paragraph("“Yes!” — “No!”"))
+	// Punctuation-only narration between quotes stays with the quote
+	// before it: no character of the text is lost.
+	assert.Equal(t, []Part{q(3, "“Yes!” —"), q(4, "“No!”")}, s.Paragraph("“Yes!” — “No!”"))
+	assert.Equal(t, []Part{q(5, "— “Well”")}, s.Paragraph("— “Well”"))
 	assert.Equal(t, []Part{n("Plain narration.")}, s.Paragraph("Plain narration."))
-	assert.Equal(t, 4, s.Quotes())
+	assert.Equal(t, 5, s.Quotes())
 }
 
 func TestMultiParagraphQuote(t *testing.T) {
@@ -91,5 +94,76 @@ func TestChunk(t *testing.T) {
 	long := strings.Repeat("word ", 50) + "and then, " + strings.Repeat("more ", 30)
 	for _, c := range Chunk(long, 60) {
 		assert.LessOrEqual(t, len([]rune(c)), 60)
+	}
+}
+
+func TestMoreStyles(t *testing.T) {
+	s := New(StraightSingle)
+	assert.Equal(t, []Part{q(1, "'I don't know,'"), n("said Ann. 'Tis late, they'd say 'em all.")},
+		s.Paragraph("'I don't know,' said Ann. 'Tis late, they'd say 'em all."))
+
+	s = New(Guillemets)
+	assert.Equal(t, []Part{q(1, "«Come,»"), n("she said.")}, s.Paragraph("«Come,» she said."))
+	s = New(GuillemetsReversed)
+	assert.Equal(t, []Part{q(1, "»Come,«"), n("she said.")}, s.Paragraph("»Come,« she said."))
+	s = New(LowHigh)
+	assert.Equal(t, []Part{q(1, "„Komm“"), n(", sagte sie.")}, s.Paragraph("„Komm“, sagte sie."))
+
+	s = New(Dash)
+	assert.Equal(t, []Part{q(1, "—Hola"), n("—dijo él—."), q(2, "¿Cómo estás?")},
+		s.Paragraph("—Hola —dijo él—. ¿Cómo estás?"))
+	assert.Equal(t, []Part{n("It was well–known in 1990–2000.")}, s.Paragraph("It was well–known in 1990–2000."))
+}
+
+func TestThoughts(t *testing.T) {
+	text := "She stopped. This is wrong, she thought. It was very late."
+	span := func(sub string) Span {
+		at := strings.Index(text, sub)
+		if at < 0 {
+			t.Fatalf("%q not in the text", sub)
+		}
+		i := len([]rune(text[:at]))
+		return Span{i, i + len([]rune(sub))}
+	}
+	s := New(CurlyDouble)
+	got := s.Paragraph(text, span("This is wrong,"), span("very"))
+	assert.Equal(t, []Part{
+		n("She stopped."), th(1, "This is wrong,"),
+		{Kind: Narration, Text: "she thought. It was very late.", Emphasis: []Span{{20, 24}}},
+	}, []Part{got[0], {Kind: got[1].Kind, Quote: got[1].Quote, Text: got[1].Text}, got[2]})
+	assert.Equal(t, []Span{{0, 14}}, got[1].Emphasis)
+
+	// Single marks in a book with double ones: a thought (or quoted
+	// phrase); a single word or an elision is not.
+	s = New(CurlyDouble)
+	assert.Equal(t, []Part{
+		q(1, "“Fine,”"), n("he said."), th(2, "‘I should go,’"), n("he thought. The ‘plan’ failed, ‘twas sad."),
+	}, s.Paragraph("“Fine,” he said. ‘I should go,’ he thought. The ‘plan’ failed, ‘twas sad."))
+
+	// Two stressed words that end a sentence are a thought; two that do
+	// not, and italics inside a quotation, are not.
+	assert.True(t, isThought([]rune("Not again!")))
+	assert.False(t, isThought([]rune("very much")))
+	s = New(CurlyDouble)
+	text = "“Never ever again,” she said."
+	got = s.Paragraph(text, Span{1, 17})
+	assert.Equal(t, Quote, got[0].Kind)
+	assert.Equal(t, []Span{{1, 17}}, got[0].Emphasis)
+}
+
+func TestMoreStyleDetection(t *testing.T) {
+	for want, texts := range map[Style][]string{
+		StraightSingle:     {"'Run,' he said. 'Now.'", "It's 'em."},
+		Guillemets:         {"«Come,» she said. «Now.»"},
+		GuillemetsReversed: {"»Come,« she said. »Now.«"},
+		LowHigh:            {"„Komm“, sagte sie. „Jetzt.“"},
+		Dash:               {"—Hola —dijo.", "—Sí.", "—No.", "Narration."},
+	} {
+		var c StyleCounter
+		for _, x := range texts {
+			c.Add(x)
+		}
+		assert.Equal(t, want, c.Style(), want.String())
+		assert.Equal(t, want, ParseStyle(want.String()))
 	}
 }
