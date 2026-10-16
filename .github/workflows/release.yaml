@@ -56,4 +56,12 @@ jobs:
       - name: GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes "dist/audiobook-generator-${{ steps.version.outputs.version }}.tgz"
+          CHART: dist/audiobook-generator-${{ steps.version.outputs.version }}.tgz
+        # A release written by hand before the tag was pushed keeps its
+        # notes; the chart is only attached to it.
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$CHART" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes "$CHART"
+          fi
