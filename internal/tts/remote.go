@@ -232,7 +232,13 @@ var errUnlisted = errors.New("its voices could not be listed yet")
 // clone: the voice is one of the server's reference clips (cloned), not
 // one of its predefined voices.
 func (r *remote) clone(ctx context.Context, voice string) (bool, error) {
-	_, err := r.voices(ctx)
+	r.mu.Lock()
+	unlisted := r.fetched.IsZero()
+	r.mu.Unlock()
+	// Before a first listing, a remembered failure (e.g. of a listing
+	// while the server was busy) is not trusted: this request holds the
+	// engine's slot, so the server is more likely free now.
+	_, err := r.voices(ctx, unlisted)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.fetched.IsZero() {
@@ -255,14 +261,14 @@ const (
 // reference clips; OpenAI-compatible: /v1/audio/voices, as Kokoro-FastAPI
 // and others offer). After a failure the last listing is returned with
 // the error.
-func (r *remote) voices(ctx context.Context) ([]string, error) {
+func (r *remote) voices(ctx context.Context, retryFailed bool) ([]string, error) {
 	r.mu.Lock()
 	for {
 		switch {
 		case !r.fetched.IsZero() && time.Since(r.fetched) < voicesTTL:
 			defer r.mu.Unlock()
 			return slices.Clone(r.listed), nil
-		case r.listErr != nil && time.Since(r.failed) < listFailTTL:
+		case !retryFailed && r.listErr != nil && time.Since(r.failed) < listFailTTL:
 			defer r.mu.Unlock()
 			return r.known(), r.listErr
 		case r.listing != nil:
@@ -282,6 +288,15 @@ func (r *remote) voices(ctx context.Context) ([]string, error) {
 	done := make(chan struct{})
 	r.listing = done
 	r.mu.Unlock()
+	finished := false
+	defer func() { // also if fetch panics: waiters must not wait forever
+		if !finished {
+			r.mu.Lock()
+			r.listing = nil
+			close(done)
+			r.mu.Unlock()
+		}
+	}()
 
 	// Shared by every waiting caller: one that gives up must not cancel it.
 	listCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), listTimeout)
@@ -290,7 +305,7 @@ func (r *remote) voices(ctx context.Context) ([]string, error) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.listing = nil
+	r.listing, finished = nil, true
 	close(done)
 	if err != nil {
 		r.listErr, r.failed = fmt.Errorf("%s: %w", r.cfg.Name, err), time.Now()

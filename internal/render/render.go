@@ -4,6 +4,7 @@
 package render
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -238,6 +239,13 @@ func (s *style) key() string {
 		return ""
 	}
 	return fmt.Sprintf("|%s|%s|%t", s.emotion, s.mood, s.thought)
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // speech is the TTS request of an item.
@@ -478,12 +486,22 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	// (so a slow engine does not hold Kokoro's slots).
 	kokoro := make(chan struct{}, max(r.Concurrency, 1))
 	progressCh := make(chan struct{}, len(items))
+	var todo []int
 	for i, it := range items {
 		files[i] = it.file(cacheDir, i)
 		if _, err := os.Stat(files[i]); err == nil {
 			progressCh <- struct{}{}
-			continue
+		} else {
+			todo = append(todo, i)
 		}
+	}
+	// Other engines' pieces first (they wait for their engine, not for
+	// Kokoro), then Kokoro's in order.
+	slices.SortStableFunc(todo, func(a, b int) int {
+		return cmp.Compare(boolInt(items[a].engine == ""), boolInt(items[b].engine == ""))
+	})
+	for _, i := range todo {
+		it := items[i]
 		// In order: a Kokoro slot is taken before the request starts.
 		if it.engine == "" {
 			select {
@@ -530,6 +548,9 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 		progress(0.9 * float64(done) / float64(max(len(items), 1)))
 	}
 	if err := <-waitErr; err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil { // stopped before every piece was asked for
 		return err
 	}
 

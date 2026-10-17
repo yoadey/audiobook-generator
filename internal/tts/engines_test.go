@@ -277,7 +277,7 @@ func TestChatterboxUnlistedAndMoved(t *testing.T) {
 	e.mu.Lock()
 	e.failed = time.Time{}
 	e.mu.Unlock()
-	_, err = e.voices(ctx)
+	_, err = e.voices(ctx, false)
 	require.NoError(t, err)
 	mu.Lock()
 	refs = []string{"anna.wav"}
@@ -286,7 +286,7 @@ func TestChatterboxUnlistedAndMoved(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []int16{7}, samples16(t, pcm))
 	assert.Equal(t, []string{"predefined", "clone"}, modes)
-	vs, err := e.voices(ctx)
+	vs, err := e.voices(ctx, false)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"anna.wav"}, vs, "listed again after the miss")
 	assert.NotEmpty(t, r.Fingerprint("cb:anna.wav"))

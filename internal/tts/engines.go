@@ -264,7 +264,7 @@ func (r *Router) Engines(ctx context.Context) []Engine {
 	for _, n := range r.names {
 		e := r.engines[n]
 		info := Engine{Name: n, Kind: e.cfg.Kind, Emotions: e.expressive(), Speed: *e.cfg.Speed}
-		vs, err := e.voices(ctx)
+		vs, err := e.voices(ctx, false)
 		if err != nil {
 			info.Err = err.Error()
 		}
