@@ -36,7 +36,11 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 	touch := false
 	if v := req.Body.PrepareChapters; v != nil && *v != b.PrepareChapters {
 		// The preparation changes what is said: renders made with (or
-		// without) it are outdated.
+		// without) it are outdated. Touched before the change too, so a
+		// failure after it is not lost to a retry.
+		if err := s.Store.TouchBookAudio(ctx, b.ID); err != nil {
+			return nil, err
+		}
 		fields["PrepareChapters"] = *v
 		touch = true
 	}
@@ -73,7 +77,7 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 		}
 	}
 	if touch {
-		if err := s.Store.TouchBookVoices(ctx, b.ID); err != nil {
+		if err := s.Store.TouchBookAudio(ctx, b.ID); err != nil {
 			return nil, err
 		}
 	}

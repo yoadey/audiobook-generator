@@ -145,6 +145,26 @@ func TestPrepareChapter(t *testing.T) {
 	})
 }
 
+func TestPrepareFromScratchClearsLeftovers(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		pr, srv, b, cs := setup(t, s)
+		ch := cs[1]
+		srv.Respond = func(llmtest.Request) llmtest.Reply { return reply(t, map[string]any{}) }
+		// What an earlier preparation left (a merged chapter keeps it).
+		paras, segs, err := s.ChapterText(ctx, ch.ID)
+		require.NoError(t, err)
+		require.NoError(t, s.DB().Model(&store.Paragraph{}).Where("id = ?", paras[1].ID).Update("mood", "tense").Error)
+		require.NoError(t, s.DB().Model(&store.Segment{}).Where("id = ?", segs[1].ID).
+			Update("pauses", "[[1,500]]").Error)
+		require.NoError(t, pr.Start(ctx, b, &ch, false, 0))
+		require.NoError(t, pr.Run(ctx, ch.ID, func(float64) {}))
+		st, err := s.PrepStats(ctx, ch.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.PrepCounts{}, st)
+	})
+}
+
 func TestPrepareResumesAndStopsWhenReset(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
 		ctx := context.Background()

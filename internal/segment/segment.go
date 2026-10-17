@@ -7,6 +7,7 @@ package segment
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Style is the quotation mark convention of a book.
@@ -415,7 +416,7 @@ func tagWords(r []rune, n int) []string {
 			break
 		}
 		out = append(out, w)
-		if strings.ContainsAny(w[len(w)-1:], ",.;:!?—–") {
+		if last, _ := utf8.DecodeLastRuneInString(w); strings.ContainsRune(",.;:!?—–", last) {
 			break
 		}
 	}

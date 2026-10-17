@@ -187,6 +187,13 @@ func (s *Store) TouchBookVoices(ctx context.Context, bookID int64) error {
 		Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
 }
 
+// TouchBookAudio bumps the voice revision of all of a book's chapters
+// (what is said changed throughout).
+func (s *Store) TouchBookAudio(ctx context.Context, bookID int64) error {
+	return s.db.WithContext(ctx).Model(&Chapter{}).Where("book_id = ?", bookID).
+		Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
+}
+
 // Speaker is a recent speaker of a book.
 type Speaker struct {
 	CharacterID int64

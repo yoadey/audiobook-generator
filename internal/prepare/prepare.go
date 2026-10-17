@@ -114,7 +114,11 @@ func (p *Preparer) Start(ctx context.Context, b *store.Book, c *store.Chapter, f
 	if err != nil {
 		return err
 	}
-	if !fresh {
+	if fresh {
+		if err := p.Store.ClearPreparation(ctx, c.ID); err != nil {
+			return err
+		}
+	} else {
 		ok, err := p.Store.TransitionPrep(ctx, c.ID, store.PrepQueued, map[string]any{"prep_error": ""},
 			store.PrepFailed, store.PrepQueued, store.PrepRunning)
 		if err != nil || !ok {

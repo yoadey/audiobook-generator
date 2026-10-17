@@ -93,15 +93,28 @@ func TestPreparationAndSuggestions(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, book.PrepareChapters)
 
-		// Turning the preparation on outdates the book's audio.
-		before, err := s.GetChapter(ctx, ids[1])
-		require.NoError(t, err)
+		// Not while the book does not ask for it.
+		require.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/chapters/"+itoa(ids[1])+"/preparation",
+			nil, nil))
+
+		// Turning the preparation on outdates all of the book's audio,
+		// chapters without quotations too.
+		revs := func() []int {
+			var out []int
+			for _, cid := range ids {
+				ch, err := s.GetChapter(ctx, cid)
+				require.NoError(t, err)
+				out = append(out, ch.VoiceRev)
+			}
+			return out
+		}
+		before := revs()
 		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/books/"+id,
 			map[string]any{"prepareChapters": true}, &book))
 		assert.True(t, book.PrepareChapters)
-		after, err := s.GetChapter(ctx, ids[1])
-		require.NoError(t, err)
-		assert.Greater(t, after.VoiceRev, before.VoiceRev)
+		for i, r := range revs() {
+			assert.Greater(t, r, before[i], "chapter %d", i)
+		}
 
 		var prep api.ChapterPreparation
 		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, "/api/chapters/"+itoa(ids[1])+"/preparation",

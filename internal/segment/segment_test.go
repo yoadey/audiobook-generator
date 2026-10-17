@@ -229,3 +229,8 @@ func TestEpigraphsAreNoDashDialogue(t *testing.T) {
 	}
 	assert.Equal(t, CurlyDouble, c.Style())
 }
+
+func TestTagWordsStopAtDash(t *testing.T) {
+	assert.Equal(t, []string{"Erin—"}, tagWords([]rune("Erin— she thought about"), 4))
+	assert.Equal(t, []string{"she", "thought,"}, tagWords([]rune("she thought, and then"), 4))
+}

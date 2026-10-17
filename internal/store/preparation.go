@@ -119,20 +119,27 @@ func (s *Store) ResetPreparation(ctx context.Context, chapterIDs ...int64) error
 		return nil
 	}
 	return s.Tx(ctx, func(tx *Store) error {
-		db := tx.db
-		if err := db.Model(&Paragraph{}).Where("chapter_id IN ? AND mood <> ''", chapterIDs).
-			Update("mood", "").Error; err != nil {
+		if err := tx.ClearPreparation(ctx, chapterIDs...); err != nil {
 			return err
 		}
-		if err := db.Model(&Segment{}).Where("chapter_id IN ? AND (pauses <> '' OR spoken_as <> '')", chapterIDs).
-			Updates(map[string]any{"pauses": "", "spoken_as": ""}).Error; err != nil {
-			return err
-		}
-		return db.Model(&Chapter{}).Where("id IN ?", chapterIDs).Updates(map[string]any{
+		return tx.db.Model(&Chapter{}).Where("id IN ?", chapterIDs).Updates(map[string]any{
 			"prep_status": PrepNone, "prep_error": "", "prep_part": 0, "prepared_at": nil,
 			"voice_rev": gorm.Expr("voice_rev + 1"),
 		}).Error
 	})
+}
+
+// ClearPreparation removes the moods, pauses and spoken forms of chapters
+// (left over from an earlier preparation when one starts from scratch: a
+// merged, split or restored chapter keeps them).
+func (s *Store) ClearPreparation(ctx context.Context, chapterIDs ...int64) error {
+	db := s.db.WithContext(ctx)
+	if err := db.Model(&Paragraph{}).Where("chapter_id IN ? AND mood <> ''", chapterIDs).
+		Update("mood", "").Error; err != nil {
+		return err
+	}
+	return db.Model(&Segment{}).Where("chapter_id IN ? AND (pauses <> '' OR spoken_as <> '')", chapterIDs).
+		Updates(map[string]any{"pauses": "", "spoken_as": ""}).Error
 }
 
 // MarkPrepared finishes a running preparation.

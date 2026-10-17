@@ -77,12 +77,12 @@ export function PreparationBar({
             {open ? 'Hide spots' : 'Show spots'}
           </Anchor>
         )}
-        {(p.status === 'none' || p.status === 'failed') && (
+        {enabled && (p.status === 'none' || p.status === 'failed') && (
           <Button size="compact-xs" loading={start.isPending} onClick={() => start.mutate(false)}>
             Prepare
           </Button>
         )}
-        {p.status === 'done' && (
+        {enabled && p.status === 'done' && (
           <Button
             size="compact-xs"
             variant="subtle"

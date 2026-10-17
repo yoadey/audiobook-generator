@@ -47,6 +47,9 @@ func (s *Server) StartPreparation(ctx context.Context, req StartPreparationReque
 	if c.Excluded {
 		return StartPreparation409JSONResponse{Message: "the chapter is not narrated"}, nil
 	}
+	if !b.PrepareChapters {
+		return StartPreparation409JSONResponse{Message: "the book does not prepare its chapters (see Narrator)"}, nil
+	}
 	force := req.Body != nil && req.Body.Force != nil && *req.Body.Force
 	switch err := s.Preparer.Start(ctx, b, c, force, manualAttributionPriority); {
 	case errors.Is(err, prepare.ErrBusy):
