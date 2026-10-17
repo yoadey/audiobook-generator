@@ -157,6 +157,13 @@ func run() error {
 	if err := render.ReconcileFiles(ctx, st, cfg.DataDir, log); err != nil {
 		log.Error("check audio files", "err", err)
 	}
+	// Books whose engine changed with the deployment get their characters
+	// cast from it.
+	if n, err := caster.Reconcile(ctx); err != nil {
+		log.Error("recast voices of other engines", "err", err)
+	} else if n > 0 {
+		log.Info("recasting books whose engine changed", "books", n)
+	}
 	runnerDone := make(chan struct{})
 	go func() {
 		defer close(runnerDone)

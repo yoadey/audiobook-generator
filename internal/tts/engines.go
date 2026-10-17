@@ -105,8 +105,8 @@ var EngineVoiceRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // Validate checks an engine configuration and fills in defaults.
 func (c *EngineConfig) Validate() error {
-	if !engineNameRe.MatchString(c.Name) {
-		return fmt.Errorf("engine name %q: lower-case letters, digits and dashes", c.Name)
+	if !engineNameRe.MatchString(c.Name) || c.Name == KokoroEngine {
+		return fmt.Errorf("engine name %q: lower-case letters, digits and dashes, not %q", c.Name, KokoroEngine)
 	}
 	switch c.Kind {
 	case KindOpenAI, KindChatterbox:
@@ -319,6 +319,9 @@ const chatterboxDefaultVoice = "Emily.wav"
 func (r *Router) ResolveDefault(voice string) (string, error) {
 	if r.Configured(voice) {
 		return voice, nil
+	}
+	if _, _, ok := SplitVoice(voice); ok {
+		return "", fmt.Errorf("the engine of the default voice %q is not configured", voice)
 	}
 	for _, n := range r.names {
 		if v := r.DefaultVoice(n); v != "" {

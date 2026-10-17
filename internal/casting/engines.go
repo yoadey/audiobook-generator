@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 
@@ -34,7 +35,7 @@ var engineGenders = func() map[string]store.Gender {
 
 // genderTagRe finds a gender in a voice's file name: "f_anna.wav",
 // "anna-female.wav", "male_old_wizard.wav".
-var genderTagRe = regexp.MustCompile(`(?i)(?:^|[^a-z])(f|m|female|male|woman|man)(?:[^a-z]|$)`)
+var genderTagRe = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(f|m|female|male|woman|man)(?:[^a-z0-9]|$)`)
 
 // describeEngine describes an engine's voice for casting: English, its
 // gender from the known voices or a tag in its name (else unknown, so
@@ -45,7 +46,7 @@ func describeEngine(engine, name string) BaseVoice {
 		v.Gender, v.InCatalog = g, true
 		return v
 	}
-	if m := genderTagRe.FindStringSubmatch(name); m != nil {
+	if m := genderTagRe.FindStringSubmatch(strings.TrimSuffix(name, path.Ext(name))); m != nil {
 		switch strings.ToLower(m[1]) {
 		case "f", "female", "woman":
 			v.Gender = store.GenderFemale

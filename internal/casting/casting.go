@@ -236,18 +236,19 @@ func (c *Caster) Run(ctx context.Context, bookID int64, progress func(float64)) 
 		store.CastingQueued, store.CastingRunning); err != nil || !ok {
 		return err
 	}
-	// The characters speak with the narrator's engine.
-	narratorVoice, _ := Narrator(b, c.DefaultVoice)
-	voices, err := c.Catalog.VoicesFor(ctx, narratorVoice)
-	if err != nil {
-		return err // the server is needed to know what it offers
-	}
-	castable := Castable(voices)
-	if len(castable) == 0 {
-		return jobs.Permanent(fmt.Errorf("the engine of the narrator (%s) offers no English voices of a known gender",
-			tts.EngineOf(narratorVoice)))
-	}
 	for {
+		// The characters speak with the narrator's engine (asked every
+		// round: the book may have switched engines meanwhile).
+		narratorVoice, _ := Narrator(b, c.DefaultVoice)
+		voices, err := c.Catalog.VoicesFor(ctx, narratorVoice)
+		if err != nil {
+			return err // the server is needed to know what it offers
+		}
+		castable := Castable(voices)
+		if len(castable) == 0 {
+			return jobs.Permanent(fmt.Errorf("the engine of the narrator (%s) offers no English voices of a known gender",
+				tts.EngineOf(narratorVoice)))
+		}
 		if err := c.cast(ctx, b, castable, progress); err != nil {
 			return err
 		}
@@ -289,6 +290,18 @@ func (c *Caster) cast(ctx context.Context, b *store.Book, castable []BaseVoice, 
 		ids[i] = ch.ID
 	}
 	if err := c.Store.PromoteCharacters(ctx, ids...); err != nil {
+		return err
+	}
+	// Voices cast from another engine (the book switched, or a casting
+	// was running when it did) are cast again.
+	engine := tts.EngineOf(narratorVoice)
+	var stale []int64
+	for _, ch := range chars {
+		if ch.VoiceRecipe != "" && !ch.VoiceManual && tts.EngineOf(ch.VoiceRecipe) != engine {
+			stale = append(stale, ch.ID)
+		}
+	}
+	if err := c.Store.ClearCastVoices(ctx, stale...); err != nil {
 		return err
 	}
 	if chars, err = c.Store.BookCharacters(ctx, bookID); err != nil {
@@ -566,4 +579,40 @@ func candidates(vs []BaseVoice, mix bool) []Recipe {
 		}
 	}
 	return out
+}
+
+// Reconcile starts the casting of books whose cast voices belong to
+// another engine than their narrator's (the deployment changed its
+// engines or default voice); it returns how many it started.
+func (c *Caster) Reconcile(ctx context.Context) (int, error) {
+	started := 0
+	for offset := 0; ; offset += 100 {
+		books, _, err := c.Store.ListBooks(ctx, offset, 100)
+		if err != nil {
+			return started, err
+		}
+		for i := range books {
+			b := &books[i]
+			if b.AnalysisStatus != store.AnalysisDone || Active(b) {
+				continue
+			}
+			voice, _ := Narrator(b, c.DefaultVoice)
+			chars, err := c.Store.BookCharacters(ctx, b.ID)
+			if err != nil {
+				return started, err
+			}
+			if !slices.ContainsFunc(chars, func(ch store.Character) bool {
+				return ch.VoiceRecipe != "" && !ch.VoiceManual && tts.EngineOf(ch.VoiceRecipe) != tts.EngineOf(voice)
+			}) {
+				continue
+			}
+			if err := c.Start(ctx, b, false); err != nil {
+				return started, err
+			}
+			started++
+		}
+		if len(books) < 100 {
+			return started, nil
+		}
+	}
 }

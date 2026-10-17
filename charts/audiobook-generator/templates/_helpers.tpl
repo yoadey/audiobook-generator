@@ -242,6 +242,17 @@ true
 {{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) (not .Values.tts.engines) }}
 {{- fail "no speech engine: enable tts.kokoro, set tts.externalUrl, or configure tts.chatterbox or tts.engines" }}
 {{- end }}
+{{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) }}
+{{- $default := false }}
+{{- range .Values.tts.engines }}
+{{- if or (eq .kind "chatterbox") .defaultVoice .voices }}
+{{- $default = true }}
+{{- end }}
+{{- end }}
+{{- if not $default }}
+{{- fail "without Kokoro, an engine needs a defaultVoice (or voices) to narrate new books" }}
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{/* Database environment variables of the app container. */}}

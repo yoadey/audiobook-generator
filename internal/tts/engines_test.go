@@ -87,6 +87,7 @@ func TestEngineConfig(t *testing.T) {
 		"url":     {Name: "x", Kind: KindOpenAI, URL: "x:80"},
 		"variant": {Name: "x", Kind: KindChatterbox, URL: "http://x", Variant: "flash"},
 		"voice":   {Name: "x", Kind: KindOpenAI, URL: "http://x", Voices: []string{"a b"}},
+		"kokoro":  {Name: "kokoro", Kind: KindOpenAI, URL: "http://x"},
 	} {
 		assert.Error(t, c.Validate(), name)
 	}
@@ -359,4 +360,6 @@ func TestRouterWithoutKokoro(t *testing.T) {
 	def, err = r.ResolveDefault("af_heart")
 	require.NoError(t, err)
 	assert.Equal(t, "af_heart", def, "Kokoro's voice while it is there")
+	_, err = r.ResolveDefault("orpheus:tara")
+	assert.Error(t, err, "a default voice of an unconfigured engine is a mistake")
 }

@@ -72,6 +72,9 @@ func PoolVoice(voices []BaseVoice, narrator Recipe, g store.Gender, age store.Ag
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(key))
 	v := fit[h.Sum64()%uint64(len(fit))]
+	if !mixable(fit) {
+		return Recipe{{Voice: v.ID, Weight: 1}}, 1 // other engines keep their pace
+	}
 	return Recipe{{Voice: v.ID, Weight: 1}}, AgeSpeed(age)
 }
 

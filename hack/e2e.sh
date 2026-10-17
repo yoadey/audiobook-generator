@@ -215,7 +215,9 @@ curl -fsS -X PATCH -H 'Content-Type: application/json' -d '{"narratorVoice":""}'
 # Switching cast the characters again: wait for it (the export below
 # carries their voices).
 for _ in $(seq 1 120); do
-  curl -fsS "localhost:18080/api/books/$id" | grep -q '"castingStatus":"done"' && break
+  status="$(curl -fsS "localhost:18080/api/books/$id")"
+  grep -q '"castingStatus":"done"' <<<"$status" && break
+  grep -q '"castingStatus":"failed"' <<<"$status" && break
   sleep 1
 done
 curl -fsS "localhost:18080/api/books/$id" | grep -q '"castingStatus":"done"'

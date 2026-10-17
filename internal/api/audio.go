@@ -274,11 +274,15 @@ func (s *Server) ListVoices(ctx context.Context, _ ListVoicesRequestObject) (Lis
 // engineMissing tells why a voice cannot be used: its engine is not
 // configured ("" when it can, or the TTS cannot tell).
 func (s *Server) engineMissing(voice string) string {
+	voice = strings.TrimSpace(voice)
 	c, ok := s.TTS.(interface{ Configured(voice string) bool })
-	if !ok || c.Configured(strings.TrimSpace(voice)) {
+	if voice == "" || !ok || c.Configured(voice) {
 		return ""
 	}
-	engine, _, _ := tts.SplitVoice(strings.TrimSpace(voice))
+	engine, _, isEngine := tts.SplitVoice(voice)
+	if !isEngine {
+		return "Kokoro is not part of this deployment: choose a voice of another engine"
+	}
 	return fmt.Sprintf("the engine %q of this voice is not configured (ABG_TTS_ENGINES)", engine)
 }
 

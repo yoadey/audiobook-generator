@@ -71,6 +71,8 @@ export function NarratorSettings({ book }: { book: Book }) {
     ...(engines.data ?? []).map((e) => ({
       value: e.name,
       label: `${e.name}${e.variant ? ` (${e.variant})` : ''}`,
+      // An engine without a voice to start from cannot narrate.
+      disabled: !e.defaultVoice && e.voices.length === 0,
     })),
   ];
   if (engine !== KOKORO && !engineInfo) {
