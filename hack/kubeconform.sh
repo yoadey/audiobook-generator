@@ -12,6 +12,7 @@ modes=(
   "--set database.type=postgres --set database.postgres.mode=cnpg"
   "--set tts.kokoro.enabled=false --set tts.externalUrl=http://tts:8880 --set persistence.enabled=false"
   "--set ingress.enabled=true --set metrics.serviceMonitor.enabled=true --set networkPolicy.enabled=true"
+  "--set tts.chatterbox.enabled=true --set tts.chatterbox.variant=nano"
   "--set tts.chatterbox.enabled=true --set networkPolicy.enabled=true --set tts.engines[0].name=orpheus --set tts.engines[0].kind=openai --set tts.engines[0].url=http://orpheus:5005"
   "--set backup.litestream.enabled=true --set backup.litestream.s3.bucket=b --set backup.litestream.s3.existingSecret=s --set auth.oidc.enabled=true --set auth.oidc.issuer=https://id --set auth.oidc.clientId=c --set publicUrl=https://abg"
   "--set llm.providers[0].name=g --set llm.providers[0].baseUrl=https://llm --set llm.providers[0].model=m --set llm.providers[0].apiKeySecret.name=s --set llm.providers[0].apiKeySecret.key=k"

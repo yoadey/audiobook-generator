@@ -63,6 +63,27 @@ tests:
           path: spec.ports[0].port
           value: 8004
 
+  - it: runs Nano from the patched image of the release
+    template: templates/chatterbox.yaml
+    chart:
+      appVersion: 9.9.9
+    set:
+      tts.chatterbox.enabled: true
+      tts.chatterbox.variant: nano
+    asserts:
+      - documentIndex: 0
+        matchRegex:
+          path: data["config.yaml"]
+          pattern: "repo_id: chatterbox-nano"
+      - documentIndex: 2
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/yoadey/audiobook-generator-chatterbox-nano:9.9.9
+      - documentIndex: 2
+        equal:
+          path: spec.template.spec.initContainers[0].image
+          value: ghcr.io/yoadey/audiobook-generator-chatterbox-nano:9.9.9
+
   - it: rejects an unknown Chatterbox variant
     template: templates/chatterbox.yaml
     set:

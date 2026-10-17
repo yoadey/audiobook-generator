@@ -28,6 +28,10 @@ const (
 	VariantOriginal = "original"
 	// VariantTurbo (350M) is faster but ignores it.
 	VariantTurbo = "turbo"
+	// VariantNano (110M) is Turbo's smaller sibling, the only one near real
+	// time on CPU; it ignores exaggeration too. Needs the patched server
+	// image (images/chatterbox-nano).
+	VariantNano = "nano"
 )
 
 // EngineConfig configures an additional speech engine. Its voices are
@@ -40,7 +44,7 @@ type EngineConfig struct {
 	// Model is sent as "model" to an OpenAI-compatible engine (default
 	// "tts-1").
 	Model string `json:"model,omitempty"`
-	// Variant of a Chatterbox engine: original (default) or turbo.
+	// Variant of a Chatterbox engine: original (default), turbo or nano.
 	Variant string `json:"variant,omitempty"`
 	// Concurrency bounds parallel requests to this engine (default 1).
 	Concurrency int `json:"concurrency,omitempty"`
@@ -121,8 +125,9 @@ func (c *EngineConfig) Validate() error {
 	case c.Kind != KindChatterbox:
 	case c.Variant == "":
 		c.Variant = VariantOriginal
-	case c.Variant != VariantOriginal && c.Variant != VariantTurbo:
-		return fmt.Errorf("engine %s: variant must be %q or %q, got %q", c.Name, VariantOriginal, VariantTurbo, c.Variant)
+	case c.Variant != VariantOriginal && c.Variant != VariantTurbo && c.Variant != VariantNano:
+		return fmt.Errorf("engine %s: variant must be %q, %q or %q, got %q",
+			c.Name, VariantOriginal, VariantTurbo, VariantNano, c.Variant)
 	}
 	if c.Concurrency == 0 {
 		c.Concurrency = 1

@@ -43,6 +43,23 @@ jobs:
             COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # devnen's Chatterbox-TTS-Server with Nano, the chart's image for
+      # tts.chatterbox.variant nano.
+      - id: nano-meta
+        uses: docker/metadata-action@v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}-chatterbox-nano
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - uses: docker/build-push-action@v7.4.0
+        with:
+          context: images/chatterbox-nano
+          push: true
+          tags: ${{ steps.nano-meta.outputs.tags }}
+          labels: ${{ steps.nano-meta.outputs.labels }}
+          cache-from: type=gha,scope=nano
+          cache-to: type=gha,mode=max,scope=nano
       - uses: azure/setup-helm@v5.0.1
         with:
           version: ${{ env.HELM_VERSION }}

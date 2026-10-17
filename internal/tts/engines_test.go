@@ -75,6 +75,12 @@ func TestEngineConfig(t *testing.T) {
 	assert.Equal(t, Duration(90*time.Second), es[0].Timeout)
 	assert.False(t, *es[0].Speed, "Chatterbox paces itself")
 
+	for _, v := range []string{VariantTurbo, VariantNano} {
+		c := EngineConfig{Name: "x", Kind: KindChatterbox, URL: "http://x", Variant: v}
+		require.NoError(t, c.Validate(), v)
+		assert.Equal(t, v, c.Variant)
+	}
+
 	for name, c := range map[string]EngineConfig{
 		"name":    {Name: "Big", Kind: KindOpenAI, URL: "http://x"},
 		"kind":    {Name: "x", Kind: "piper", URL: "http://x"},
@@ -194,6 +200,7 @@ func TestRouterTurboAndOpenAI(t *testing.T) {
 	defer other.Close()
 	r, err := NewRouter(New("http://kokoro", time.Second), []EngineConfig{
 		{Name: "turbo", Kind: KindChatterbox, URL: srv.URL, Variant: VariantTurbo},
+		{Name: "nano", Kind: KindChatterbox, URL: srv.URL, Variant: VariantNano},
 		{Name: "orpheus", Kind: KindOpenAI, URL: other.URL, Model: "orpheus", Gain: 2},
 	})
 	require.NoError(t, err)
@@ -203,6 +210,11 @@ func TestRouterTurboAndOpenAI(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.NotContains(t, got[0], "exaggeration")
+	assert.False(t, r.Expressive("nano:Emily.wav"), "Nano ignores exaggeration")
+	_, err = r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "nano:Emily.wav", Emotion: "angry"})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.NotContains(t, got[1], "exaggeration")
 
 	assert.True(t, r.TakesSpeed("orpheus:tara"))
 	pcm, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "orpheus:tara", Speed: 1.1})
@@ -211,8 +223,9 @@ func TestRouterTurboAndOpenAI(t *testing.T) {
 	assert.Equal(t, map[string]any{"model": "orpheus", "input": "Hi.", "voice": "tara", "response_format": "wav",
 		"speed": 1.1}, openai)
 	es := r.Engines(ctx)
-	require.Len(t, es, 2)
-	assert.Equal(t, []string{"leo", "tara"}, es[0].Voices)
+	require.Len(t, es, 3)
+	assert.Equal(t, "orpheus", es[1].Name, "sorted by name")
+	assert.Equal(t, []string{"leo", "tara"}, es[1].Voices)
 
 	_, err = NewRouter(New("http://kokoro", time.Second), []EngineConfig{
 		{Name: "a", Kind: KindOpenAI, URL: "http://a"}, {Name: "a", Kind: KindOpenAI, URL: "http://b"},
