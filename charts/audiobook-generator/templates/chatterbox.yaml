@@ -1,8 +1,15 @@
 {{- if .Values.tts.chatterbox.enabled }}
 {{- $c := .Values.tts.chatterbox }}
-{{- if not (has $c.variant (list "original" "turbo")) }}
-{{- fail "tts.chatterbox.variant must be original or turbo" }}
+{{- $repoIds := dict "original" "chatterbox" "turbo" "chatterbox-turbo" "nano" "chatterbox-nano" }}
+{{- if not (hasKey $repoIds $c.variant) }}
+{{- fail "tts.chatterbox.variant must be original, turbo or nano" }}
 {{- end }}
+{{- /* devnen's server cannot load Nano: it runs the patched image built from images/chatterbox-nano. */}}
+{{- $img := $c.image }}
+{{- if eq $c.variant "nano" }}
+{{- $img = $c.nanoImage }}
+{{- end }}
+{{- $image := printf "%s:%s" $img.repository ($img.tag | default .Chart.AppVersion) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,7 +24,7 @@ data:
       host: 0.0.0.0
       port: 8004
     model:
-      repo_id: {{ ternary "chatterbox" "chatterbox-turbo" (eq $c.variant "original") }}
+      repo_id: {{ get $repoIds $c.variant }}
     tts_engine:
       device: auto
       predefined_voices_path: voices
@@ -99,8 +106,8 @@ spec:
         {{- toYaml $c.podSecurityContext | nindent 8 }}
       initContainers:
         - name: config
-          image: {{ printf "%s:%s" $c.image.repository $c.image.tag }}
-          imagePullPolicy: {{ $c.image.pullPolicy }}
+          image: {{ $image }}
+          imagePullPolicy: {{ $img.pullPolicy }}
           securityContext:
             {{- toYaml $c.securityContext | nindent 12 }}
           command: [sh, -c, "cp /config/config.yaml /state/config.yaml && mkdir -p /state/reference_audio /state/hf_cache /state/model_cache"]
@@ -111,8 +118,8 @@ spec:
               mountPath: /state
       containers:
         - name: chatterbox
-          image: {{ printf "%s:%s" $c.image.repository $c.image.tag }}
-          imagePullPolicy: {{ $c.image.pullPolicy }}
+          image: {{ $image }}
+          imagePullPolicy: {{ $img.pullPolicy }}
           securityContext:
             {{- toYaml $c.securityContext | nindent 12 }}
           env:

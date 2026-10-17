@@ -112,6 +112,21 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  nano-image:
+    name: Chatterbox Nano image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
+      # Fails when patch_nano.py no longer matches the server's code.
+      - uses: docker/build-push-action@v7.4.0
+        with:
+          context: images/chatterbox-nano
+          push: false
+          tags: audiobook-generator-chatterbox-nano:ci
+          cache-from: type=gha,scope=nano
+          cache-to: type=gha,mode=max,scope=nano
+
   e2e:
     name: E2E (kind, ${{ matrix.database }})
     runs-on: ubuntu-latest

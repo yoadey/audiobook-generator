@@ -52,7 +52,7 @@ and `tts.chatterbox`):
 | `name` | Prefix of its voices: lower-case letters, digits, dashes |
 | `kind` | `chatterbox` (Chatterbox-TTS-Server) or `openai` (any OpenAI-compatible `/v1/audio/speech` returning WAV) |
 | `url` | Base URL |
-| `variant` | Chatterbox only: `original` (default; acts emotions) or `turbo` (faster, ignores them) — must match the server's model |
+| `variant` | Chatterbox only: `original` (default; acts emotions), `turbo` (faster, ignores them) or `nano` (fastest, ignores them; needs the patched image below) — must match the server's model |
 | `model` | OpenAI-compatible only: `model` sent (default `tts-1`) |
 | `concurrency` | Parallel requests (default 1) |
 | `timeout` | Per request (default `10m`) |
@@ -70,7 +70,22 @@ off by default): image `ghcr.io/devnen/chatterbox-tts-server`, pinned by
 commit (`sha-915ae28-cpu`; use the `-nvidia`, `-cu128`, `-cu130` or `-rocm`
 tag and a GPU resource for real use), a volume for the model (downloaded
 from Hugging Face on the first start) and the reference clips, and its
-`config.yaml` from the values (model by `variant`). Upload reference clips
+`config.yaml` from the values (model by `variant`).
+
+devnen's server cannot load Nano (its issue #162), so `variant: nano`
+runs `tts.chatterbox.nanoImage`, built from `images/chatterbox-nano` and
+released with the app (`ghcr.io/yoadey/audiobook-generator-chatterbox-nano`,
+tag = app version): devnen's CPU image, upstream chatterbox at a pinned
+commit, and `patch_nano.py`, which adds the `chatterbox-nano` model
+selector (Turbo's class with `nano=True`) and casts the reference clip
+back to float32 (numpy 2 in devnen's image otherwise turns it float64
+and cloning fails). Every replacement of the patch must match exactly
+once, so a changed server fails the image build (CI builds it on every
+PR) rather than quietly loading Turbo. Bump the base image and
+`CHATTERBOX_REF` together by hand. CPU only: for a GPU use `turbo` or
+`original` with devnen's GPU images.
+
+Upload reference clips
 (10–30 s of clean speech, WAV or MP3) through the server's own UI
 (`kubectl port-forward svc/<release>-chatterbox 8004`) or
 `POST /upload_reference`; they appear as voices of the engine (on the
@@ -121,6 +136,19 @@ there is no Intel GPU (XPU/OpenVINO) path. Reported numbers
 | Original, RTX 3060/4060 (stock) | ~1.5–4× real time | ~25–60 h |
 | Original, RTX 3090/4090, optimised (vLLM fork) | ~10–30× real time | ~3–12 h |
 | Nano, 8 CPU cores (vendor claim) | ~3× real time | ~11–15 h on 3 nodes |
+
+Measured on the cluster (October 2026, one 4-vCPU worker with AVX2, CPU
+only, model loaded, compute time ÷ audio length; lower is faster):
+
+| Engine | Factor |
+|---|---|
+| Kokoro (Kokoro-FastAPI) | 0.23 |
+| Nano | 0.9 |
+| Turbo | 2.1 |
+
+A VM without AVX2 (Proxmox's default CPU type) is about twice as slow
+(Nano 2.0, with the library and through the patched server alike), so
+pin Chatterbox to a node whose CPU type passes AVX2 through.
 
 So on the cluster's CPUs Chatterbox is only sensible for a few main
 characters' lines (a small share of a book) or with Nano/Turbo, which do
