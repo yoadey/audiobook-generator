@@ -10,6 +10,7 @@ kubelet starts it again (a broken download is resumed).
 
 import io
 import logging
+import math
 import os
 import threading
 
@@ -24,6 +25,11 @@ REVISION = os.environ.get("MODEL_REVISION") or None
 DTYPE = {"float32": torch.float32, "bfloat16": torch.bfloat16}[os.environ.get("DTYPE", "float32")]
 THREADS = int(os.environ.get("THREADS", "0") or 0)
 MAX_SECONDS = 29.0  # Chatterbox clones from clips of at most 30 s
+# The 12Hz codec makes 12.5 tokens per second of speech (24 kHz, 1920
+# samples per token). Generating no more than is kept stops a run that does
+# not end (it once grew to the pod's memory limit after 16 minutes).
+TOKENS_PER_SECOND = 12.5
+MAX_NEW_TOKENS = math.ceil(MAX_SECONDS * TOKENS_PER_SECOND)
 
 log = logging.getLogger("voice-design")
 logging.basicConfig(level=logging.INFO)
@@ -76,7 +82,7 @@ def design(req: Design):
     with busy:
         torch.manual_seed(req.seed)
         wavs, sr = model.generate_voice_design(
-            text=req.text, instruct=req.description, language=req.language, max_new_tokens=2048
+            text=req.text, instruct=req.description, language=req.language, max_new_tokens=MAX_NEW_TOKENS
         )
     audio = np.asarray(wavs[0], dtype=np.float32).reshape(-1)[: int(MAX_SECONDS * sr)]
     if audio.size == 0:
