@@ -254,22 +254,127 @@ func cleanSay(s string) string {
 	return strings.Join(strings.Fields(store.CleanText(s)), " ")
 }
 
-var proseRe = regexp.MustCompile(`^[\p{Ll}]+(?:[\s,'’-]+[\p{Ll}]+)*$`)
+// Abbreviations a spot may hold: read as words, never words themselves
+// (with or without their period), and those that are only abbreviations
+// with their period ("No. 5", not "no").
+var (
+	abbrevs = set("lv", "lvl", "approx", "etc", "vs", "mr", "mrs", "ms", "dr", "prof", "jr", "sr", "mt", "ft",
+		"pg", "pp", "hrs", "qty", "str", "dex", "agi", "vit", "wis", "cha", "int", "def", "atk", "hp", "mp", "sp", "xp")
+	dottedAbbrevs = set("no", "nos", "st", "vol", "ch", "pt", "pts", "hr", "min", "sec", "ca", "cf", "capt", "sgt",
+		"lt", "gov", "gen", "ave", "rd")
+	// Units, as notation only in a spot with a number ("5 km").
+	units      = set("km", "kg", "cm", "mm", "ml", "mph", "kph", "lb", "lbs", "oz", "yd", "yds", "mi", "m", "g", "l", "s")
+	initialsRe = regexp.MustCompile(`^(?:\pL\.){2,}$`) // e.g., U.S., a.m.
+	romanRe    = regexp.MustCompile(`^[IVXLCDM]{2,}$`)
+)
 
-// spotOK: a spot to say differently is short, the spoken form has words and
-// is not much longer, and the spot is not ordinary prose (lower-case words,
-// which the voice reads well and the LLM must not reword).
+func set(words ...string) map[string]bool {
+	m := make(map[string]bool, len(words))
+	for _, w := range words {
+		m[w] = true
+	}
+	return m
+}
+
+// spotOK: a spot to say differently is short notation a voice misreads
+// (numbers, symbols, abbreviations, acronyms, Roman numerals), and its
+// spoken form keeps every ordinary word of the spot, in order. The LLM
+// only spells notation out; it can never change, add or drop words.
 func spotOK(spot []rune, say string) bool {
 	n := utf8.RuneCountInString(say)
 	switch {
-	case len(spot) == 0 || len(spot) > maxSpotRunes || n == 0 || n > 3*len(spot)+40:
+	case len(spot) == 0 || len(spot) > maxSpotRunes || n == 0 || n > 4*len(spot)+40:
 		return false
 	case strings.IndexFunc(say, unicode.IsLetter) < 0 || strings.EqualFold(say, string(spot)):
 		return false
-	case proseRe.MatchString(string(spot)) && (len(spot) >= 4 || strings.ContainsAny(string(spot), " \t")):
+	}
+	said := words(say)
+	number := strings.IndexFunc(string(spot), unicode.IsDigit) >= 0
+	var kept []string
+	budget := 0 // words the notation may be said with
+	for _, t := range strings.Fields(string(spot)) {
+		core := strings.TrimFunc(t, edgeMark)
+		bare := strings.TrimSuffix(core, ".")
+		lower := strings.ToLower(bare)
+		switch digits := countFunc(core, unicode.IsDigit); {
+		case core == "":
+		case digits > 0 || strings.IndexFunc(core, symbol) >= 0:
+			budget += 2*digits + 2*countFunc(core, symbol) + 1
+		case abbrevs[lower] || (dottedAbbrevs[lower] && bare != core) || initialsRe.MatchString(core):
+			budget += 2
+		case number && units[lower]:
+			budget += 3
+		case romanRe.MatchString(bare):
+			budget += 3 // "the eighth"
+		case acronym(bare, said):
+			budget += utf8.RuneCountInString(bare)
+		default:
+			kept = append(kept, words(core)...)
+		}
+	}
+	return budget > 0 && len(said) <= len(kept)+budget && subsequence(kept, said)
+}
+
+func countFunc(s string, f func(rune) bool) int {
+	n := 0
+	for _, r := range s {
+		if f(r) {
+			n++
+		}
+	}
+	return n
+}
+
+// edgeMark: punctuation around a word in a spot.
+func edgeMark(r rune) bool {
+	return strings.ContainsRune(`"'“”‘’„«»‹›()[]{},;:!?…—–`, r)
+}
+
+// symbol: a rune that is notation inside a word (→, /, %, +, °, ×, #, @, &).
+func symbol(r rune) bool {
+	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune(".-'’", r)
+}
+
+// acronym: two to six capitals said as words starting with its letters
+// ("HP" → "hit points") or spelled out ("h p").
+func acronym(core string, said []string) bool {
+	letters := []rune(strings.ToLower(core))
+	if len(letters) < 2 || len(letters) > 6 || strings.ToUpper(core) != core ||
+		strings.IndexFunc(core, func(r rune) bool { return !unicode.IsLetter(r) }) >= 0 {
 		return false
 	}
-	return true
+	for i := 0; i+len(letters) <= len(said); i++ {
+		ok := true
+		for j, l := range letters {
+			w := said[i+j]
+			if !strings.HasPrefix(w, string(l)) && (l != 'x' || !strings.HasPrefix(w, "ex")) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// words: the lower-case words of a text, apostrophes plain.
+func words(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(strings.ReplaceAll(s, "’", "'")), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\''
+	})
+}
+
+// subsequence: every word of want is in have, in order.
+func subsequence(want, have []string) bool {
+	i := 0
+	for _, w := range have {
+		if i < len(want) && w == want[i] {
+			i++
+		}
+	}
+	return i == len(want)
 }
 
 // bounded: a spot starting or ending with a letter or digit is a whole

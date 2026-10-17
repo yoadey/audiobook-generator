@@ -119,9 +119,11 @@ URLs carry a token instead, so treat them like passwords.
   within a sentence.
 - **Chapter preparation** (optional, per book under *Narrator*): before a
   chapter is rendered, the LLM marks the mood of the narration, dramatic
-  pauses and spots the voice would misread ("Lv. 5" → "level five"), and
-  suggests pronunciations of invented names, which you accept or dismiss
-  under *Pronunciation*. The text itself is never changed; the chapter page
+  pauses and notation the voice would misread ("Lv. 5" → "level five"),
+  and suggests pronunciations of invented names, which you accept or
+  dismiss under *Pronunciation*. It only changes how the text is spoken,
+  never its words: spoken forms are accepted only for notation (numbers,
+  symbols, abbreviations) and must keep every other word. The chapter page
   shows what was found and can prepare it again.
 - **Podcast**: the book page shows a feed URL (button *Podcast*) that any
   podcast app can subscribe to; rendered chapters are its episodes, each

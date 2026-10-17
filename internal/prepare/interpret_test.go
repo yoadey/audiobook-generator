@@ -50,13 +50,13 @@ func TestInterpret(t *testing.T) {
 	}
 	ans.Spoken = []spoken{
 		{1, "Lv. 5", "level five"},
-		{1, "HP", "[hit points](/x/)"},  // Kokoro syntax is dropped
+		{1, "HP", "[hit] {points}"},     // Kokoro syntax is dropped
 		{1, "the door was", "a gate"},   // prose: not reworded
 		{1, "Lv. 5 and", "level"},       // overlaps the first
 		{1, "Mars", "the red planet"},   // not in the text
 		{3, "over", "done"},             // prose
-		{1, "Run,”", "Run quickly"},     // in the first segment
-		{1, "said Ryoka. She", "x x x"}, // prose? capitalized: allowed but harmless
+		{1, "Run,”", "Run quickly"},     // words only: never reworded
+		{1, "said Ryoka. She", "x x x"}, // words only, capitalized or not
 	}
 	type pron = struct {
 		Term string `json:"term"`
@@ -73,31 +73,56 @@ func TestInterpret(t *testing.T) {
 	got := interpret(paras, segs, 0, 3, []string{"erin"}, ans)
 
 	assert.Equal(t, map[int64]string{1: "tense"}, got.Moods)
-	require.Len(t, got.Segments, 2)
-	first, second := got.Segments[0], got.Segments[1]
-	assert.Equal(t, int64(10), first.SegmentID)
-	assert.Equal(t, []store.SpokenForm{{Start: 1, End: 6, Say: "Run quickly"}}, first.SpokenAs)
+	require.Len(t, got.Segments, 1)
+	second := got.Segments[0]
 	assert.Equal(t, int64(11), second.SegmentID)
 	// "said Ryoka. She had Lv. 5 and 20 HP. The door was open."
 	assert.Equal(t, []store.Pause{{Offset: 36, Ms: longPauseMs}}, second.Pauses)
 	assert.Equal(t, []store.SpokenForm{
-		{Start: 0, End: 15, Say: "x x x"},
 		{Start: 20, End: 25, Say: "level five"},
-		{Start: 33, End: 35, Say: "hit points x"},
+		{Start: 33, End: 35, Say: "hit points"},
 	}, second.SpokenAs)
 	assert.Equal(t, []store.LexiconEntry{{Term: "Ryoka", Replacement: "ree-oh-kah", Note: "invented name"}},
 		got.Suggestions)
 }
 
 func TestSpotOK(t *testing.T) {
-	for spot, ok := range map[string]bool{
-		"Lv.": true, "HP": true, "12/20": true, "St.": true, "lv.": true, "km": true,
-		"door": false, "the old man": false, "approx.": true, "": false,
+	for _, c := range []struct {
+		spot, say string
+		ok        bool
+	}{
+		{"Lv.", "level", true},
+		{"lv. 5", "level five", true},
+		{"HP", "hit points", true},
+		{"XP", "experience points", true},
+		{"NPC", "N P C", true},
+		{"12/20", "twelve out of twenty", true},
+		{"[Level 12 → 13]", "level twelve to thirteen", true},
+		{"20 HP", "twenty hit points", true},
+		{"St.", "Saint", true},
+		{"No. 5", "number five", true},
+		{"5 km", "five kilometers", true},
+		{"approx.", "approximately", true},
+		{"e.g.", "for example", true},
+		{"Henry VIII", "Henry the Eighth", true},
+		{"3:45 p.m.", "three forty-five p m", true},
+
+		{"door", "gate", false},
+		{"the old man", "the young man", false},
+		{"said Ryoka. She", "x x x", false},
+		{"Run,”", "Run quickly", false},
+		{"STOP", "go", false},              // shouting, not an acronym
+		{"No", "number", false},            // a word without its period
+		{"km", "kilometers", false},        // a unit only after a number
+		{"Lv. 5 and", "level five", false}, // a word dropped
+		{"Lv. 5", "level five and then he died", false},
+		{"Henry VIII", "King the Eighth", false},
+		{"HP", "hp", false},
+		{"HP", "123", false},
+		{"", "something", false},
 	} {
-		assert.Equal(t, ok, spotOK([]rune(spot), "something"), spot)
+		assert.Equal(t, c.ok, spotOK([]rune(c.spot), c.say), c.spot+" → "+c.say)
 	}
-	assert.False(t, spotOK([]rune("HP"), "hp"), "the same")
-	assert.False(t, spotOK([]rune("HP"), "123"), "no words")
 }
 
 func TestSplitParts(t *testing.T) {

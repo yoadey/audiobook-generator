@@ -358,10 +358,14 @@ its answer so a stopped job resumes) and returns labels only
   found in the paragraph and end a sentence or clause (short 0.5 s, long
   1 s; at most one per paragraph and a handful per chapter); a pause
   inside a segment splits it into phrases;
-- **spoken forms** for spots a TTS misreads ("Lv. 5" → "level five", status
-  screens, units, symbols): the spot must occur verbatim within one
-  segment, be short, not be ordinary lower-case prose, and the spoken form
-  plain words (Kokoro syntax is removed);
+- **spoken forms** for notation a TTS misreads ("Lv. 5" → "level five",
+  status screens, units, symbols): the spot must occur verbatim within one
+  segment, be short and hold notation (digits, symbols, known
+  abbreviations, acronyms said by their initials, Roman numerals); the
+  spoken form is plain words (Kokoro syntax is removed), keeps every
+  ordinary word of the spot in order and may add only a few words per
+  piece of notation. The LLM thus never changes, adds or drops a word of
+  the story, it only says how notation is read;
 - **pronunciations** of invented names as respellings, stored in the book's
   lexicon as *suggestions* (applied only once accepted; dismissed ones are
   not suggested again); the terms must occur in the text.
