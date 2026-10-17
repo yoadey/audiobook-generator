@@ -137,15 +137,18 @@ there is no Intel GPU (XPU/OpenVINO) path. Reported numbers
 | Original, RTX 3090/4090, optimised (vLLM fork) | ~10–30× real time | ~3–12 h |
 | Nano, 8 CPU cores (vendor claim) | ~3× real time | ~11–15 h on 3 nodes |
 
-Measured on the cluster (October 2026, one 4-vCPU worker, CPU only,
-model loaded, compute time ÷ audio length; lower is faster):
+Measured on the cluster (October 2026, one 4-vCPU worker with AVX2, CPU
+only, model loaded, compute time ÷ audio length; lower is faster):
 
 | Engine | Factor |
 |---|---|
 | Kokoro (Kokoro-FastAPI) | 0.23 |
-| Nano (library) | 0.9 |
-| Nano (patched server, `/tts`) | 1.8 |
-| Turbo (library) | 2.1 |
+| Nano | 0.9 |
+| Turbo | 2.1 |
+
+A VM without AVX2 (Proxmox's default CPU type) is about twice as slow
+(Nano 2.0, with the library and through the patched server alike), so
+pin Chatterbox to a node whose CPU type passes AVX2 through.
 
 So on the cluster's CPUs Chatterbox is only sensible for a few main
 characters' lines (a small share of a book) or with Nano/Turbo, which do
