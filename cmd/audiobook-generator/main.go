@@ -32,6 +32,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/llm"
 	"github.com/yoadey/audiobook-generator/internal/metrics"
+	"github.com/yoadey/audiobook-generator/internal/prepare"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/transfer"
@@ -84,18 +85,24 @@ func run() error {
 	llmPool := llm.NewPool(st, llm.NewMetrics(reg), log)
 	llmPool.MaxWait = cfg.LLM.MaxWait
 
-	speech := tts.New(cfg.TTS.URL, cfg.TTS.Timeout)
+	kokoro := tts.New(cfg.TTS.URL, cfg.TTS.Timeout)
+	speech, err := tts.NewRouter(kokoro, cfg.TTS.Engines)
+	if err != nil {
+		return fmt.Errorf("ABG_TTS_ENGINES: %w", err)
+	}
 	runner := jobs.New(st, log)
 	runner.Metrics = jobs.NewMetrics(reg)
 	reg.MustRegister(metrics.NewCollector(st, log))
 	imp := &importer.Importer{Store: st, DataDir: cfg.DataDir, Log: log}
 	runner.Handle(importer.JobType, imp.Handler())
 	runner.Handle(transfer.JobType, (&transfer.Restorer{Store: st, DataDir: cfg.DataDir, Log: log}).Handler())
-	voices := casting.NewCatalog(speech)
+	voices := casting.NewCatalog(kokoro)
 	attributor := &attribution.Attributor{
 		Store: st, LLM: llmPool, Jobs: runner, PartTokens: cfg.LLM.AttributionTokens, Log: log,
 	}
 	runner.Handle(attribution.JobType, attributor.Handler())
+	preparer := &prepare.Preparer{Store: st, LLM: llmPool, Jobs: runner, Log: log}
+	runner.Handle(prepare.JobType, preparer.Handler())
 	renderer := &render.Renderer{
 		Store:        st,
 		TTS:          speech,
@@ -105,6 +112,7 @@ func run() error {
 		DefaultVoice: cfg.TTS.DefaultVoice,
 		Voices:       voices,
 		Attribution:  attributor,
+		Preparation:  preparer,
 		Metrics:      render.NewMetrics(reg),
 		Log:          log,
 	}
@@ -173,6 +181,7 @@ func run() error {
 				Analyzer:       analyzer,
 				Caster:         caster,
 				Attributor:     attributor,
+				Preparer:       preparer,
 				Assembler:      assembler,
 				Voices:         voices,
 				DefaultVoice:   cfg.TTS.DefaultVoice,

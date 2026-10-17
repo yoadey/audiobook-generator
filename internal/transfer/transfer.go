@@ -411,6 +411,7 @@ func restoredBook(b *store.Book) map[string]any {
 		"Title": b.Title, "Author": b.Author, "Language": b.Language, "QuoteStyle": b.QuoteStyle,
 		"WordCount": b.WordCount, "ChapterCount": b.ChapterCount,
 		"NarratorVoice": b.NarratorVoice, "NarratorSpeed": speed, "Lookahead": lookahead,
+		"PreviewText":    truncateRunes(store.CleanText(b.PreviewText), 500),
 		"AnalysisStatus": analysis, "AnalysisError": b.AnalysisError,
 		"AnalysisStartedAt": b.AnalysisStartedAt, "AnalysisFinishedAt": b.AnalysisFinishedAt,
 		"CastingStatus": casting, "CastingError": b.CastingError, "CastingFinishedAt": b.CastingFinishedAt,
@@ -449,4 +450,12 @@ func extract(f *zip.File, dst string) error {
 		return err
 	}
 	return os.Rename(tmp, dst)
+}
+
+// truncateRunes cuts s to at most n characters.
+func truncateRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }

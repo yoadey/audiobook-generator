@@ -38,6 +38,12 @@ type Book struct {
 	// Lookahead is how many chapters after the listening position are kept
 	// rendered.
 	Lookahead int `gorm:"not null;default:3"`
+	// PreviewText is what voice previews in this book say ("" = the
+	// instance's sample text).
+	PreviewText string `gorm:"not null;default:''"`
+	// PrepareChapters: chapters are prepared by the LLM before they are
+	// rendered (narration mood, pauses, spoken forms, pronunciations).
+	PrepareChapters bool `gorm:"not null;default:false"`
 
 	// Character analysis (see AnalysisStatus); the progress is counted
 	// from the analysis batches.
@@ -149,6 +155,14 @@ type Chapter struct {
 	AttributionPart   int               `gorm:"not null;default:0"`
 	AttributedAt      *time.Time
 
+	// Preparation for reading aloud (see PrepStatus); PrepPart counts the
+	// paragraphs already prepared, like AttributionPart.
+	PrepStatus PrepStatus `gorm:"not null;default:'none'"`
+	PrepError  string     `gorm:"not null;default:''"`
+	PrepPrompt string     `gorm:"not null;default:''"`
+	PrepPart   int        `gorm:"not null;default:0"`
+	PreparedAt *time.Time
+
 	// Narration (first/third person) and point-of-view character, from
 	// the character analysis.
 	Narration      Narration `gorm:"not null;default:''"`
@@ -176,6 +190,8 @@ type Paragraph struct {
 	Kind      ParagraphKind `gorm:"not null"`
 	Text      string        `gorm:"not null"`
 	WordCount int           `gorm:"not null;default:0"`
+	// Mood of narration from the chapter preparation ("" neutral).
+	Mood string `gorm:"not null;default:''"`
 }
 
 // SegmentKind classifies a segment.
@@ -185,6 +201,9 @@ type SegmentKind string
 const (
 	SegmentNarration SegmentKind = "narration"
 	SegmentQuote     SegmentKind = "quote"
+	// SegmentThought is a character's thought (in italics or single
+	// marks); like a quote it has a QuoteRef and is attributed.
+	SegmentThought SegmentKind = "thought"
 )
 
 // Segment is the unit of speech: a TTS-sized piece of narration or of one
@@ -199,6 +218,9 @@ type Segment struct {
 	// pieces of one quotation share the number.
 	QuoteRef int    `gorm:"not null;default:0"`
 	Text     string `gorm:"not null"`
+	// Emphasis lists the italic runs of Text as JSON [[start,end],…] in
+	// runes ("" for none).
+	Emphasis string `gorm:"not null;default:''"`
 	// Speaker of a quote (nil: narrator voice — not attributed yet, or an
 	// unknown speaker), how it is said and how sure the attribution is
 	// (0..1). SpeakerManual protects a speaker the user chose.
@@ -206,6 +228,11 @@ type Segment struct {
 	Emotion            string  `gorm:"not null;default:''"`
 	Confidence         float64 `gorm:"not null;default:0"`
 	SpeakerManual      bool    `gorm:"not null;default:false"`
+	// From the chapter preparation, for the TTS only (the text stays):
+	// Pauses as JSON [[rune offset, ms],…] (an offset of len(text): after
+	// the segment); SpokenAs as JSON [{"a":start,"b":end,"t":"said"},…].
+	Pauses   string `gorm:"not null;default:''"`
+	SpokenAs string `gorm:"not null;default:''"`
 }
 
 // JobStatus is the state of a job.
@@ -249,7 +276,16 @@ type ListenProgress struct {
 	UserID     string `gorm:"not null;default:'';uniqueIndex:idx_listen_progress_book_user,priority:2"`
 	ChapterID  int64  `gorm:"not null"`
 	PositionMs int64  `gorm:"not null;default:0"`
-	UpdatedAt  time.Time
+	// SegmentID is the segment at the position: where reading along
+	// continues (the only position of a chapter read without audio).
+	SegmentID *int64
+	UpdatedAt time.Time
+}
+
+// AppSetting is a setting of the instance changed in the UI.
+type AppSetting struct {
+	Name  string `gorm:"primaryKey"`
+	Value string `gorm:"not null;default:''"`
 }
 
 // LexiconEntry tells how a book's word (a fantasy name) is pronounced:
@@ -261,8 +297,13 @@ type LexiconEntry struct {
 	Term        string `gorm:"not null"`
 	Replacement string `gorm:"not null"`
 	IsPhonemes  bool   `gorm:"not null;default:false"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// Status: LexiconActive, or a suggestion of the chapter preparation
+	// (not applied until accepted) or a dismissed one (not suggested
+	// again). Note says why it was suggested.
+	Status    LexiconStatus `gorm:"not null;default:''"`
+	Note      string        `gorm:"not null;default:''"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Structured-output modes of an LLM provider.
@@ -355,6 +396,28 @@ const (
 	AttributionFailed  AttributionStatus = "failed"
 )
 
+// PrepStatus is the state of a chapter's preparation for reading aloud.
+type PrepStatus string
+
+// Preparation states.
+const (
+	PrepNone    PrepStatus = "none"
+	PrepQueued  PrepStatus = "queued"
+	PrepRunning PrepStatus = "running"
+	PrepDone    PrepStatus = "done"
+	PrepFailed  PrepStatus = "failed"
+)
+
+// LexiconStatus tells whether a lexicon entry applies.
+type LexiconStatus string
+
+// Lexicon entry states.
+const (
+	LexiconActive    LexiconStatus = ""
+	LexiconSuggested LexiconStatus = "suggested"
+	LexiconDismissed LexiconStatus = "dismissed"
+)
+
 // CastingStatus is the state of a book's voice casting.
 type CastingStatus string
 
@@ -441,6 +504,9 @@ type Character struct {
 	VoiceSpeed  float64 `gorm:"not null;default:1"`
 	VoiceManual bool    `gorm:"not null;default:false"`
 	VoiceNote   string  `gorm:"not null;default:''"`
+	// PreviewText is what the voice previews say ("" = quotes of the
+	// character).
+	PreviewText string `gorm:"not null;default:''"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

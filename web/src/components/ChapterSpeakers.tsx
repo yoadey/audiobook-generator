@@ -14,6 +14,7 @@ import {
   updateQuote,
 } from '../api/client';
 import { notifyError } from '../lib/notify';
+import { pieces } from '../lib/reading';
 import { speakerColor, unsure } from '../lib/speakers';
 
 const emotions: Emotion[] = [
@@ -279,6 +280,7 @@ export const QuoteSpan = memo(function QuoteSpan({
         padding: '1px 2px',
         cursor: 'pointer',
         outline: check ? '1px dashed var(--mantine-color-yellow-6)' : undefined,
+        fontStyle: segment.kind === 'thought' ? 'italic' : undefined,
       }}
     >
       {labeled && (
@@ -294,7 +296,7 @@ export const QuoteSpan = memo(function QuoteSpan({
           {segment.emotion && segment.emotion !== 'neutral' ? ` · ${segment.emotion}` : ''}
         </Text>
       )}
-      {segment.text}
+      <Emphasized text={segment.text} emphasis={segment.emphasis} />
     </Box>
   );
   if (!open) {
@@ -322,3 +324,11 @@ export const QuoteSpan = memo(function QuoteSpan({
     </Popover>
   );
 });
+
+/** Text with its italic runs. */
+export function Emphasized({ text, emphasis }: { text: string; emphasis?: number[][] }) {
+  if (!emphasis?.length) return text;
+  return pieces(text, emphasis).map((p, i) =>
+    p.italic ? <em key={i}>{p.text}</em> : <span key={i}>{p.text}</span>,
+  );
+}

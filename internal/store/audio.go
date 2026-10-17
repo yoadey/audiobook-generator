@@ -100,7 +100,7 @@ func (s *Store) SaveProgress(ctx context.Context, p *ListenProgress) error {
 	p.UpdatedAt = time.Now().UTC()
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "book_id"}, {Name: "user_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"chapter_id", "position_ms", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"chapter_id", "position_ms", "segment_id", "updated_at"}),
 	}).Create(p).Error
 }
 

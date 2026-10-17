@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -27,17 +26,32 @@ const defaultPreviewText = "It was a bright cold day in April, and the clocks we
 
 // UpdateBook changes narration settings.
 func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (UpdateBookResponseObject, error) {
-	if _, err := s.Store.GetBook(ctx, req.BookId); isNotFound(err) {
+	b, err := s.Store.GetBook(ctx, req.BookId)
+	if isNotFound(err) {
 		return UpdateBook404JSONResponse{Message: "book not found"}, nil
 	} else if err != nil {
 		return nil, err
 	}
 	fields := map[string]any{}
+	touch := false
+	if v := req.Body.PrepareChapters; v != nil && *v != b.PrepareChapters {
+		// The preparation changes what is said: renders made with (or
+		// without) it are outdated. Touched before the change too, so a
+		// failure after it is not lost to a retry.
+		if err := s.Store.TouchBookAudio(ctx, b.ID); err != nil {
+			return nil, err
+		}
+		fields["PrepareChapters"] = *v
+		touch = true
+	}
 	if v := req.Body.NarratorVoice; v != nil {
 		voice := strings.TrimSpace(*v)
 		if _, err := casting.ParseRecipe(voice); voice != "" && err != nil {
 			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(
 				`narratorVoice must be a voice like "af_heart" or a mix like "bf_emma(2)+af_bella(1)"`))}, nil
+		}
+		if msg := s.engineMissing(voice); msg != "" {
+			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 		}
 		fields["NarratorVoice"] = strings.Join(strings.Fields(voice), "")
 	}
@@ -53,12 +67,24 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 		}
 		fields["Lookahead"] = *v
 	}
+	if v := req.Body.PreviewText; v != nil {
+		text, msg := previewText(*v)
+		if msg != "" {
+			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
+		}
+		fields["PreviewText"] = text
+	}
 	if len(fields) > 0 {
 		if err := s.Store.UpdateBook(ctx, req.BookId, fields); err != nil {
 			return nil, err
 		}
 	}
-	b, err := s.Store.GetBook(ctx, req.BookId)
+	if touch {
+		if err := s.Store.TouchBookAudio(ctx, b.ID); err != nil {
+			return nil, err
+		}
+	}
+	b, err = s.Store.GetBook(ctx, req.BookId)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +124,7 @@ func toProgress(p *store.ListenProgress) Progress {
 	if p == nil {
 		return Progress{}
 	}
-	return Progress{ChapterId: &p.ChapterID, PositionMs: p.PositionMs, UpdatedAt: &p.UpdatedAt}
+	return Progress{ChapterId: &p.ChapterID, PositionMs: p.PositionMs, SegmentId: p.SegmentID, UpdatedAt: &p.UpdatedAt}
 }
 
 // GetProgress returns the listening position.
@@ -129,6 +155,15 @@ func (s *Server) SaveProgress(ctx context.Context, req SaveProgressRequestObject
 	}
 	p := &store.ListenProgress{BookID: b.ID, UserID: auth.Subject(ctx), ChapterID: c.ID,
 		PositionMs: max(req.Body.PositionMs, 0)}
+	if id := req.Body.SegmentId; id != nil {
+		seg, err := s.Store.GetSegment(ctx, *id)
+		if isNotFound(err) || err == nil && seg.ChapterID != c.ID {
+			return SaveProgress400JSONResponse{ErrorJSONResponse(errMsg("segment not found in this chapter"))}, nil
+		} else if err != nil {
+			return nil, err
+		}
+		p.SegmentID = &seg.ID
+	}
 	if err := s.Store.SaveProgress(ctx, p); err != nil {
 		return nil, err
 	}
@@ -192,21 +227,13 @@ func (s *Server) GetChapterAudio(ctx context.Context, req GetChapterAudioRequest
 	} else if err != nil {
 		return nil, err
 	}
-	p := filepath.Join(s.DataDir, c.AudioPath)
 	// A version the player started with, while it is kept.
-	if v := req.Params.V; v != nil && versionRe.MatchString(*v) && *v != render.AudioVersion(c.AudioPath) {
-		old := filepath.Join(s.DataDir, render.VersionPath(c.BookID, c.ID, *v))
-		if _, err := os.Stat(old); err == nil {
-			p = old
-		}
-	}
+	p := filepath.Join(s.DataDir, render.KeptPath(s.DataDir, c, req.Params.V))
 	if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
 		return GetChapterAudio404JSONResponse{ErrorJSONResponse(errMsg("no audio"))}, nil
 	}
 	return audioFile{r: requestFrom(ctx), path: p, name: fmt.Sprintf("%d.m4a", c.ID)}, nil
 }
-
-var versionRe = regexp.MustCompile(`^[0-9a-z]{1,20}$`)
 
 // ListVoices lists the voice catalogue as the TTS server offers it.
 func (s *Server) ListVoices(ctx context.Context, _ ListVoicesRequestObject) (ListVoicesResponseObject, error) {
@@ -227,18 +254,61 @@ func (s *Server) ListVoices(ctx context.Context, _ ListVoicesRequestObject) (Lis
 	return ListVoices200JSONResponse(out), nil
 }
 
+// engineMissing tells why a voice cannot be used: its engine is not
+// configured ("" when it can, or the TTS cannot tell).
+func (s *Server) engineMissing(voice string) string {
+	c, ok := s.TTS.(interface{ Configured(voice string) bool })
+	if !ok || c.Configured(strings.TrimSpace(voice)) {
+		return ""
+	}
+	engine, _, _ := tts.SplitVoice(strings.TrimSpace(voice))
+	return fmt.Sprintf("the engine %q of this voice is not configured (ABG_TTS_ENGINES)", engine)
+}
+
+// EngineLister lists the speech engines besides Kokoro (the TTS may not).
+type EngineLister interface {
+	Engines(ctx context.Context) []tts.Engine
+}
+
+// ListTTSEngines lists the configured engines with their voices.
+func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObject) (ListTTSEnginesResponseObject, error) {
+	out := []TTSEngine{}
+	if l, ok := s.TTS.(EngineLister); ok {
+		for _, e := range l.Engines(ctx) {
+			voices := e.Voices
+			if voices == nil {
+				voices = []string{}
+			}
+			out = append(out, TTSEngine{
+				Name: e.Name, Kind: TTSEngineKind(e.Kind), Emotions: e.Emotions, Speed: e.Speed, Voices: voices,
+				Error: nonEmpty(e.Err),
+			})
+		}
+	}
+	return ListTTSEngines200JSONResponse(out), nil
+}
+
 // PreviewVoice speaks a sample; recent previews are cached.
 func (s *Server) PreviewVoice(ctx context.Context, req PreviewVoiceRequestObject) (PreviewVoiceResponseObject, error) {
 	voice := strings.TrimSpace(req.Body.Voice)
 	if _, err := casting.ParseRecipe(voice); err != nil {
 		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg(err.Error()))}, nil
 	}
-	text := defaultPreviewText
-	if req.Body.Text != nil && strings.TrimSpace(*req.Body.Text) != "" {
+	if msg := s.engineMissing(voice); msg != "" {
+		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
+	}
+	var text string
+	if req.Body.Text != nil {
 		text = strings.TrimSpace(*req.Body.Text)
 	}
-	if utf8.RuneCountInString(text) > 500 {
+	if utf8.RuneCountInString(text) > maxPreviewText {
 		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg("text must be at most 500 characters"))}, nil
+	}
+	if text == "" {
+		var err error
+		if text, err = s.samplePreviewText(ctx, req.Body.BookId); err != nil {
+			return nil, err
+		}
 	}
 	speed := 1.0
 	if req.Body.Speed != nil {
@@ -251,11 +321,18 @@ func (s *Server) PreviewVoice(ctx context.Context, req PreviewVoiceRequestObject
 		}
 		text = lexicon.Compile(entries).Apply(text)
 	}
-	key := previewKey(voice, speed, text)
+	emotion := ""
+	if e := req.Body.Emotion; e != nil && *e != EmotionNeutral {
+		if !e.Valid() {
+			return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg("unknown emotion"))}, nil
+		}
+		emotion = string(*e)
+	}
+	key := previewKey(voice+"|"+emotion, speed, text)
 	data, ok := s.previews.get(key)
 	if !ok {
 		var err error
-		data, err = s.TTS.Synthesize(ctx, tts.Speech{Text: text, Voice: voice, Speed: speed, Format: "mp3"})
+		data, err = s.TTS.Synthesize(ctx, tts.Speech{Text: text, Voice: voice, Speed: speed, Format: "mp3", Emotion: emotion})
 		if err != nil {
 			return PreviewVoice502JSONResponse{Message: "TTS server: " + err.Error()}, nil
 		}

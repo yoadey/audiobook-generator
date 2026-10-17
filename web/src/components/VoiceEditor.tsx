@@ -10,6 +10,7 @@ import {
   Slider,
   Stack,
   Text,
+  Textarea,
   Tooltip,
 } from '@mantine/core';
 import { IconPlus, IconRefresh, IconRotate, IconTrash } from '@tabler/icons-react';
@@ -19,20 +20,34 @@ import { useState } from 'react';
 import {
   type CharacterDetail,
   type CharacterUpdate,
+  type Emotion,
   quotesQuery,
+  ttsEnginesQuery,
   updateCharacter,
   type Voice,
   voicesQuery,
 } from '../api/client';
 import { notifyError, notifySuccess } from '../lib/notify';
 import { usePreview } from '../lib/preview';
-import { formatRecipe, parseRecipe, type RecipePart } from '../lib/recipe';
+import { formatRecipe, parseRecipe, type RecipePart, splitEngineVoice } from '../lib/recipe';
 import { VoicePreviewButton } from './VoicePreviewButton';
 
 type TierChoice = 'auto' | 'main' | 'minor';
 
 // As many base voices as the server accepts in a recipe.
 const MAX_PARTS = 4;
+
+const emotions: Emotion[] = [
+  'neutral',
+  'happy',
+  'sad',
+  'angry',
+  'afraid',
+  'surprised',
+  'whispering',
+  'shouting',
+  'sarcastic',
+];
 
 const genderGroup: Record<Voice['gender'], string> = {
   female: 'Female',
@@ -85,15 +100,33 @@ export function VoiceEditor({
   const quotes = useQuery(quotesQuery(c.id));
   const preview = usePreview(c.bookId);
   const initialTier: TierChoice = c.tierManual ? c.tier : 'auto';
-  const initialParts = normalize(parseRecipe(c.voice) ?? []);
+  const engines = useQuery(ttsEnginesQuery);
+  // A voice of another engine ("chatterbox:Emily.wav") or a Kokoro recipe.
+  const initialEngine = splitEngineVoice(c.voice);
+  const initialParts = normalize(initialEngine ? [] : (parseRecipe(c.voice) ?? []));
   const [tier, setTier] = useState<TierChoice>(initialTier);
   const [parts, setParts] = useState<RecipePart[]>(initialParts);
+  const [engine, setEngine] = useState(initialEngine?.engine ?? '');
+  const [engineVoice, setEngineVoice] = useState(initialEngine?.voice ?? '');
+  const [emotion, setEmotion] = useState<Emotion>('neutral');
   const [speed, setSpeed] = useState(c.voiceSpeed);
   const [quote, setQuote] = useState(0);
+  // Previews speak quotes from the book, or a text of the character's own.
+  const [ownText, setOwnText] = useState(c.previewText);
+  const [useOwn, setUseOwn] = useState(c.previewText !== '');
 
-  const recipe = formatRecipe(parts);
-  const voiceChanged = recipe !== formatRecipe(initialParts) || speed !== c.voiceSpeed;
-  const dirty = tier !== initialTier || voiceChanged;
+  const recipe = engine ? (engineVoice ? `${engine}:${engineVoice}` : '') : formatRecipe(parts);
+  const initialRecipe = initialEngine ? c.voice.trim() : formatRecipe(initialParts);
+  const voiceChanged = recipe !== initialRecipe || speed !== c.voiceSpeed;
+  const engineInfo = engines.data?.find((e) => e.name === engine);
+  const engineNames = (engines.data ?? []).map((e) => e.name);
+  if (initialEngine && !engineNames.includes(initialEngine.engine)) {
+    engineNames.push(initialEngine.engine);
+  }
+  const takesSpeed = !engine || (engineInfo?.speed ?? false);
+  const previewText = useOwn ? ownText.trim() : '';
+  const textChanged = previewText !== c.previewText;
+  const dirty = tier !== initialTier || voiceChanged || textChanged;
   const samples = quotes.data ?? [];
   const sample = samples.length > 0 ? samples[quote % samples.length] : undefined;
 
@@ -113,6 +146,9 @@ export function VoiceEditor({
     if (voiceChanged && recipe) {
       body.voice = recipe;
       body.voiceSpeed = speed;
+    }
+    if (textChanged) {
+      body.previewText = previewText;
     }
     save.mutate(body);
   };
@@ -169,85 +205,178 @@ export function VoiceEditor({
           </Alert>
         )}
 
-        {parts.map((p, i) => (
-          <Group key={i} align="flex-end" wrap="nowrap">
+        {engineNames.length > 0 && (
+          <SegmentedControl
+            size="xs"
+            w="fit-content"
+            value={engine}
+            onChange={(v) => {
+              setEngine(v);
+              // Another engine's voices differ; Kokoro starts from a voice.
+              setEngineVoice(v === initialEngine?.engine ? initialEngine.voice : '');
+              if (!v && parts.length === 0 && nextVoice) {
+                setParts([{ voice: nextVoice, weight: 1 }]);
+              }
+            }}
+            data={[
+              { value: '', label: 'Kokoro' },
+              ...engineNames.map((n) => ({ value: n, label: n })),
+            ]}
+            aria-label="Engine"
+          />
+        )}
+        {engine && (
+          <>
+            {!engineInfo ? (
+              <Alert color="yellow" variant="light">
+                The engine {engine} is not configured; lines with this voice cannot be rendered.
+              </Alert>
+            ) : (
+              engineInfo.error && (
+                <Alert color="yellow" variant="light">
+                  Its voices could not be listed: {engineInfo.error}
+                </Alert>
+              )
+            )}
             <Select
-              label={i === 0 ? 'Base voices' : undefined}
-              data={options}
-              value={p.voice}
-              onChange={(v) => v && setPart(i, { voice: v })}
+              label="Voice"
+              data={[...new Set([...(engineInfo?.voices ?? []), engineVoice].filter(Boolean))]}
+              value={engineVoice || null}
+              onChange={(v) => v && setEngineVoice(v)}
               searchable
               allowDeselect={false}
               w={320}
-              aria-label={`Base voice ${i + 1}`}
+              aria-label="Engine voice"
             />
-            <Stack gap={2} style={{ flex: 1 }}>
-              <Text size="xs" c="dimmed">
-                {total > 0 ? Math.round((p.weight / total) * 100) : 0}%
-              </Text>
-              <Slider
-                min={0.05}
-                max={1}
-                step={0.05}
-                value={p.weight}
-                onChange={(weight) => setPart(i, { weight })}
-                label={null}
-                thumbLabel={`Weight of ${p.voice}`}
+            <Text size="xs" c="dimmed">
+              {engineInfo?.emotions
+                ? 'This engine speaks emotions and moods itself; its voices do not mix.'
+                : 'Emotions are given by loudness; its voices do not mix.'}{' '}
+              It has no word timings: the reader marks its lines by sentence.
+            </Text>
+          </>
+        )}
+        {!engine &&
+          parts.map((p, i) => (
+            <Group key={i} align="flex-end" wrap="nowrap">
+              <Select
+                label={i === 0 ? 'Base voices' : undefined}
+                data={options}
+                value={p.voice}
+                onChange={(v) => v && setPart(i, { voice: v })}
+                searchable
+                allowDeselect={false}
+                w={320}
+                aria-label={`Base voice ${i + 1}`}
               />
-            </Stack>
-            <Tooltip label="Remove">
-              <ActionIcon
-                variant="subtle"
-                color="red"
-                disabled={parts.length <= 1}
-                onClick={() => setParts(parts.filter((_, j) => j !== i))}
-                aria-label={`Remove ${p.voice}`}
-              >
-                <IconTrash size={16} />
-              </ActionIcon>
-            </Tooltip>
+              <Stack gap={2} style={{ flex: 1 }}>
+                <Text size="xs" c="dimmed">
+                  {total > 0 ? Math.round((p.weight / total) * 100) : 0}%
+                </Text>
+                <Slider
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={p.weight}
+                  onChange={(weight) => setPart(i, { weight })}
+                  label={null}
+                  thumbLabel={`Weight of ${p.voice}`}
+                />
+              </Stack>
+              <Tooltip label="Remove">
+                <ActionIcon
+                  variant="subtle"
+                  color="red"
+                  disabled={parts.length <= 1}
+                  onClick={() => setParts(parts.filter((_, j) => j !== i))}
+                  aria-label={`Remove ${p.voice}`}
+                >
+                  <IconTrash size={16} />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+          ))}
+        {!engine && (
+          <Group>
+            <Button
+              variant="subtle"
+              size="xs"
+              leftSection={<IconPlus size={14} />}
+              disabled={parts.length >= MAX_PARTS || !nextVoice}
+              onClick={() => nextVoice && setParts([...parts, { voice: nextVoice, weight: 0.3 }])}
+            >
+              Add base voice
+            </Button>
           </Group>
-        ))}
-        <Group>
-          <Button
-            variant="subtle"
-            size="xs"
-            leftSection={<IconPlus size={14} />}
-            disabled={parts.length >= MAX_PARTS || !nextVoice}
-            onClick={() => nextVoice && setParts([...parts, { voice: nextVoice, weight: 0.3 }])}
-          >
-            Add base voice
-          </Button>
-        </Group>
-        <Stack gap={4} maw={320}>
-          <Text size="sm" fw={500}>
-            Speed: {speed.toFixed(2)}×
+        )}
+        {takesSpeed ? (
+          <Stack gap={4} maw={320}>
+            <Text size="sm" fw={500}>
+              Speed: {speed.toFixed(2)}×
+            </Text>
+            <Slider
+              min={0.5}
+              max={2}
+              step={0.01}
+              value={speed}
+              onChange={setSpeed}
+              label={null}
+              thumbLabel="Speed"
+            />
+          </Stack>
+        ) : (
+          <Text size="xs" c="dimmed">
+            This engine paces itself.
           </Text>
-          <Slider
-            min={0.5}
-            max={2}
-            step={0.01}
-            value={speed}
-            onChange={setSpeed}
-            label={null}
-            thumbLabel="Speed"
-          />
-        </Stack>
+        )}
 
         <Group gap="xs" align="center" wrap="nowrap">
           <VoicePreviewButton
             id="editor"
             voice={recipe}
             speed={speed}
-            text={sample?.text}
+            text={previewText || sample?.text}
             preview={preview}
             label="Listen to this voice"
+            emotion={engineInfo?.emotions ? emotion : undefined}
           />
           <Text size="sm" ff="monospace">
             {recipe || '—'}
           </Text>
+          {engineInfo?.emotions && (
+            <Select
+              size="xs"
+              w={140}
+              data={emotions}
+              value={emotion}
+              onChange={(v) => v && setEmotion(v as Emotion)}
+              allowDeselect={false}
+              aria-label="Preview emotion"
+            />
+          )}
         </Group>
-        {sample ? (
+        <SegmentedControl
+          size="xs"
+          w="fit-content"
+          value={useOwn ? 'own' : 'quotes'}
+          onChange={(v) => setUseOwn(v === 'own')}
+          data={[
+            { value: 'quotes', label: 'Quotes from the book' },
+            { value: 'own', label: 'Own sample text' },
+          ]}
+          aria-label="Preview text"
+        />
+        {useOwn ? (
+          <Textarea
+            aria-label="Sample text"
+            placeholder={sample?.text ?? 'What this character says in previews'}
+            value={ownText}
+            onChange={(e) => setOwnText(e.currentTarget.value)}
+            maxLength={500}
+            autosize
+            minRows={2}
+          />
+        ) : sample ? (
           <Blockquote p="xs" cite={`— ${sample.chapterTitle}`}>
             <Group justify="space-between" wrap="nowrap" align="flex-start">
               <Text size="sm">{sample.text}</Text>

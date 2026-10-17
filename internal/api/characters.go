@@ -182,7 +182,8 @@ func validateCharacterUpdate(u *CharacterUpdate) string {
 		return "ageGroup must be child, teen, adult, elderly or unknown"
 	case u.Importance != nil && (*u.Importance < 1 || *u.Importance > 5):
 		return "importance must be between 1 and 5"
-	case tooLong(u.Name, 120), tooLong(u.Role, 120), tooLong(u.SpeechStyle, 200), tooLong(u.Description, 1000):
+	case tooLong(u.Name, 120), tooLong(u.Role, 120), tooLong(u.SpeechStyle, 200), tooLong(u.Description, 1000),
+		tooLong(u.PreviewText, maxPreviewText):
 		return "a field is too long"
 	case u.Aliases != nil && len(*u.Aliases) > 200:
 		return "too many aliases"
@@ -218,7 +219,7 @@ func toCharacter(c *store.Character, aliases []store.CharacterAlias, v casting.V
 		Speaks: c.Speaks, ChapterCount: c.ChapterCount, FirstChapterIdx: c.FirstChapterIdx,
 		UserEdited: c.UserEdited, Tier: Tier(cmp.Or(c.Tier, store.TierMinor)), TierManual: c.TierManual,
 		Voice: v.Recipe, VoiceSpeed: float32(v.Speed), VoiceSource: CharacterVoiceSource(v.Source),
-		VoiceManual: c.VoiceManual, VoiceNote: c.VoiceNote,
+		VoiceManual: c.VoiceManual, VoiceNote: c.VoiceNote, PreviewText: c.PreviewText,
 	}
 }
 
@@ -247,7 +248,7 @@ func (s *Server) characterDetail(ctx context.Context, id int64) (CharacterDetail
 		FirstChapterIdx: base.FirstChapterIdx, UserEdited: base.UserEdited,
 		Tier: base.Tier, TierManual: base.TierManual, Voice: base.Voice, VoiceSpeed: base.VoiceSpeed,
 		VoiceSource: CharacterDetailVoiceSource(base.VoiceSource), VoiceManual: base.VoiceManual,
-		VoiceNote: base.VoiceNote, Chapters: make([]ChapterRef, 0, len(chs)),
+		VoiceNote: base.VoiceNote, PreviewText: base.PreviewText, Chapters: make([]ChapterRef, 0, len(chs)),
 	}
 	for _, ch := range chs {
 		out.Chapters = append(out.Chapters, ChapterRef{Id: ch.ID, Idx: ch.Idx, Title: ch.Title})
@@ -343,6 +344,11 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 	if msg := validateCharacterUpdate(req.Body); msg != "" {
 		return UpdateCharacter400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 	}
+	if v := req.Body.Voice; v != nil && strings.TrimSpace(*v) != "" {
+		if msg := s.engineMissing(*v); msg != "" {
+			return UpdateCharacter400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
+		}
+	}
 	fields := map[string]any{}
 	if !voiceOnly {
 		fields["UserEdited"] = true
@@ -374,6 +380,9 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 	}
 	if u.Importance != nil {
 		fields["Importance"] = *u.Importance
+	}
+	if u.PreviewText != nil {
+		fields["PreviewText"], _ = previewText(*u.PreviewText)
 	}
 	oldName := c.Name
 	if u.Name != nil {

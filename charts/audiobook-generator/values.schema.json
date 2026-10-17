@@ -537,6 +537,158 @@
               "$ref": "#/definitions/object"
             }
           }
+        },
+        "engines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "kind",
+              "url"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,30}$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "openai",
+                  "chatterbox"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "pattern": "^https?://"
+              },
+              "model": {
+                "type": "string"
+              },
+              "variant": {
+                "type": "string",
+                "enum": [
+                  "original",
+                  "turbo"
+                ]
+              },
+              "concurrency": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "timeout": {
+                "type": "string",
+                "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+              },
+              "gain": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "speed": {
+                "type": "boolean"
+              },
+              "voices": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "chatterbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,30}$"
+            },
+            "variant": {
+              "type": "string",
+              "enum": [
+                "original",
+                "turbo"
+              ]
+            },
+            "concurrency": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "timeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+            },
+            "gain": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "image": {
+              "$ref": "#/definitions/image"
+            },
+            "persistence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "existingClaim": {
+                  "type": "string"
+                },
+                "storageClass": {
+                  "type": "string"
+                },
+                "accessModes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "size": {
+                  "type": "string"
+                }
+              }
+            },
+            "hfTokenSecret": {
+              "type": "string"
+            },
+            "podAnnotations": {
+              "$ref": "#/definitions/object"
+            },
+            "priorityClassName": {
+              "type": "string"
+            },
+            "runtimeClassName": {
+              "type": "string"
+            },
+            "nodeSelector": {
+              "$ref": "#/definitions/object"
+            },
+            "tolerations": {
+              "$ref": "#/definitions/array"
+            },
+            "affinity": {
+              "$ref": "#/definitions/object"
+            },
+            "podSecurityContext": {
+              "$ref": "#/definitions/object"
+            },
+            "securityContext": {
+              "$ref": "#/definitions/object"
+            },
+            "extraEnv": {
+              "$ref": "#/definitions/array"
+            },
+            "resources": {
+              "$ref": "#/definitions/object"
+            }
+          }
         }
       }
     },

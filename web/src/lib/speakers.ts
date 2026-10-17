@@ -27,7 +27,7 @@ export function speakerColor(id?: number): string {
 export function unsure(c: ChapterDetail, s: Segment): boolean {
   return (
     c.attributionStatus === 'done' &&
-    s.kind === 'quote' &&
+    s.kind !== 'narration' &&
     !s.speakerManual &&
     s.confidence < (c.attribution?.unsureBelow ?? 0.6)
   );

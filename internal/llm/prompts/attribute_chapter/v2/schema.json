@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "quotes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "q": { "type": "integer" },
+          "speaker": { "type": "string" },
+          "gender": { "type": "string" },
+          "emotion": { "type": "string" },
+          "confidence": { "type": "number" }
+        },
+        "required": ["q", "speaker", "emotion", "confidence"]
+      }
+    }
+  },
+  "required": ["quotes"]
+}

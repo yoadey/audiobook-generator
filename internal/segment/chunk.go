@@ -136,3 +136,34 @@ func splitLong(s string, max int) []string {
 	}
 	return pack(out, max)
 }
+
+// ChunkPart chunks a part like Chunk; the pieces keep the part's kind,
+// number and the italic runs that fall into them.
+func ChunkPart(p Part, max int) []Part {
+	chunks := Chunk(p.Text, max)
+	out := make([]Part, 0, len(chunks))
+	text := []rune(p.Text)
+	at := 0
+	for _, c := range chunks {
+		cr := []rune(c)
+		// Chunks are the part's text in order, joined at single spaces.
+		start := indexRunes(text, cr, at)
+		piece := Part{Kind: p.Kind, Quote: p.Quote, Text: c}
+		if start >= 0 {
+			piece.Emphasis = within(p.Emphasis, start, start+len(cr))
+			at = start + len(cr)
+		}
+		out = append(out, piece)
+	}
+	return out
+}
+
+// indexRunes finds sub in s from position from (-1 if absent).
+func indexRunes(s, sub []rune, from int) int {
+	for i := from; i+len(sub) <= len(s); i++ {
+		if string(s[i:i+len(sub)]) == string(sub) {
+			return i
+		}
+	}
+	return -1
+}

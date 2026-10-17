@@ -41,6 +41,13 @@ type Block struct {
 	Kind  BlockKind
 	Level int // heading level 1-6 for Heading blocks
 	Text  string
+	// Emphasis lists the italic runs of Text (thoughts, stressed words).
+	Emphasis []Span
+}
+
+// Span is a run of characters [Start, End) of a text, in runes.
+type Span struct {
+	Start, End int
 }
 
 // Visitor receives the body text of the book. Block is required; the other
@@ -80,6 +87,86 @@ type frame struct {
 	name string
 	a    atom.Atom
 	skip bool
+	emph bool
+}
+
+// Markers of italic runs while a block's text is collected (private use
+// characters; removed again by extractEmphasis).
+const (
+	emphOpen  = '\ue000'
+	emphClose = '\ue001'
+)
+
+// italic reports whether an element sets its text in italics.
+func italic(a atom.Atom, attrs []html.Attribute) bool {
+	if a == atom.Em || a == atom.I {
+		return true
+	}
+	for _, at := range attrs {
+		switch at.Key {
+		case "style":
+			if strings.Contains(strings.ReplaceAll(strings.ToLower(at.Val), " ", ""), "font-style:italic") {
+				return true
+			}
+		case "class":
+			for _, c := range strings.Fields(strings.ToLower(at.Val)) {
+				if c == "italic" || c == "italics" || c == "ital" || c == "em" || c == "emphasis" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// extractEmphasis removes the italic markers from normalized text and
+// returns where the italic runs are (trimmed of spaces, empty runs dropped).
+func extractEmphasis(s string) (string, []Span) {
+	if !strings.ContainsAny(s, string([]rune{emphOpen, emphClose})) {
+		return s, nil
+	}
+	out := make([]rune, 0, len(s))
+	var spans []Span
+	start := -1
+	closeAt := func(end int) {
+		for start < end && out[start] == ' ' {
+			start++
+		}
+		for end > start && out[end-1] == ' ' {
+			end--
+		}
+		if end > start {
+			spans = append(spans, Span{start, end})
+		}
+		start = -1
+	}
+	for _, r := range s {
+		switch {
+		case r == emphOpen:
+			if start < 0 {
+				start = len(out)
+			}
+		case r == emphClose:
+			if start < 0 {
+				start = 0 // opened in an earlier block
+			}
+			closeAt(len(out))
+		case r == ' ' && (len(out) == 0 || out[len(out)-1] == ' '):
+			// The markers split a space run; keep one.
+		default:
+			out = append(out, r)
+		}
+	}
+	for len(out) > 0 && out[len(out)-1] == ' ' {
+		out = out[:len(out)-1]
+	}
+	if start >= 0 {
+		closeAt(len(out))
+	}
+	for i := range spans {
+		spans[i].End = min(spans[i].End, len(out))
+	}
+	return string(out), spans
 }
 
 var blockElements = map[atom.Atom]bool{
@@ -147,14 +234,25 @@ func walkDoc(r io.Reader, doc string, next int, v Visitor) (int, error) {
 		}
 		return false
 	}
-	emit := func(kind BlockKind, level int, text string) error {
-		err := v.Block(Block{Index: next, Doc: doc, Kind: kind, Level: level, Text: text})
+	emphasized := func() bool {
+		for _, f := range stack {
+			if f.emph {
+				return true
+			}
+		}
+		return false
+	}
+	emit := func(kind BlockKind, level int, text string, emph []Span) error {
+		err := v.Block(Block{Index: next, Doc: doc, Kind: kind, Level: level, Text: text, Emphasis: emph})
 		next++
 		return err
 	}
 	flush := func() error {
-		text := normalizeSpace(buf.String())
+		text, emph := extractEmphasis(normalizeSpace(buf.String()))
 		buf.Reset()
+		if emphasized() {
+			buf.WriteRune(emphOpen) // the italic run goes on in the next block
+		}
 		if text == "" {
 			return nil
 		}
@@ -167,11 +265,11 @@ func walkDoc(r io.Reader, doc string, next int, v Visitor) (int, error) {
 		}
 		switch {
 		case level > 0:
-			return emit(Heading, level, text)
+			return emit(Heading, level, text, nil)
 		case sceneBreakRe.MatchString(text):
-			return emit(SceneBreak, 0, text)
+			return emit(SceneBreak, 0, text, nil)
 		default:
-			return emit(Text, 0, text)
+			return emit(Text, 0, text, emph)
 		}
 	}
 	anchor := func(attrs []html.Attribute, a atom.Atom) {
@@ -219,7 +317,7 @@ func walkDoc(r io.Reader, doc string, next int, v Visitor) (int, error) {
 					if err := flush(); err != nil {
 						return next, err
 					}
-					if err := emit(SceneBreak, 0, "* * *"); err != nil {
+					if err := emit(SceneBreak, 0, "* * *", nil); err != nil {
 						return next, err
 					}
 				case blockElements[a]:
@@ -234,7 +332,11 @@ func walkDoc(r io.Reader, doc string, next int, v Visitor) (int, error) {
 			if tt == html.SelfClosingTagToken || isVoid(a) {
 				continue
 			}
-			stack = append(stack, frame{name: string(name), a: a, skip: shouldSkip(a, attrs)})
+			f := frame{name: string(name), a: a, skip: shouldSkip(a, attrs), emph: italic(a, attrs)}
+			if f.emph && inBody && !emphasized() {
+				buf.WriteRune(emphOpen)
+			}
+			stack = append(stack, f)
 
 		case html.EndTagToken:
 			name, _ := z.TagName()
@@ -246,11 +348,15 @@ func walkDoc(r io.Reader, doc string, next int, v Visitor) (int, error) {
 			}
 			// Pop up to and including the nearest matching element; tolerate
 			// unbalanced markup.
+			was := emphasized()
 			for i := len(stack) - 1; i >= 0; i-- {
 				if stack[i].name == string(name) {
 					stack = stack[:i]
 					break
 				}
+			}
+			if was && !emphasized() {
+				buf.WriteRune(emphClose)
 			}
 			if a == atom.Body {
 				inBody = false

@@ -1,0 +1,233 @@
+{{- if .Values.tts.chatterbox.enabled }}
+{{- $c := .Values.tts.chatterbox }}
+{{- if not (has $c.variant (list "original" "turbo")) }}
+{{- fail "tts.chatterbox.variant must be original or turbo" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "abg.chatterbox.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chatterbox
+data:
+  # Copied to /app/config.yaml on every start (the server rewrites it).
+  config.yaml: |
+    server:
+      host: 0.0.0.0
+      port: 8004
+    model:
+      repo_id: {{ ternary "chatterbox" "chatterbox-turbo" (eq $c.variant "original") }}
+    tts_engine:
+      device: auto
+      predefined_voices_path: voices
+      reference_audio_path: reference_audio
+      default_voice_id: Emily.wav
+    paths:
+      model_cache: model_cache
+      output: outputs
+    generation_defaults:
+      temperature: 0.8
+      exaggeration: 0.5
+      cfg_weight: 0.5
+      seed: 0
+      speed_factor: 1.0
+      language: en
+    audio_output:
+      format: wav
+      sample_rate: 24000
+      max_reference_duration_sec: 30
+      save_to_disk: false
+{{- if and $c.persistence.enabled (not $c.persistence.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "abg.chatterbox.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chatterbox
+spec:
+  accessModes:
+    {{- toYaml $c.persistence.accessModes | nindent 4 }}
+  {{- with $c.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $c.persistence.size }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "abg.chatterbox.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chatterbox
+spec:
+  replicas: 1
+  # One volume and usually one GPU: never two pods at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "abg.chatterbox.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ $c | toJson | sha256sum }}
+        {{- with $c.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "abg.metaLabels" . | nindent 8 }}
+        {{- include "abg.chatterbox.selectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $c.runtimeClassName }}
+      runtimeClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $c.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: config
+          image: {{ printf "%s:%s" $c.image.repository $c.image.tag }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $c.securityContext | nindent 12 }}
+          command: [sh, -c, "cp /config/config.yaml /state/config.yaml && mkdir -p /state/reference_audio /state/hf_cache /state/model_cache"]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: state
+              mountPath: /state
+      containers:
+        - name: chatterbox
+          image: {{ printf "%s:%s" $c.image.repository $c.image.tag }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $c.securityContext | nindent 12 }}
+          env:
+            - name: HF_HOME
+              value: /app/hf_cache
+            {{- with $c.hfTokenSecret }}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: HF_TOKEN
+            {{- end }}
+            {{- with $c.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8004
+              protocol: TCP
+          # The port opens once the model is loaded (downloaded on the
+          # first start).
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 180
+          # The server answers nothing else while it synthesizes (its
+          # handler blocks), so HTTP probes would fail during long pieces.
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          volumeMounts:
+            - name: state
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+            - name: state
+              mountPath: /app/reference_audio
+              subPath: reference_audio
+            - name: state
+              mountPath: /app/hf_cache
+              subPath: hf_cache
+            - name: state
+              mountPath: /app/model_cache
+              subPath: model_cache
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "abg.chatterbox.fullname" . }}
+        - name: state
+          {{- if $c.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $c.persistence.existingClaim | default (include "abg.chatterbox.fullname" .) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "abg.chatterbox.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chatterbox
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8004
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "abg.chatterbox.selectorLabels" . | nindent 4 }}
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "abg.chatterbox.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chatterbox
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "abg.chatterbox.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "abg.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+{{- end }}
+{{- end }}

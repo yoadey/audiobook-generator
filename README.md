@@ -8,10 +8,10 @@ Go backend, React frontend, shipped as a self-contained Helm chart that
 brings the app, the [Kokoro](https://github.com/remsky/Kokoro-FastAPI) TTS
 server and storage.
 
-> **Status:** milestone M7 — **feature-complete v1.0**: a multi-voice
-> audiobook in which every character speaks with their own voice, plus
-> pronunciations, podcast feeds, M4B downloads, sign-in, backups and
-> export/import. EPUBs are split into volumes, chapters and narration/quote segments
+> **Status:** milestone M8 — a multi-voice audiobook in which every
+> character speaks with their own voice, to listen to and read along,
+> plus pronunciations, podcast feeds with transcripts, M4B downloads,
+> sign-in, backups and export/import. EPUBs are split into volumes, chapters and narration/quote segments
 > (a 3-million-word book imports in seconds) and can be reviewed in the UI;
 > chapters are rendered with a narrator voice of your choice (Kokoro, voice
 > mixes, speed, previews) and played in the built-in player, which resumes
@@ -32,7 +32,9 @@ server and storage.
 > podcast RSS feed for any podcast app and an M4B per volume with chapter
 > markers. Sign-in via OpenID Connect (e.g. Zitadel), Prometheus metrics,
 > Litestream backups of SQLite to S3 and an export/import of a book with
-> everything its analysis cost round it off. See
+> everything its analysis cost round it off. The player shows the text
+> along with the voice (also as a transcript in podcast apps), and voice
+> previews speak sample texts of your choice. See
 > [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Install
@@ -88,10 +90,57 @@ authorization on authentication" with a project role). Health probes,
 `/metrics` and the podcast feeds stay reachable without a session; feed
 URLs carry a token instead, so treat them like passwords.
 
-### Podcast feeds, downloads, backup
+### Reading along, podcast feeds, downloads, backup
 
+- **Reading along**: the listen page is a reader with a small player bar
+  at the bottom. It marks the sentence and the word being spoken (word
+  times come from Kokoro-FastAPI; other TTS servers give sentences only)
+  and follows the voice
+  (scroll away and *Back to the voice* returns). A click on a passage
+  listens from there; scrolling while paused moves the listening position
+  to what you read (also in chapters without audio yet), so reading and
+  listening continue at the same place. Text size and serif/sans are under
+  *Aa*, chapters in the list beside it; space plays and pauses, the arrow
+  keys skip.
+- **Quotation marks and thoughts**: speech in double or single marks
+  (curly or straight), guillemets, „low-high“ marks or dash dialogue is
+  recognized per book. Italics are kept: runs of a few words in italics
+  (and, in books whose speech uses double marks, runs in single ones) are
+  thoughts, attributed like quotations and spoken with the thinker's voice.
+  Thought detection applies to books imported from now on (import a book
+  again to get it).
+- **Spoken text**: footnote markers, brackets of game texts ([Skill]) and
+  decoration are not read; shouted capitals and Roman chapter numbers are
+  read as words.
+- **Expression**: the emotion of a quote (from the speaker attribution or
+  set by hand) changes its pace and loudness; pauses follow the text:
+  short between lines of a dialogue, longer after speech that trails off,
+  almost none after speech that is cut off, and a pause at an ellipsis
+  within a sentence.
+- **Chapter preparation** (optional, per book under *Narrator*): before a
+  chapter is rendered, the LLM marks the mood of the narration, dramatic
+  pauses and notation the voice would misread ("Lv. 5" → "level five"),
+  and suggests pronunciations of invented names, which you accept or
+  dismiss under *Pronunciation*. It only changes how the text is spoken,
+  never its words: spoken forms are accepted only for notation (numbers,
+  symbols, abbreviations) and must keep every other word. The chapter page
+  shows what was found and can prepare it again.
+- **Other speech engines** (optional): voices of further engines, such as
+  Chatterbox, which acts emotions itself, can be given to characters
+  (voice editor: *Kokoro* or the engine) while Kokoro keeps the
+  narration. Configure them with `tts.engines`, or let the chart run
+  Chatterbox-TTS-Server (`tts.chatterbox.enabled`; it needs a GPU for
+  more than a few characters). See [docs/tts-engines.md](docs/tts-engines.md),
+  which also evaluates Chatterbox.
 - **Podcast**: the book page shows a feed URL (button *Podcast*) that any
-  podcast app can subscribe to; rendered chapters are its episodes.
+  podcast app can subscribe to; rendered chapters are its episodes, each
+  with a WebVTT transcript (`podcast:transcript`) that apps such as Apple
+  Podcasts, Pocket Casts or AntennaPod show along the audio. Chapters
+  rendered before reading along existed get estimated timings until they
+  are rendered again.
+- **Sample texts**: voice previews say a text from *Settings*, a book's own
+  (narrator settings) or, for a character, quotes from the book or a text
+  of its own (voice editor).
 - **Downloads**: one M4B with chapter markers and cover per volume (card
   *Downloads*); missing chapters are rendered first.
 - **Backup**: with SQLite, `backup.litestream` (S3 endpoint, bucket and a

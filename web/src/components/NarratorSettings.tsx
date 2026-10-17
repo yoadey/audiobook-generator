@@ -7,7 +7,9 @@ import {
   Select,
   Slider,
   Stack,
+  Switch,
   Text,
+  Textarea,
   TextInput,
   Tooltip,
 } from '@mantine/core';
@@ -15,7 +17,7 @@ import { IconPlayerPlay, IconPlayerStop } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 
-import { type Book, previewVoice, updateBook, voicesQuery } from '../api/client';
+import { type Book, previewVoice, settingsQuery, updateBook, voicesQuery } from '../api/client';
 import { notifyError, notifySuccess } from '../lib/notify';
 
 const accents: Record<string, string> = { 'en-US': 'American', 'en-GB': 'British' };
@@ -27,6 +29,9 @@ export function NarratorSettings({ book }: { book: Book }) {
   const [voice, setVoice] = useState(book.narratorVoice);
   const [speed, setSpeed] = useState(book.narratorSpeed);
   const [lookahead, setLookahead] = useState<number | string>(book.lookahead);
+  const [sampleText, setSampleText] = useState(book.previewText);
+  const [prepare, setPrepare] = useState(book.prepareChapters);
+  const settings = useQuery(settingsQuery);
   const [playing, setPlaying] = useState(false);
   const audio = useRef<HTMLAudioElement | null>(null);
 
@@ -48,6 +53,8 @@ export function NarratorSettings({ book }: { book: Book }) {
         narratorVoice: voice,
         narratorSpeed: speed,
         lookahead: Number(lookahead) || 0,
+        previewText: sampleText,
+        prepareChapters: prepare,
       }),
     onSuccess: () => {
       notifySuccess('Narrator settings saved');
@@ -57,7 +64,9 @@ export function NarratorSettings({ book }: { book: Book }) {
   });
 
   const preview = useMutation({
-    mutationFn: () => previewVoice(voice, speed),
+    // An edited sample text is heard before it is saved.
+    mutationFn: () =>
+      previewVoice(voice, speed, sampleText.trim() || undefined, undefined, book.id),
     onSuccess: (url) => {
       audio.current?.pause();
       const a = new Audio(url);
@@ -72,7 +81,9 @@ export function NarratorSettings({ book }: { book: Book }) {
   const dirty =
     voice !== book.narratorVoice ||
     speed !== book.narratorSpeed ||
-    Number(lookahead) !== book.lookahead;
+    Number(lookahead) !== book.lookahead ||
+    sampleText.trim() !== book.previewText ||
+    prepare !== book.prepareChapters;
 
   return (
     <Card withBorder>
@@ -139,13 +150,33 @@ export function NarratorSettings({ book }: { book: Book }) {
             onChange={setLookahead}
             w={160}
           />
+        </Group>
+        <Textarea
+          label="Sample text"
+          description="What voice previews in this book say (with its pronunciations); empty for the text in Settings."
+          placeholder={settings.data?.previewText || settings.data?.defaultPreviewText}
+          value={sampleText}
+          onChange={(e) => setSampleText(e.currentTarget.value)}
+          maxLength={500}
+          autosize
+          minRows={1}
+          maw={720}
+        />
+        <Switch
+          label="Prepare chapters with AI"
+          description="Before a chapter is rendered, the LLM marks the mood of the narration, dramatic pauses and spots the voice would misread, and suggests pronunciations for the lexicon. The text itself is never changed; this uses LLM quota like the speaker attribution."
+          checked={prepare}
+          onChange={(e) => setPrepare(e.currentTarget.checked)}
+          maw={720}
+        />
+        <Group>
           <Button onClick={() => save.mutate()} disabled={!dirty} loading={save.isPending}>
             Save
           </Button>
         </Group>
         <Text size="xs" c="dimmed">
-          Changing the voice or speed marks existing audio as outdated; chapters in the lookahead
-          window are rendered again automatically while you listen.
+          Changing the voice, speed or preparation marks existing audio as outdated; chapters in the
+          lookahead window are rendered again automatically while you listen.
         </Text>
       </Stack>
     </Card>

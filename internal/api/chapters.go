@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -37,6 +37,7 @@ func (s *Server) toChapter(b *store.Book, c *store.Chapter, rendering bool) Chap
 
 		AttributionStatus: AttributionStatus(cmp.Or(c.AttributionStatus, store.AttributionNone)),
 		AttributionError:  nonEmpty(c.AttributionError),
+		PrepStatus:        PrepStatus(cmp.Or(c.PrepStatus, store.PrepNone)),
 	}
 	if c.Narration != "" {
 		n := Narration(c.Narration)
@@ -73,7 +74,9 @@ func (s *Server) dropAudio(ctx context.Context, chapterIDs ...int64) {
 		return
 	}
 	for _, p := range paths {
-		s.removeFile(ctx, p)
+		if err := render.RemoveVersions(s.DataDir, p); err != nil {
+			s.Log.WarnContext(ctx, "remove audio", "path", p, "err", err)
+		}
 	}
 }
 
@@ -84,16 +87,6 @@ func (s *Server) removeRenderCache(ctx context.Context, chapterIDs ...int64) {
 		if err := os.RemoveAll(render.CacheDir(s.DataDir, id)); err != nil {
 			s.Log.WarnContext(ctx, "remove render cache", "chapter", id, "err", err)
 		}
-	}
-}
-
-// removeFile deletes a file below the data dir (no-op for "").
-func (s *Server) removeFile(ctx context.Context, rel string) {
-	if rel == "" {
-		return
-	}
-	if err := os.Remove(filepath.Join(s.DataDir, rel)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		s.Log.WarnContext(ctx, "remove file", "path", rel, "err", err)
 	}
 }
 
@@ -180,6 +173,28 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		if e := Emotion(sg.Emotion); e.Valid() {
 			seg.Emotion = &e
 		}
+		if spans := store.DecodeSpans(sg.Emphasis, utf8.RuneCountInString(sg.Text)); len(spans) > 0 {
+			emph := make([][]int, len(spans))
+			for i, sp := range spans {
+				emph[i] = []int{sp[0], sp[1]}
+			}
+			seg.Emphasis = &emph
+		}
+		n := utf8.RuneCountInString(sg.Text)
+		if ps := store.DecodePauses(sg.Pauses, n); len(ps) > 0 {
+			pauses := make([][]int, len(ps))
+			for i, p := range ps {
+				pauses[i] = []int{p.Offset, p.Ms}
+			}
+			seg.Pauses = &pauses
+		}
+		if fs := store.DecodeSpokenAs(sg.SpokenAs, n); len(fs) > 0 {
+			forms := make([]SpokenForm, len(fs))
+			for i, f := range fs {
+				forms[i] = SpokenForm{Start: f.Start, End: f.End, Say: f.Say}
+			}
+			seg.SpokenAs = &forms
+		}
 		if id := sg.SpeakerCharacterID; id != nil && !seen[*id] {
 			seen[*id] = true
 			speakerIDs = append(speakerIDs, *id)
@@ -198,8 +213,14 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		AudioStale: ch.AudioStale, AudioRerendering: ch.AudioRerendering, AudioVersion: ch.AudioVersion,
 		Narration:      ch.Narration,
 		PovCharacterId: ch.PovCharacterId, AttributionStatus: ch.AttributionStatus, AttributionError: ch.AttributionError,
+		PrepStatus: ch.PrepStatus,
 		Paragraphs: make([]Paragraph, 0, len(paras)),
 	}
+	prep, err := s.toPreparation(ctx, c)
+	if err != nil {
+		return ChapterDetail{}, err
+	}
+	out.Preparation = &prep
 	att, err := s.toAttribution(ctx, c)
 	if err != nil {
 		return ChapterDetail{}, err
@@ -234,9 +255,11 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		if ss == nil {
 			ss = []Segment{}
 		}
-		out.Paragraphs = append(out.Paragraphs, Paragraph{
-			Id: p.ID, Idx: p.Idx, Kind: ParagraphKind(p.Kind), Text: p.Text, Segments: ss,
-		})
+		para := Paragraph{Id: p.ID, Idx: p.Idx, Kind: ParagraphKind(p.Kind), Text: p.Text, Segments: ss}
+		if m := Mood(p.Mood); m.Valid() {
+			para.Mood = &m
+		}
+		out.Paragraphs = append(out.Paragraphs, para)
 	}
 	return out, nil
 }
@@ -289,7 +312,11 @@ func (s *Server) MergeChapterWithNext(ctx context.Context, req MergeChapterWithN
 		return nil, err
 	}
 	s.dropAudio(ctx, c.ID)
-	s.removeFile(ctx, nextAudio)
+	if nextAudio != "" {
+		if err := render.RemoveVersions(s.DataDir, nextAudio); err != nil {
+			s.Log.WarnContext(ctx, "remove audio", "path", nextAudio, "err", err)
+		}
+	}
 	if nextID != 0 {
 		s.removeRenderCache(ctx, nextID)
 	}

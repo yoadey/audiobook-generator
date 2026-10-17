@@ -57,6 +57,11 @@
   ],
   packageRules: [
     {
+      description: "Chatterbox-TTS-Server publishes commit tags per variant (sha-<commit>-cpu), which have no order: bumped by hand",
+      matchPackageNames: ["ghcr.io/devnen/chatterbox-tts-server"],
+      enabled: false,
+    },
+    {
       description: "Keep Helm on v3 for now",
       matchPackageNames: ["helm/helm"],
       allowedVersions: "<4",

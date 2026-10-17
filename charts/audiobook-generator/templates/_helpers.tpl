@@ -65,6 +65,37 @@ app.kubernetes.io/component: kokoro
 {{- printf "%s-kokoro" (include "abg.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{- define "abg.chatterbox.fullname" -}}
+{{- printf "%s-chatterbox" (include "abg.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/* Selector labels of Chatterbox. */}}
+{{- define "abg.chatterbox.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "abg.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: chatterbox
+{{- end }}
+
+{{/* ABG_TTS_ENGINES: tts.engines plus the chart's Chatterbox (JSON, empty for none). */}}
+{{- define "abg.ttsEngines" -}}
+{{- $list := list }}
+{{- range .Values.tts.engines }}
+{{- $list = append $list . }}
+{{- end }}
+{{- if .Values.tts.chatterbox.enabled }}
+{{- $c := .Values.tts.chatterbox }}
+{{- range .Values.tts.engines }}
+{{- if eq .name $c.name }}
+{{- fail (printf "tts.engines: %q is the name of tts.chatterbox" .name) }}
+{{- end }}
+{{- end }}
+{{- $list = append $list (dict "name" $c.name "kind" "chatterbox" "url" (printf "http://%s:8004" (include "abg.chatterbox.fullname" .)) "variant" $c.variant "concurrency" (int $c.concurrency) "timeout" $c.timeout "gain" $c.gain) }}
+{{- end }}
+{{- if $list }}
+{{- toJson $list }}
+{{- end }}
+{{- end }}
+
 {{- define "abg.cnpg.clusterName" -}}
 {{- printf "%s-db" (include "abg.fullname" .) | trunc 50 | trimSuffix "-" }}
 {{- end }}

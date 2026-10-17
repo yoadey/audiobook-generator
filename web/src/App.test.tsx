@@ -44,6 +44,7 @@ const book = {
   narratorVoice: 'af_heart',
   narratorSpeed: 1,
   lookahead: 3,
+  previewText: '',
   analysisStatus: 'none',
   castingStatus: 'none',
   createdAt: '2026-10-15T00:00:00Z',
@@ -84,6 +85,7 @@ const erin = {
   voiceSource: 'own',
   voiceManual: false,
   voiceNote: 'warm and British',
+  previewText: '',
 };
 
 const voices = [
@@ -315,10 +317,13 @@ describe('App', () => {
       'PUT /api/books/1/progress': { chapterId: 12, positionMs: 5000 },
     });
     renderAt('/books/1/listen');
-    expect(await screen.findByRole('heading', { name: 'Chapter 2' })).toBeInTheDocument();
-    expect(screen.getByText('Chapter 2 of 2')).toBeInTheDocument();
-    expect(screen.getByText('This chapter has no audio yet.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Render now' })).toBeInTheDocument();
+    const player = await screen.findByTestId('player');
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+    expect(within(player).getByText('Chapter 2')).toBeInTheDocument();
+    expect(
+      within(player).getByText('No audio yet; your reading position is kept.'),
+    ).toBeInTheDocument();
+    expect(within(player).getByRole('button', { name: 'Render now' })).toBeInTheDocument();
     // Entering the chapter stores the position (which queues the lookahead).
     await vi.waitFor(() =>
       expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PUT')).toBe(
@@ -335,10 +340,126 @@ describe('App', () => {
       'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
     });
     const { container } = renderAt('/books/1/listen');
-    expect(await screen.findByRole('heading', { name: 'Chapter 1' })).toBeInTheDocument();
+    const player = await screen.findByTestId('player');
+    expect(within(player).getByText('Chapter 1')).toBeInTheDocument();
     const audio = container.querySelector('audio');
     expect(audio).toHaveAttribute('src', expect.stringContaining('/api/chapters/10/audio'));
     expect(screen.getByRole('button', { name: 'Play' })).toBeEnabled();
+  });
+
+  const readText = (id: number, audioStatus: string) => ({
+    ...chapters[0],
+    id,
+    audioStatus,
+    paragraphs: [
+      {
+        id: 200,
+        idx: 0,
+        kind: 'text',
+        text: 'It was late. “Come in,” she said.',
+        segments: [
+          {
+            id: 201,
+            idx: 0,
+            kind: 'narration',
+            quoteRef: 0,
+            text: 'It was late.',
+            confidence: 1,
+            speakerManual: false,
+          },
+          {
+            id: 202,
+            idx: 1,
+            kind: 'quote',
+            quoteRef: 1,
+            text: '“Come in,”',
+            confidence: 1,
+            speakerManual: false,
+          },
+          {
+            id: 203,
+            idx: 2,
+            kind: 'narration',
+            quoteRef: 0,
+            text: 'she said.',
+            confidence: 1,
+            speakerManual: false,
+          },
+          {
+            id: 204,
+            idx: 3,
+            kind: 'narration',
+            quoteRef: 0,
+            text: '…',
+            confidence: 1,
+            speakerManual: false,
+          },
+        ],
+      },
+    ],
+  });
+  const progressPuts = (fetch: ReturnType<typeof stubApi>) =>
+    fetch.mock.calls
+      .map(([r]) => r)
+      .filter((r): r is Request => typeof r !== 'string' && r.method === 'PUT');
+
+  it('reads along: a click on a passage listens from there', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/chapters': { items: chapters, total: 2 },
+      '/api/chapters/10': readText(10, 'ready'),
+      '/api/chapters/10/timings': {
+        chapterId: 10,
+        version: 'abc',
+        exact: true,
+        cues: [
+          { segmentId: 201, startMs: 300, endMs: 1200 },
+          { segmentId: 202, startMs: 1350, endMs: 2000 },
+          { segmentId: 203, startMs: 2150, endMs: 2900 },
+        ],
+      },
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+    });
+    renderAt('/books/1/listen');
+    fireEvent.click(await screen.findByText('“Come in,”'));
+    await vi.waitFor(async () => {
+      const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
+      expect(bodies).toContainEqual({ chapterId: 10, positionMs: 1350, segmentId: 202 });
+    });
+    // A segment that is not spoken stands for its spoken neighbour.
+    fireEvent.click(screen.getByText('…'));
+    await vi.waitFor(async () => {
+      const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
+      expect(bodies).toContainEqual({ chapterId: 10, positionMs: 2150, segmentId: 203 });
+    });
+  });
+
+  it('keeps the reading position of a chapter without audio', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/chapters': {
+        items: [{ ...chapters[0], id: 12, title: 'Chapter 2', audioStatus: 'none' }],
+        total: 1,
+      },
+      '/api/chapters/12': readText(12, 'none'),
+      'GET /api/books/1/progress': { chapterId: 12, positionMs: 0, segmentId: 202 },
+      'PUT /api/books/1/progress': { chapterId: 12, positionMs: 0 },
+    });
+    renderAt('/books/1/listen');
+    await screen.findByText(/No audio yet; your reading position is kept/);
+    // The stored position is marked and kept when the chapter is entered.
+    expect((await screen.findByText('“Come in,”')).style.background).toContain('yellow');
+    await vi.waitFor(async () => {
+      const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
+      expect(bodies).toContainEqual({ chapterId: 12, positionMs: 0, segmentId: 202 });
+    });
+    fireEvent.click(screen.getByText('she said.'));
+    await vi.waitFor(async () => {
+      const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
+      expect(bodies).toContainEqual({ chapterId: 12, positionMs: 0, segmentId: 203 });
+    });
+    expect(screen.getByText('she said.').style.background).toContain('yellow');
   });
 
   it('lists jobs', async () => {
@@ -879,6 +1000,70 @@ describe('App', () => {
       voice: 'bf_emma',
       voiceSpeed: 1,
     });
+  });
+
+  it('gives a character a sample text of its own', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/voices': voices,
+      'GET /api/characters/7': { ...erin, chapters: [] },
+      'GET /api/characters/7/quotes': [
+        { text: '“Welcome to the inn!”', chapterId: 10, chapterIdx: 0, chapterTitle: 'Chapter 1' },
+      ],
+      'PATCH /api/characters/7': { ...erin, chapters: [] },
+    });
+    renderAt('/books/1/characters/7');
+    const editor = await screen.findByTestId('voice-editor');
+    await within(editor).findByText('“Welcome to the inn!”');
+    fireEvent.click(within(editor).getByRole('radio', { name: 'Own sample text' }));
+    fireEvent.change(within(editor).getByRole('textbox', { name: 'Sample text' }), {
+      target: { value: 'Mind the stairs.' },
+    });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save voice' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PATCH')).toBe(
+        true,
+      ),
+    );
+    const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
+    expect(await (patch[0] as Request).json()).toEqual({ previewText: 'Mind the stairs.' });
+    // The preview says it.
+    fireEvent.click(within(editor).getByRole('button', { name: 'Listen to this voice' }));
+    await vi.waitFor(() =>
+      expect(
+        fetch.mock.calls.some(([r]) => typeof r === 'string' && r.endsWith('/voices/preview')),
+      ).toBe(true),
+    );
+    const call = fetch.mock.calls.find(
+      ([r]) => typeof r === 'string' && r.endsWith('/voices/preview'),
+    )! as unknown as [string, RequestInit];
+    expect(JSON.parse(call[1].body as string)).toMatchObject({ text: 'Mind the stairs.' });
+  });
+
+  it('saves the sample text of voice previews', async () => {
+    const fetch = stubApi({
+      '/api/llm/providers': [],
+      'GET /api/settings': { previewText: '', defaultPreviewText: 'It was a bright cold day.' },
+      'PATCH /api/settings': {
+        previewText: 'Call me Ishmael.',
+        defaultPreviewText: 'It was a bright cold day.',
+      },
+    });
+    renderAt('/settings');
+    const input = await screen.findByRole('textbox', { name: 'Sample text' });
+    expect(input).toHaveAttribute('placeholder', 'It was a bright cold day.');
+    fireEvent.change(input, { target: { value: 'Call me Ishmael.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PATCH')).toBe(
+        true,
+      ),
+    );
+    const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
+    expect(await (patch[0] as Request).json()).toEqual({ previewText: 'Call me Ishmael.' });
+    expect(
+      await screen.findByRole('button', { name: 'Use the built-in text' }),
+    ).toBeInTheDocument();
   });
 
   it('lists the voice catalogue', async () => {

@@ -15,7 +15,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { IconPencil, IconSearch, IconTrash } from '@tabler/icons-react';
+import { IconCheck, IconPencil, IconSearch, IconTrash, IconX } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -26,6 +26,7 @@ import {
   deleteLexiconEntry,
   type LexiconEntryInput,
   lexiconQuery,
+  type LexiconStatus,
   updateLexiconEntry,
 } from '../api/client';
 import { AnchorLink } from '../components/links';
@@ -150,6 +151,12 @@ export function LexiconPage() {
     },
     onError: (e) => notifyError('Could not save the pronunciation', e),
   });
+  const decide = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: LexiconStatus }) =>
+      updateLexiconEntry(id, { status }),
+    onSuccess: invalidate,
+    onError: (e) => notifyError('Could not save the suggestion', e),
+  });
   const remove = useMutation({
     mutationFn: (id: number) => deleteLexiconEntry(id),
     onSuccess: invalidate,
@@ -161,8 +168,11 @@ export function LexiconPage() {
 
   const q = search.trim().toLowerCase();
   const shown = (entries.data ?? []).filter(
-    (e) => !q || e.term.toLowerCase().includes(q) || e.replacement.toLowerCase().includes(q),
+    (e) =>
+      e.status !== 'suggested' &&
+      (!q || e.term.toLowerCase().includes(q) || e.replacement.toLowerCase().includes(q)),
   );
+  const suggested = (entries.data ?? []).filter((e) => e.status === 'suggested');
 
   return (
     <Stack>
@@ -194,6 +204,68 @@ export function LexiconPage() {
         onSubmit={(e) => create.mutate(e)}
       />
 
+      {suggested.length > 0 && (
+        <Stack gap="xs" data-testid="lexicon-suggestions">
+          <Text fw={600}>Suggestions</Text>
+          <Text size="sm" c="dimmed">
+            Found while preparing chapters. They apply once accepted; a dismissed one is not
+            suggested again.
+          </Text>
+          <Table>
+            <Table.Tbody>
+              {suggested.map((e) => (
+                <Table.Tr key={e.id}>
+                  <Table.Td>{e.term}</Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{e.replacement}</Text>
+                    {e.note && (
+                      <Text size="xs" c="dimmed">
+                        {e.note}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap={4} justify="flex-end" wrap="nowrap">
+                      <VoicePreviewButton
+                        id={`suggestion-${e.id}`}
+                        voice={voice}
+                        speed={speed}
+                        text={spoken(e)}
+                        preview={preview}
+                        label={`Listen to ${e.term} as suggested`}
+                        lexicon={false}
+                      />
+                      <Tooltip label="Accept">
+                        <ActionIcon
+                          variant="subtle"
+                          color="green"
+                          aria-label={`Accept ${e.term}`}
+                          loading={decide.isPending && decide.variables?.id === e.id}
+                          onClick={() => decide.mutate({ id: e.id, status: 'active' })}
+                        >
+                          <IconCheck size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Dismiss">
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          aria-label={`Dismiss ${e.term}`}
+                          disabled={decide.isPending && decide.variables?.id === e.id}
+                          onClick={() => decide.mutate({ id: e.id, status: 'dismissed' })}
+                        >
+                          <IconX size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Stack>
+      )}
+
       {entries.isPending ? (
         <Center>
           <Loader />
@@ -202,7 +274,7 @@ export function LexiconPage() {
         <Alert color="red" title="Could not load the pronunciations">
           {entries.error.message}
         </Alert>
-      ) : entries.data.length === 0 ? (
+      ) : entries.data.length === suggested.length ? (
         <Text c="dimmed">No pronunciations yet.</Text>
       ) : (
         <>
@@ -252,6 +324,13 @@ export function LexiconPage() {
                             IPA
                           </Badge>
                         )}
+                        {e.status === 'dismissed' && (
+                          <Tooltip label="A dismissed suggestion: not applied">
+                            <Badge size="xs" variant="light" color="gray">
+                              dismissed
+                            </Badge>
+                          </Tooltip>
+                        )}
                       </Group>
                     </Table.Td>
                     <Table.Td>
@@ -264,6 +343,18 @@ export function LexiconPage() {
                           preview={preview}
                           label={`Listen to ${e.term}`}
                         />
+                        {e.status === 'dismissed' && (
+                          <Tooltip label="Accept">
+                            <ActionIcon
+                              variant="subtle"
+                              color="green"
+                              aria-label={`Accept ${e.term}`}
+                              onClick={() => decide.mutate({ id: e.id, status: 'active' })}
+                            >
+                              <IconCheck size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
                         <Tooltip label="Edit">
                           <ActionIcon
                             variant="subtle"

@@ -114,6 +114,9 @@ func attributed(segs []store.Segment, re *regexp.Regexp) []string {
 				narration.WriteString(" ")
 				continue
 			}
+			if s.Kind == store.SegmentThought {
+				continue // only speech tells how a voice sounds before attribution
+			}
 			b, ok := quotes[s.QuoteRef]
 			if !ok {
 				b = &strings.Builder{}

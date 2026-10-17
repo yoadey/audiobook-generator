@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-16 · Status: **M0–M7 implemented** (feature-complete v1.0: multi-voice audiobook, lexicon, podcast RSS, M4B, OIDC, metrics, Litestream, export/import); M8 optional
+Last updated: 2026-10-16 · Status: **M0–M7 implemented** (feature-complete v1.0: multi-voice audiobook, lexicon, podcast RSS, M4B, OIDC, metrics, Litestream, export/import); from M8: reading along (also as podcast transcripts) and custom preview texts
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -155,8 +155,13 @@ an optional later feature (M8), not a requirement.
 
 - Split paragraphs into **narration** and **quoted speech** with a state
   machine over quote characters; the quote style is detected per book from
-  statistics (`“…”` vs. `"…"` vs. British `‘…’`). Multi-paragraph quotes
-  (a paragraph without a closing mark) continue correctly.
+  statistics (`“…”`, `"…"`, British `‘…’`, `'…'`, guillemets `«…»`/`»…«`,
+  `„…“`, or dash dialogue). Multi-paragraph quotes (a paragraph without a
+  closing mark) continue correctly.
+- Italics from the EPUB are kept per segment. Italic runs of a few words,
+  and runs in single marks in books whose speech uses double ones, are
+  **thoughts**: segments of their own with a quote number, attributed by
+  the LLM to the thinking character (marked `*…*` in the prompt).
 - Every quote gets a stable ID (`q<n>` per chapter).
 - Long narration is split at sentence boundaries into TTS-sized pieces
   (Kokoro works best with ≤ ~400 characters per call).
@@ -330,23 +335,91 @@ As implemented in M6 (`internal/attribution`):
   narration and unknown speakers with the narrator. A per-chapter voice
   revision is bumped by attribution, speaker edits, character voice,
   tier, gender or age changes, merges and the casting; audio rendered at an
-  older revision is stale and re-rendered by the lookahead. Emotions are
-  stored and shown, not yet spoken (Kokoro has no emotion control).
+  older revision is stale and re-rendered by the lookahead. Kokoro has no
+  emotion control, so a quote's emotion is spoken through pace and
+  loudness (subtle: e.g. sad 0.92× speed, softer; shouting louder but never
+  clipping; whispering much softer); thoughts are a little softer than
+  speech. Changing an emotion by hand bumps the voice revision.
+
+### 3.6a Chapter preparation (per chapter, just in time, optional)
+
+A book can ask for its chapters to be prepared for reading aloud
+(`prepareChapters`, off by default because it spends LLM quota). Like the
+attribution, a render waits for it (queued if missing) unless the job
+cannot run soon; it needs no character analysis. The LLM gets the chapter
+with numbered paragraphs (`[pN]`, long chapters in parts, each stored with
+its answer so a stopped job resumes) and returns labels only
+(`prepare_chapter` prompt):
+
+- **moods** of narration per paragraph (calm, tense, action, somber, warm,
+  light, mysterious) → the narrator's pace and loudness in that paragraph
+  (subtle, e.g. tense 1.04×, somber 0.94× and softer);
+- **dramatic pauses**, anchored by the 3–8 words before them, which must be
+  found in the paragraph and end a sentence or clause (short 0.5 s, long
+  1 s; at most one per paragraph and a handful per chapter); a pause
+  inside a segment splits it into phrases;
+- **spoken forms** for notation a TTS misreads ("Lv. 5" → "level five",
+  status screens, units, symbols): the spot must occur verbatim within one
+  segment, be short and hold notation (digits, symbols, known
+  abbreviations, acronyms said by their initials, Roman numerals); the
+  spoken form is plain words (Kokoro syntax is removed), keeps every
+  ordinary word of the spot in order and may add only a few words per
+  piece of notation. The LLM thus never changes, adds or drops a word of
+  the story, it only says how notation is read;
+- **pronunciations** of invented names as respellings, stored in the book's
+  lexicon as *suggestions* (applied only once accepted; dismissed ones are
+  not suggested again); the terms must occur in the text.
+
+All of it applies to the TTS input only: the book text, the reader and
+the transcripts stay as written, and word timings skip the replaced spots.
+Applying a part bumps the voice revision; turning the option on or off
+outdates the book's audio, and the render ignores preparations while it
+is off. "Prepare again" discards a chapter's moods, pauses and spoken
+forms (the lexicon keeps its entries).
 
 ### 3.7 Rendering and assembly
 
-- Every segment → `POST /v1/audio/speech` (recipe, speed, PCM/WAV).
+- Every segment → `POST /dev/captioned_speech` (recipe, speed, PCM, word
+  timestamps; Kokoro-FastAPI ≥ v0.9), falling back to `/v1/audio/speech`
+  for servers without it. A segment with an ellipsis inside ("I just… I
+  don't know") is split there into phrases with a pause between them.
   Concurrency is configurable (≈ Kokoro replicas × 1–2).
 - A per-book pronunciation lexicon (fantasy names) is applied before the TTS
   call (text replacement or Kokoro phoneme syntax).
-- Assembly with ffmpeg: pauses (narration↔dialogue ~150 ms, paragraph
-  ~400 ms, scene break ~1.2 s, chapter title + 1 s), `loudnorm`,
+- Assembly with ffmpeg: pauses by context (narration↔dialogue ~150 ms,
+  around thoughts 250 ms, paragraph ~450 ms but 300 ms between lines of an
+  exchange of speech, after trailing speech "…" 450 ms, almost none after
+  cut-off speech "—" so the next speaker cuts in, sad lines a little more,
+  scene break ~1.2 s, chapter title + 1 s), `loudnorm`,
   **AAC 64 kbit/s mono** per chapter (`.m4a`) with metadata; optionally one
   M4B per volume with chapter markers.
 - Temporary files exist only during the job. In v1 a correction re-renders
   the whole chapter (a few CPU minutes); a per-segment cache (Opus) is a
   later optimisation.
 - Storage for finished audio: ~22–29 MB/h ⇒ **~10–19 GB** per huge book.
+- While joining the pieces the render records when each segment is spoken
+  (exact, from the PCM lengths and the known pauses) in a small JSON file
+  next to the audio version, with the start of every word as reported by
+  Kokoro (matched to the segment's text; words read differently, such as
+  numbers, are skipped). The reader follows the voice with it, marking the
+  sentence and word being spoken, and the podcast feed serves it as a
+  WebVTT transcript per episode (`<podcast:transcript>`), its lines
+  starting with their first word. Renders from before get an estimate from
+  the text length; a re-render makes them exact.
+
+### 3.7a Other speech engines (optional)
+
+Kokoro cannot act. Further engines are configured by name
+(`ABG_TTS_ENGINES`, chart `tts.engines` / `tts.chatterbox`) and their
+voices written `<engine>:<voice>`, chosen per character (or, through the
+API, as narrator). A router in `internal/tts` sends each piece to its
+voice's engine (bounded concurrency per engine) and converts its WAV to
+24 kHz mono PCM. An engine that speaks emotions itself (Chatterbox, model
+*original*) is given the quote's emotion, the narration's mood and
+thoughts, mapped to its exaggeration/cfg controls with a fixed seed per
+voice; the render then leaves pace alone (only loudness). Engines have no
+word timings (sentence marking only). Details and the evaluation of
+Chatterbox: `docs/tts-engines.md`.
 
 ### 3.8 Scheduler and jobs
 
@@ -678,7 +751,8 @@ Every milestone ends with an installable chart.
 | **M5** | Casting + voice catalogue + voice editor + previews | every main character has a recipe |
 | **M6** | Speaker attribution + multi-voice rendering + chapter editor | **A multi-voice audiobook** |
 | **M7** | Pronunciation lexicon, podcast RSS, OIDC, metrics/ServiceMonitor, Litestream, export/import, M4B per volume | feature-complete v1.0 |
-| **M8** (optional) | segment cache, emotions/thoughts, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
+| **M8** | Reading along: segment timings recorded while rendering, a reader (page scrolling, sticky player bar, sentence marking) that follows the voice and shares its position with the player, WebVTT transcripts per sentence in the podcast feed; more quotation styles (single, guillemets, low-high, dash dialogue), italics kept and italic/single-quoted thoughts attributed and voiced; spoken-text cleanup; custom sample texts for voice previews (instance, book, character); expression: emotions as pace and loudness, pauses by context, word timings from Kokoro (word marking in the reader, WebVTT lines by word), optional LLM chapter preparation (moods, dramatic pauses, spoken forms, pronunciation suggestions); further speech engines per character (Chatterbox with emotions, OpenAI-compatible servers), Chatterbox-TTS-Server in the chart (optional) | read and listen at once |
+| **M9** (optional) | segment cache, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
 
 Integration into the cluster repo (`HelmRelease`, Zitadel client via
 Terraform, secrets via SOPS, Garage bucket for Litestream or a CNPG
@@ -694,6 +768,7 @@ database) happens separately there once M2 is done.
 | Free tiers use inputs for training | conscious decision, stated in docs/UI; local fallback possible |
 | Attribution quality on web-serial prose | measured against an annotated corpus, confidence flags, a fast manual editor |
 | Kokoro on CPU slower than expected | M2 measures early; Kokoro replicas scale; lookahead buffers |
+| Kokoro cannot act emotions | pace, loudness and pauses by context; optional expressive engines (Chatterbox) for main characters where a GPU allows |
 | Only ~25 English base voices | weighted mixing + speed; pool for minor characters; minimum distance enforced in code |
 | Pathological EPUBs (one giant file, broken TOC) | streaming parser, several fallbacks, manual chapter correction |
 | Two database dialects drift apart | no raw SQL outside a tiny dialect interface, CI matrix over both |

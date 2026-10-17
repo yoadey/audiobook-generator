@@ -4,6 +4,8 @@ import createClient from 'openapi-fetch';
 import type { components, paths } from './schema';
 
 export type Analysis = components['schemas']['Analysis'];
+export type AppSettings = components['schemas']['AppSettings'];
+export type AppSettingsUpdate = components['schemas']['AppSettingsUpdate'];
 export type AnalysisStatus = components['schemas']['AnalysisStatus'];
 export type AudioStatus = components['schemas']['AudioStatus'];
 export type Book = components['schemas']['Book'];
@@ -15,6 +17,9 @@ export type BookPage = components['schemas']['BookPage'];
 export type Chapter = components['schemas']['Chapter'];
 export type ChapterAttribution = components['schemas']['ChapterAttribution'];
 export type ChapterDetail = components['schemas']['ChapterDetail'];
+export type ChapterPreparation = components['schemas']['ChapterPreparation'];
+export type ChapterTimings = components['schemas']['ChapterTimings'];
+export type Cue = components['schemas']['Cue'];
 export type ChapterUpdate = components['schemas']['ChapterUpdate'];
 export type Character = components['schemas']['Character'];
 export type Download = components['schemas']['Download'];
@@ -27,6 +32,7 @@ export type Me = components['schemas']['Me'];
 export type LexiconEntry = components['schemas']['LexiconEntry'];
 export type LexiconEntryInput = components['schemas']['LexiconEntryInput'];
 export type LexiconEntryUpdate = components['schemas']['LexiconEntryUpdate'];
+export type LexiconStatus = components['schemas']['LexiconStatus'];
 export type LLMProvider = components['schemas']['LLMProvider'];
 export type LLMProviderInput = components['schemas']['LLMProviderInput'];
 export type LLMProviderUpdate = components['schemas']['LLMProviderUpdate'];
@@ -38,6 +44,7 @@ export type Quote = components['schemas']['Quote'];
 export type Segment = components['schemas']['Segment'];
 export type SystemInfo = components['schemas']['SystemInfo'];
 export type Tier = components['schemas']['Tier'];
+export type TTSEngine = components['schemas']['TTSEngine'];
 export type Voice = components['schemas']['Voice'];
 export type Volume = components['schemas']['Volume'];
 
@@ -193,10 +200,38 @@ export const progressQuery = (bookId: number) =>
     staleTime: Infinity,
   });
 
+/** When each segment is spoken in a render (version: its audioVersion). */
+export const timingsQuery = (chapterId: number, version?: string) =>
+  queryOptions({
+    queryKey: ['chapters', chapterId, 'timings', version ?? ''],
+    queryFn: () =>
+      unwrap(
+        api.GET('/chapters/{chapterId}/timings', {
+          params: { path: { chapterId }, query: version ? { v: version } : {} },
+        }),
+      ),
+    // A render's timings never change.
+    staleTime: Infinity,
+  });
+
+export const settingsQuery = queryOptions({
+  queryKey: ['settings'],
+  queryFn: () => unwrap(api.GET('/settings')),
+});
+
+export const updateSettings = (body: AppSettingsUpdate) => unwrap(api.PATCH('/settings', { body }));
+
 export const voicesQuery = queryOptions({
   queryKey: ['voices'],
   queryFn: () => unwrap(api.GET('/voices')),
   staleTime: 5 * 60_000,
+});
+
+/** Speech engines besides Kokoro, with their voices. */
+export const ttsEnginesQuery = queryOptions({
+  queryKey: ['tts-engines'],
+  queryFn: () => unwrap(api.GET('/tts/engines')),
+  staleTime: 60_000,
 });
 
 export const jobsQuery = (status?: Job['status'][]) =>
@@ -353,11 +388,16 @@ export const renderBookChapters = (bookId: number, count: number, fromChapterId?
     }),
   );
 
-export const saveProgress = (bookId: number, chapterId: number, positionMs: number) =>
+export const saveProgress = (
+  bookId: number,
+  chapterId: number,
+  positionMs: number,
+  segmentId?: number,
+) =>
   unwrap(
     api.PUT('/books/{bookId}/progress', {
       params: { path: { bookId } },
-      body: { chapterId, positionMs: Math.max(0, Math.round(positionMs)) },
+      body: { chapterId, positionMs: Math.max(0, Math.round(positionMs)), segmentId },
     }),
   );
 
@@ -377,11 +417,12 @@ export async function previewVoice(
   text?: string,
   signal?: AbortSignal,
   bookId?: number,
+  emotion?: Emotion,
 ): Promise<string> {
   const response = await globalThis.fetch(`${baseUrl}/voices/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ voice, speed, text, bookId }),
+    body: JSON.stringify({ voice, speed, text, bookId, emotion }),
     signal,
   });
   signInIfExpired(response);
@@ -430,6 +471,14 @@ export const startAnalysis = (bookId: number, restart = false) =>
 export const startAttribution = (chapterId: number, force = false) =>
   unwrap(
     api.POST('/chapters/{chapterId}/attribution', {
+      params: { path: { chapterId } },
+      body: { force },
+    }),
+  );
+
+export const startPreparation = (chapterId: number, force = false) =>
+  unwrap(
+    api.POST('/chapters/{chapterId}/preparation', {
       params: { path: { chapterId } },
       body: { force },
     }),

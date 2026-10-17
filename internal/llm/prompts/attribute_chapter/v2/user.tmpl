@@ -1,0 +1,15 @@
+Characters (id | name | aliases | gender):
+{{range .Characters}}{{.}}
+{{end}}{{if .Previous}}
+Speakers of the last quotations before this text: {{.Previous}}
+{{end}}
+Chapter: {{.Title}}
+{{if .Context}}
+--- context (already attributed) ---
+
+{{.Context}}
+--- end of context ---
+{{end}}
+Quotations to attribute ({{.Count}}):
+
+{{.Text}}

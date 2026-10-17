@@ -127,15 +127,26 @@ func (s *Store) SetQuoteSpeaker(ctx context.Context, chapterID int64, quoteRef i
 			}).Error; err != nil {
 			return err
 		}
-		// Confirming the speaker it already has, or changing only the
-		// emotion (not spoken yet), changes nothing audible.
+		// Confirming the speaker and emotion it already has changes
+		// nothing audible (the emotion sets pace and loudness).
 		same := (before.SpeakerCharacterID == nil) == (characterID == nil) &&
-			(characterID == nil || *before.SpeakerCharacterID == *characterID)
+			(characterID == nil || *before.SpeakerCharacterID == *characterID) && sameEmotion(before.Emotion, emotion)
 		if same {
 			return nil
 		}
 		return db.Model(&Chapter{ID: chapterID}).Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
 	})
+}
+
+// sameEmotion: "" means neutral.
+func sameEmotion(a, b string) bool {
+	norm := func(e string) string {
+		if e == "" {
+			return "neutral"
+		}
+		return e
+	}
+	return norm(a) == norm(b)
 }
 
 // HasSpeakers reports whether any quotation of a chapter has a speaker.
@@ -173,6 +184,13 @@ func (s *Store) TouchCharacterVoices(ctx context.Context, characterIDs ...int64)
 func (s *Store) TouchBookVoices(ctx context.Context, bookID int64) error {
 	return s.db.WithContext(ctx).Model(&Chapter{}).
 		Where("book_id = ? AND quote_count > 0", bookID).
+		Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
+}
+
+// TouchBookAudio bumps the voice revision of all of a book's chapters
+// (what is said changed throughout).
+func (s *Store) TouchBookAudio(ctx context.Context, bookID int64) error {
+	return s.db.WithContext(ctx).Model(&Chapter{}).Where("book_id = ?", bookID).
 		Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
 }
 

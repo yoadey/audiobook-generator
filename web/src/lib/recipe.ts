@@ -31,3 +31,11 @@ export function formatRecipe(parts: RecipePart[]): string {
   }
   return used.map((p) => `${p.voice}(${Number((p.weight / total).toFixed(2))})`).join('+');
 }
+
+const engineVoiceRe = /^([a-z][a-z0-9-]{0,30}):([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/;
+
+/** Splits a voice of another engine ("chatterbox:Emily.wav"); undefined for Kokoro's. */
+export function splitEngineVoice(voice: string): { engine: string; voice: string } | undefined {
+  const m = engineVoiceRe.exec(voice.trim());
+  return m?.[1] && m[2] ? { engine: m[1], voice: m[2] } : undefined;
+}

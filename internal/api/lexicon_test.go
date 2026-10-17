@@ -78,3 +78,84 @@ func TestLexicon(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, c.json(http.MethodGet, "/api/books/999999/lexicon", nil, nil))
 	})
 }
+
+func TestPreparationAndSuggestions(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		c := newAPI(t, s, 10<<20)
+		data, err := epubtest.Sample()
+		require.NoError(t, err)
+		var book api.Book
+		require.Equal(t, http.StatusAccepted, c.upload("sample.epub", data, &book))
+		waitImported(t, c, book.Id)
+		id := itoa(book.Id)
+		ids, err := s.ChapterIDs(ctx, book.Id)
+		require.NoError(t, err)
+		assert.False(t, book.PrepareChapters)
+
+		// Not while the book does not ask for it.
+		require.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/chapters/"+itoa(ids[1])+"/preparation",
+			nil, nil))
+
+		// Turning the preparation on outdates all of the book's audio,
+		// chapters without quotations too.
+		revs := func() []int {
+			var out []int
+			for _, cid := range ids {
+				ch, err := s.GetChapter(ctx, cid)
+				require.NoError(t, err)
+				out = append(out, ch.VoiceRev)
+			}
+			return out
+		}
+		before := revs()
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/books/"+id,
+			map[string]any{"prepareChapters": true}, &book))
+		assert.True(t, book.PrepareChapters)
+		for i, r := range revs() {
+			assert.Greater(t, r, before[i], "chapter %d", i)
+		}
+
+		var prep api.ChapterPreparation
+		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, "/api/chapters/"+itoa(ids[1])+"/preparation",
+			nil, &prep))
+		// The runner may have picked the job up already.
+		assert.Contains(t, []api.PrepStatus{api.PrepStatusQueued, api.PrepStatusRunning}, prep.Status)
+		require.NotNil(t, prep.Job)
+		// Without an LLM provider the job waits (deferred).
+		require.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/chapters/"+itoa(ids[1])+"/preparation",
+			map[string]any{"force": true}, nil), "busy")
+		var detail api.ChapterDetail
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/chapters/"+itoa(ids[1]), nil, &detail))
+		require.NotNil(t, detail.Preparation)
+		assert.Contains(t, []api.PrepStatus{api.PrepStatusQueued, api.PrepStatusRunning}, detail.PrepStatus)
+
+		// A suggestion applies once accepted; deciding about it outdates
+		// nothing until then.
+		e := &store.LexiconEntry{BookID: book.Id, Term: "Anna", Replacement: "ah-nah", Status: store.LexiconSuggested,
+			Note: "a name"}
+		require.NoError(t, s.SaveLexiconEntry(ctx, e))
+		var list []api.LexiconEntry
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/books/"+id+"/lexicon", nil, &list))
+		require.Len(t, list, 1)
+		assert.Equal(t, api.LexiconStatusSuggested, list[0].Status)
+		assert.Equal(t, "a name", *list[0].Note)
+		rev := func() int {
+			ch, err := s.GetChapter(ctx, ids[1])
+			require.NoError(t, err)
+			return ch.VoiceRev
+		}
+		r0 := rev()
+		var got api.LexiconEntry
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/lexicon/"+itoa(e.ID),
+			map[string]any{"status": "dismissed"}, &got))
+		assert.Equal(t, api.LexiconStatusDismissed, got.Status)
+		assert.Equal(t, r0, rev(), "dismissing a suggestion changes nothing audible")
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/lexicon/"+itoa(e.ID),
+			map[string]any{"status": "active"}, &got))
+		assert.Equal(t, api.LexiconStatusActive, got.Status)
+		assert.Greater(t, rev(), r0, "accepting it does")
+		require.Equal(t, http.StatusBadRequest, c.json(http.MethodPatch, "/api/lexicon/"+itoa(e.ID),
+			map[string]any{"status": "maybe"}, nil))
+	})
+}

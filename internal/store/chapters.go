@@ -141,8 +141,14 @@ func (s *Store) MergeChapterWithNext(ctx context.Context, id int64) (*Chapter, e
 		if c.AttributionStatus == AttributionDone && next.AttributionStatus == AttributionDone {
 			status = AttributionDone
 		}
+		// The same for the preparation.
+		prep := PrepNone
+		if c.PrepStatus == PrepDone && next.PrepStatus == PrepDone {
+			prep = PrepDone
+		}
 		if err := tx.Model(&Chapter{ID: c.ID}).Updates(map[string]any{
 			"attribution_status": status, "attribution_part": 0, "voice_rev": gorm.Expr("voice_rev + 1"),
+			"prep_status": prep, "prep_part": 0,
 		}).Error; err != nil {
 			return err
 		}
@@ -238,9 +244,14 @@ func (s *Store) SplitChapter(ctx context.Context, id, paragraphID int64, title s
 		if c.AttributionStatus == AttributionDone {
 			status = AttributionDone
 		}
+		prep := PrepNone
+		if c.PrepStatus == PrepDone {
+			prep = PrepDone
+		}
 		for _, id := range []int64{c.ID, created.ID} {
 			if err := tx.Model(&Chapter{ID: id}).Updates(map[string]any{
 				"attribution_status": status, "attribution_part": 0, "voice_rev": gorm.Expr("voice_rev + 1"),
+				"prep_status": prep, "prep_part": 0,
 			}).Error; err != nil {
 				return err
 			}

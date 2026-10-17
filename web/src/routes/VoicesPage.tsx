@@ -8,12 +8,13 @@ import {
   Stack,
   Table,
   Text,
+  TextInput,
   Title,
 } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { type Voice, voicesQuery } from '../api/client';
+import { settingsQuery, type Voice, voicesQuery } from '../api/client';
 import { VoicePreviewButton } from '../components/VoicePreviewButton';
 import { usePreview } from '../lib/preview';
 
@@ -23,7 +24,10 @@ type Filter = 'all' | Voice['gender'];
 export function VoicesPage() {
   const voices = useQuery(voicesQuery);
   const preview = usePreview();
+  const settings = useQuery(settingsQuery);
   const [filter, setFilter] = useState<Filter>('all');
+  // Tried out here only; the saved sample text is in Settings.
+  const [text, setText] = useState('');
 
   const list = (voices.data ?? []).filter(
     (v) => v.language.startsWith('en-') && (filter === 'all' || v.gender === filter),
@@ -49,6 +53,14 @@ export function VoicesPage() {
         characters speak with single base voices. Grades are the quality ratings of the Kokoro model
         card (A best).
       </Text>
+      <TextInput
+        label="Sample text"
+        placeholder={settings.data?.previewText || settings.data?.defaultPreviewText}
+        value={text}
+        onChange={(e) => setText(e.currentTarget.value)}
+        maxLength={500}
+        maw={720}
+      />
       {voices.isPending && (
         <Center py="xl">
           <Loader />
@@ -79,6 +91,7 @@ export function VoicesPage() {
                     id={v.id}
                     voice={v.available ? v.id : ''}
                     speed={1}
+                    text={text.trim() || undefined}
                     preview={preview}
                     label={`Listen to ${v.id}`}
                   />

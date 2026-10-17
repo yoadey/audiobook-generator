@@ -21,6 +21,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/epub/epubtest"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/prepare"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/store/storetest"
@@ -122,6 +123,27 @@ func TestRenderChapter(t *testing.T) {
 		assert.Equal(t, st.Size(), got.AudioSize)
 		assert.NoDirExists(t, filepath.Join(dir, "cache", "render", strconv.FormatInt(ch1.ID, 10)), "cache removed")
 
+		// When each segment is spoken: in order, 100 ms each, after the
+		// lead-in, ending before the audio does.
+		tm, err := render.ReadTimings(dir, got.AudioPath)
+		require.NoError(t, err)
+		require.Len(t, tm.Cues, 8)
+		_, segs, err := s.ChapterText(ctx, ch1.ID)
+		require.NoError(t, err)
+		segIDs := map[int64]bool{}
+		for _, sg := range segs {
+			segIDs[sg.ID] = true
+		}
+		assert.Equal(t, int64(300), tm.Cues[0].StartMs)
+		for i, q := range tm.Cues {
+			assert.True(t, segIDs[q.SegmentID], "cue %d names a segment of the chapter", i)
+			assert.Equal(t, int64(100), q.EndMs-q.StartMs)
+			if i > 0 {
+				assert.Greater(t, q.StartMs, tm.Cues[i-1].EndMs)
+			}
+		}
+		assert.Less(t, tm.Cues[7].EndMs, got.AudioDurationMs)
+
 		// A render again writes a new file and keeps the one it replaces
 		// (a listener may still stream it); older ones are removed.
 		first := got.AudioPath
@@ -136,6 +158,20 @@ func TestRenderChapter(t *testing.T) {
 		assert.FileExists(t, filepath.Join(dir, third.AudioPath))
 		assert.FileExists(t, filepath.Join(dir, second.AudioPath))
 		assert.NoFileExists(t, filepath.Join(dir, first))
+		assert.NoFileExists(t, filepath.Join(dir, render.TimingsPath(first)), "timings go with their audio")
+		// Leftovers of other versions go too (a timings file whose audio
+		// was removed elsewhere, an unfinished write).
+		orphan := render.TimingsPath(render.AudioPath(b.ID, ch1.ID, 5))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, orphan), []byte("{}"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, orphan+".tmp"), []byte("{"), 0o600))
+		assert.FileExists(t, filepath.Join(dir, render.TimingsPath(second.AudioPath)))
+		require.NoError(t, r.Render(ctx, ch1.ID, func(float64) {}))
+		assert.NoFileExists(t, filepath.Join(dir, orphan))
+		assert.NoFileExists(t, filepath.Join(dir, orphan+".tmp"))
+		fourth, err := s.GetChapter(ctx, ch1.ID)
+		require.NoError(t, err)
+		assert.FileExists(t, filepath.Join(dir, render.TimingsPath(fourth.AudioPath)))
+		third = fourth
 		assert.Equal(t, render.VersionPath(b.ID, ch1.ID, render.AudioVersion(third.AudioPath)), third.AudioPath)
 
 		// Chapters without a heading paragraph get their title spoken first
@@ -144,6 +180,11 @@ func TestRenderChapter(t *testing.T) {
 		r.Concurrency = 1
 		require.NoError(t, r.Render(ctx, cs[0].ID, func(float64) {}))
 		assert.Equal(t, "Copyright", fake.texts[0])
+		c0, err := s.GetChapter(ctx, cs[0].ID)
+		require.NoError(t, err)
+		tm, err = render.ReadTimings(dir, c0.AudioPath)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), tm.Cues[0].SegmentID, "the spoken title has no segment")
 	})
 }
 
@@ -259,5 +300,120 @@ func TestFailedRenderCleansUp(t *testing.T) {
 		assert.True(t, utf8.ValidString(got.AudioError))
 		assert.True(t, strings.HasPrefix(msg, strings.TrimSuffix(got.AudioError, "…")))
 		assert.NoDirExists(t, cache)
+	})
+}
+
+// timedTTS reports every word of the text 10 ms apart, or no timestamps.
+type timedTTS struct {
+	fakeTTS
+	untimed bool
+}
+
+func (f *timedTTS) SynthesizeTimed(ctx context.Context, s tts.Speech) ([]byte, []tts.Word, error) {
+	if f.untimed {
+		return nil, nil, tts.ErrNoTimestamps
+	}
+	pcm, err := f.Synthesize(ctx, s)
+	var words []tts.Word
+	for i, w := range strings.Fields(s.Text) {
+		words = append(words, tts.Word{Text: w, Start: float64(i) * 0.01, End: float64(i+1) * 0.01})
+	}
+	return pcm, words, err
+}
+
+func TestRenderRecordsWords(t *testing.T) {
+	ff := ffmpeg(t)
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir, _, cs := setup(t, s)
+		ch := cs[1]
+		for _, untimed := range []bool{false, true} {
+			fake := &timedTTS{untimed: untimed}
+			r := &render.Renderer{
+				Store: s, TTS: fake, Encoder: audio.Encoder{FFmpeg: ff}, DataDir: dir,
+				Concurrency: 2, DefaultVoice: "af_heart", Log: slog.New(slog.DiscardHandler),
+			}
+			require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+			got, err := s.GetChapter(ctx, ch.ID)
+			require.NoError(t, err)
+			tm, err := render.ReadTimings(dir, got.AudioPath)
+			require.NoError(t, err)
+			_, segs, err := s.ChapterText(ctx, ch.ID)
+			require.NoError(t, err)
+			found := 0
+			for _, sg := range segs {
+				if sg.Text != "“Is it raining?”" {
+					continue
+				}
+				found++
+				for _, q := range tm.Cues {
+					if q.SegmentID != sg.ID {
+						continue
+					}
+					if untimed {
+						assert.Empty(t, q.Words, "a TTS without timestamps")
+						continue
+					}
+					// Offsets in the segment's text (after its opening mark).
+					assert.Equal(t, [][2]int64{{1, q.StartMs}, {4, q.StartMs + 10}, {7, q.StartMs + 20}}, q.Words)
+				}
+			}
+			assert.Equal(t, 1, found)
+		}
+	})
+}
+
+// preparer queues a preparation job, as prepare.Preparer does.
+type preparer struct {
+	s      *store.Store
+	starts int
+}
+
+func (p *preparer) Start(ctx context.Context, b *store.Book, c *store.Chapter, _ bool, _ int) error {
+	p.starts++
+	return p.s.EnqueueJob(ctx, &store.Job{Type: prepare.JobType, Queue: prepare.Queue, BookID: &b.ID, ChapterID: &c.ID})
+}
+
+func TestRenderWaitsForPreparation(t *testing.T) {
+	ff := ffmpeg(t)
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir, b, cs := setup(t, s)
+		ch := cs[1]
+		prep := &preparer{s: s}
+		fake := &fakeTTS{}
+		r := &render.Renderer{
+			Store: s, TTS: fake, Encoder: audio.Encoder{FFmpeg: ff}, DataDir: dir, Concurrency: 1,
+			DefaultVoice: "af_heart", Preparation: prep, Log: slog.New(slog.DiscardHandler),
+		}
+		// Not asked for: no waiting.
+		require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+		assert.Zero(t, prep.starts)
+
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"PrepareChapters": true}))
+		var deferred jobs.DeferError
+		require.ErrorAs(t, r.Render(ctx, ch.ID, func(float64) {}), &deferred)
+		assert.Equal(t, 1, prep.starts)
+
+		// Prepared: rendered with what the preparation found; without the
+		// book asking for it, that is left out.
+		_, segs, err := s.ChapterText(ctx, ch.ID)
+		require.NoError(t, err)
+		var said int64
+		for _, sg := range segs {
+			if sg.Text == "said Anna." {
+				said = sg.ID
+			}
+		}
+		require.NoError(t, s.DB().Model(&store.Segment{}).Where("id = ?", said).
+			Update("spoken_as", `[{"a":5,"b":9,"t":"Ah-na"}]`).Error)
+		require.NoError(t, s.DB().Model(&store.Chapter{}).Where("id = ?", ch.ID).Update("prep_status", store.PrepDone).Error)
+		fake.texts = nil
+		require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+		assert.Contains(t, fake.texts, "said Ah-na.")
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"PrepareChapters": false}))
+		fake.texts = nil
+		require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+		assert.Contains(t, fake.texts, "said Anna.")
 	})
 }

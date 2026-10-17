@@ -35,6 +35,10 @@ args=(
   --set 'llm.providers[0].apiKeySecret.name=llm-keys'
   --set 'llm.providers[0].apiKeySecret.key=fake'
   --set 'llm.providers[0].limits.rpd=100'
+  # A second engine (Chatterbox-TTS-Server's API), also served by the fake.
+  --set 'tts.engines[0].name=chatterbox'
+  --set 'tts.engines[0].kind=chatterbox'
+  --set 'tts.engines[0].url=http://fake-tts:8880'
 )
 kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n "$ns" create configmap fake-tts --from-file="$root/hack/fake-tts/server.py" \
@@ -102,6 +106,11 @@ grep -q '"audioStatus":"ready"' <<<"$detail" || { echo "$detail" | head -c 600; 
 code="$(curl -sS -o /tmp/chapter.m4a -w '%{http_code}' -r 0-1023 "localhost:18080/api/chapters/$chapter/audio")"
 [[ "$code" == 206 ]]
 [[ "$(wc -c </tmp/chapter.m4a)" -eq 1024 ]]
+# Reading along: the render recorded when each segment is spoken.
+timings="$(curl -fsS "localhost:18080/api/chapters/$chapter/timings")"
+grep -q '"exact":true' <<<"$timings"
+grep -q '"segmentId"' <<<"$timings"
+grep -q '"words":\[\[' <<<"$timings" # word times from the TTS
 
 # The configured LLM provider answers the structured-output test, with the
 # key from the Secret (the fake rejects anything else).
@@ -159,12 +168,49 @@ grep -q '"audioStatus":"ready"' <<<"$detail"
 grep -q '"audioRerendering":false' <<<"$detail"
 if grep -q '"audioError"' <<<"$detail"; then exit 1; fi
 
+# With chapter preparation, a render waits for it: a pause and a
+# pronunciation suggestion (not applied until accepted).
+curl -fsS -X PATCH -H 'Content-Type: application/json' -d '{"prepareChapters":true}' \
+  "localhost:18080/api/books/$id" | grep -q '"prepareChapters":true'
+curl -fsS -X POST "localhost:18080/api/chapters/$chapter/render?force=true" >/dev/null
+for _ in $(seq 1 90); do
+  detail="$(curl -fsS "localhost:18080/api/chapters/$chapter")"
+  grep -q '"prepStatus":"done"' <<<"$detail" && grep -q '"audioStatus":"ready"' <<<"$detail" &&
+    grep -q '"audioRerendering":false' <<<"$detail" && ! grep -q '"audioStale":true' <<<"$detail" && break
+  sleep 1
+done
+grep -q '"prepStatus":"done"' <<<"$detail" || { echo "$detail" | head -c 2000; exit 1; }
+grep -q '"pauses":\[\[' <<<"$detail"
+lexicon="$(curl -fsS "localhost:18080/api/books/$id/lexicon")"
+echo "$lexicon"
+grep -q '"status":"suggested"' <<<"$lexicon"
+
 # Podcast feed: works without a session and lists the rendered chapters.
 feed="$(curl -fsS "localhost:18080/api/books/$id" |
   python3 -c 'import sys, json; print(json.load(sys.stdin)["feedPath"])')"
 rss="$(curl -fsS "localhost:18080$feed")"
 grep -q '<rss' <<<"$rss"
 grep -q '<enclosure' <<<"$rss"
+# Each episode links its transcript (WebVTT).
+transcript="$(python3 -c 'import re,sys; print(re.search(r"<podcast:transcript url=\"([^\"]+)\"", sys.stdin.read()).group(1))' <<<"$rss")"
+vtt="$(curl -fsS "localhost:18080/${transcript#*://*/}")"
+head -c 300 <<<"$vtt"; echo
+grep -q '^WEBVTT' <<<"$vtt"
+grep -q ' --> ' <<<"$vtt"
+
+# The sample text of voice previews.
+curl -fsS -X PATCH -H 'Content-Type: application/json' -d '{"previewText":"Call me Ishmael."}' \
+  localhost:18080/api/settings | grep -q '"previewText":"Call me Ishmael."'
+
+# Voices of other engines: listed, and previewed with an emotion.
+engines="$(curl -fsS localhost:18080/api/tts/engines)"
+echo "$engines"
+grep -q '"Emily.wav"' <<<"$engines"
+grep -q '"emotions":true' <<<"$engines"
+code="$(curl -sS -o /tmp/preview.audio -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+  -d '{"voice":"chatterbox:Emily.wav","text":"Run!","emotion":"shouting"}' localhost:18080/api/voices/preview)"
+test "$code" = 200
+test -s /tmp/preview.audio
 
 # M4B of the first volume (its missing chapters are rendered first).
 volume="$(curl -fsS "localhost:18080/api/books/$id/downloads" |

@@ -50,6 +50,8 @@ func TestValidate(t *testing.T) {
 		"bad log level":         {"ABG_LOG_LEVEL": "loud"},
 		"bad log format":        {"ABG_LOG_FORMAT": "xml"},
 		"bad tts url":           {"ABG_TTS_URL": "not a url"},
+		"bad engine":            {"ABG_TTS_ENGINES": `[{"name":"x","kind":"piper","url":"http://x"}]`},
+		"bad engines json":      {"ABG_TTS_ENGINES": `[{`},
 	}
 	for name, envs := range tests {
 		t.Run(name, func(t *testing.T) {

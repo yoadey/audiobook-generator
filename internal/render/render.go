@@ -4,13 +4,16 @@
 package render
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +21,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/sync/errgroup"
 
@@ -27,6 +31,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/lexicon"
+	"github.com/yoadey/audiobook-generator/internal/prepare"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 )
@@ -42,12 +47,31 @@ type Synthesizer interface {
 	Synthesize(ctx context.Context, s tts.Speech) ([]byte, error)
 }
 
+// TimedSynthesizer also reports when each word is spoken (optional: a TTS
+// without it gives timings per segment only).
+type TimedSynthesizer interface {
+	SynthesizeTimed(ctx context.Context, s tts.Speech) ([]byte, []tts.Word, error)
+}
+
+// Engines tells what a voice's engine does itself (optional: without it
+// every voice is Kokoro's).
+type Engines interface {
+	// Expressive: the engine speaks emotions and moods itself, so they
+	// are not given by pace (only loudness).
+	Expressive(voice string) bool
+	// TakesSpeed: the engine takes a speed.
+	TakesSpeed(voice string) bool
+	// Fingerprint identifies the engine's settings ("" for Kokoro's
+	// voices); it bounds its own concurrency.
+	Fingerprint(voice string) string
+}
+
 // VoiceCatalog lists the base voices pool voices are chosen from.
 type VoiceCatalog interface {
 	Voices(ctx context.Context) ([]casting.BaseVoice, error)
 }
 
-// Attributor queues speaker attributions.
+// Attributor queues speaker attributions (or chapter preparations).
 type Attributor interface {
 	Start(ctx context.Context, b *store.Book, c *store.Chapter, force bool, priority int) error
 }
@@ -65,6 +89,8 @@ type Renderer struct {
 	// without them everything is narrated).
 	Voices      VoiceCatalog
 	Attribution Attributor
+	// Preparation prepares chapters of books that ask for it (optional).
+	Preparation Attributor
 	Metrics     *Metrics
 	Log         *slog.Logger
 }
@@ -105,14 +131,20 @@ func AudioVersion(path string) string {
 	return ""
 }
 
-// keepVersions removes a chapter's older audio files, keeping the current
-// one and the one it replaced (a listener may still stream that).
+// keepVersions removes a chapter's older audio files and their timings
+// (also leftovers of either), keeping the current version and the one it
+// replaced (a listener may still stream that).
 func (r *Renderer) keepVersions(bookID, chapterID int64, keep ...string) {
 	dir := filepath.Join(r.DataDir, importer.BookDir(bookID), "audio")
-	files, _ := filepath.Glob(filepath.Join(dir, strconv.FormatInt(chapterID, 10)+"-*.m4a"))
+	files, _ := filepath.Glob(filepath.Join(dir, strconv.FormatInt(chapterID, 10)+"-*"))
 	for _, f := range files {
 		rel, err := filepath.Rel(r.DataDir, f)
-		if err != nil || slices.Contains(keep, rel) {
+		if err != nil {
+			continue
+		}
+		// The audio file a file belongs to: x.m4a, x.json, x.json.tmp.
+		base, _, _ := strings.Cut(filepath.Base(rel), ".")
+		if slices.Contains(keep, filepath.Join(filepath.Dir(rel), base+".m4a")) {
 			continue
 		}
 		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -178,68 +210,195 @@ type item struct {
 	text  string
 	voice string
 	speed float64
+	gain  float64
+	gap   gap
 	pause time.Duration
+	// segmentID is the segment spoken (0: the chapter title); a segment
+	// may be spoken in several items (phrases).
+	segmentID int64
+	// What the pause after it depends on; extra is a pause the chapter
+	// preparation asks for after it.
+	quote, thought, dialogue bool
+	emotion                  string
+	extra                    time.Duration
+	// style is how an expressive engine is told to speak it (nil: Kokoro
+	// gets pace and loudness instead).
+	style *style
+	// engine identifies the settings of the voice's engine ("": Kokoro).
+	engine string
+}
+
+// style is how to speak, for an engine that acts itself.
+type style struct {
+	emotion, mood string
+	thought       bool
+}
+
+func (s *style) key() string {
+	if s == nil {
+		return ""
+	}
+	return fmt.Sprintf("|%s|%s|%t", s.emotion, s.mood, s.thought)
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// speech is the TTS request of an item.
+func (it item) speech() tts.Speech {
+	sp := tts.Speech{Text: it.text, Voice: it.voice, Speed: it.speed, Format: "pcm"}
+	if it.style != nil {
+		sp.Emotion, sp.Mood, sp.Thought = it.style.emotion, it.style.mood, it.style.thought
+	}
+	return sp
+}
+
+// file is where an item's audio is cached.
+func (it item) file(dir string, i int) string {
+	return filepath.Join(dir, fmt.Sprintf("%05d-%s.pcm", i, cacheKey(VoiceKey(it.voice, it.speed)+it.style.key()+it.engine, it.text)))
 }
 
 // voiceFunc returns the voice of a segment.
 type voiceFunc func(s *store.Segment) (string, float64)
 
-// plan lists what to say, in order, with the book's pronunciations applied.
+// plan lists what to say, in order, with the book's pronunciations applied
+// (engines may be nil: all voices are Kokoro's).
 func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voiceOf voiceFunc,
-	lex *lexicon.Lexicon,
+	lex *lexicon.Lexicon, engines Engines,
 ) []item {
 	byPara := map[int64][]store.Segment{}
 	for _, s := range segs {
 		byPara[s.ParagraphID] = append(byPara[s.ParagraphID], s)
 	}
 	var items []item
-	pauseLast := func(d time.Duration) {
+	gapLast := func(g gap) {
 		if len(items) > 0 {
-			items[len(items)-1].pause = max(items[len(items)-1].pause, d)
+			items[len(items)-1].gap = max(items[len(items)-1].gap, g)
 		}
 	}
 	narrator, narratorSpeed := voiceOf(nil)
-	say := func(text, voice string, speed float64) {
-		items = append(items, item{text: lex.Apply(text), voice: voice, speed: speed, pause: withinPara})
+	say := func(s *store.Segment, text, voice string, speed float64, dialogue bool, mood string) {
+		id, pr := int64(0), prosodyOf(s)
+		lead := 0
+		var st *style
+		if s != nil {
+			id = s.ID
+			if i := strings.Index(s.Text, text); i > 0 {
+				lead = utf8.RuneCountInString(s.Text[:i])
+			}
+			if m, ok := moods[mood]; ok && s.QuoteRef == 0 {
+				pr = m // narration in the paragraph's mood
+			}
+			if engines != nil && engines.Expressive(voice) {
+				// The engine acts itself; only loudness is ours.
+				st, pr.speed = &style{thought: s.Kind == store.SegmentThought}, 1
+				if s.QuoteRef > 0 {
+					st.emotion = s.Emotion
+				} else {
+					st.mood = mood
+				}
+			}
+		}
+		engine := ""
+		if engines != nil {
+			if !engines.TakesSpeed(voice) {
+				speed, pr.speed = 1, 1
+			}
+			if engine = engines.Fingerprint(voice); engine != "" {
+				engine = "|" + engine
+			}
+		}
+		d := direct(s, text, lead)
+		for i, ph := range d.phrases {
+			// The book's pronunciations first (entries may name "AT&T"),
+			// then the cleanup for the TTS, which leaves Kokoro's syntax
+			// alone.
+			t := spoken(lex.Apply(ph))
+			if speakable(t) == "" {
+				continue
+			}
+			it := item{
+				text: t, voice: voice, speed: clampSpeed(speed * pr.speed), gain: pr.gain,
+				gap: gapPhrase, pause: d.pauses[i], segmentID: id, dialogue: dialogue, style: st,
+				engine: engine,
+			}
+			if s != nil {
+				it.quote, it.thought, it.emotion = s.QuoteRef > 0, s.Kind == store.SegmentThought, s.Emotion
+			}
+			items = append(items, it)
+		}
+		gapLast(gapSegment)
+		if n := len(items); n > 0 && items[n-1].segmentID == id {
+			items[n-1].extra = max(items[n-1].extra, d.extra)
+		}
 	}
 	if len(paras) == 0 || paras[0].Kind != store.ParagraphHeading {
 		if t := speakable(ch.Title); t != "" {
-			say(t, narrator, narratorSpeed)
-			items[len(items)-1].pause = afterHeading
+			say(nil, t, narrator, narratorSpeed, false, "")
+			gapLast(gapHeading)
 		}
 	}
 	for _, p := range paras {
 		switch p.Kind {
 		case store.ParagraphSceneBreak:
-			pauseLast(sceneBreak)
+			gapLast(gapScene)
 			continue
 		case store.ParagraphHeading:
-			for _, s := range byPara[p.ID] {
+			for i := range byPara[p.ID] {
+				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
-					say(t, narrator, narratorSpeed)
+					say(s, t, narrator, narratorSpeed, false, "")
 				}
 			}
-			pauseLast(afterHeading)
+			gapLast(gapHeading)
 		default:
+			// A paragraph of only speech: an exchange of lines.
+			dialogue := len(byPara[p.ID]) > 0
+			for _, s := range byPara[p.ID] {
+				if s.QuoteRef == 0 && speakable(s.Text) != "" {
+					dialogue = false
+				}
+			}
 			for i := range byPara[p.ID] {
 				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
 					voice, speed := voiceOf(s)
-					say(t, voice, speed)
+					say(s, t, voice, speed, dialogue, p.Mood)
 				}
 			}
-			pauseLast(betweenParas)
+			gapLast(gapPara)
 		}
 	}
-	pauseLast(tail)
+	gapLast(gapTail)
+	pauses(items)
 	return items
+}
+
+// withoutPreparation drops what a chapter preparation found (the book
+// no longer asks for it).
+func withoutPreparation(paras []store.Paragraph, segs []store.Segment) {
+	for i := range paras {
+		paras[i].Mood = ""
+	}
+	for i := range segs {
+		segs[i].Pauses, segs[i].SpokenAs = "", ""
+	}
+}
+
+// clampSpeed keeps a speed within what Kokoro takes.
+func clampSpeed(v float64) float64 {
+	return math.Round(min(max(v, 0.5), 2)*100) / 100
 }
 
 // speakable strips quotation marks around a segment (Kokoro would otherwise
 // pause oddly) and drops text without anything to say.
 func speakable(s string) string {
 	s = strings.TrimSpace(s)
-	s = strings.Trim(s, "“”‘’\"'")
+	s = strings.Trim(s, "“”‘’\"'«»‹›„")
 	s = strings.TrimSpace(s)
 	if strings.IndexFunc(s, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0 {
 		return ""
@@ -275,6 +434,12 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return jobs.Permanent(err)
 	}
+	if wait, err := r.waitForPreparation(ctx, book, ch); err != nil || wait {
+		if err == nil {
+			err = prepare.WaitError()
+		}
+		return err
+	}
 	if wait, err := r.waitForVoices(ctx, book, ch); err != nil || wait {
 		if err == nil {
 			err = attribution.WaitError()
@@ -300,7 +465,11 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return err
 	}
-	items := plan(ch, paras, segs, voiceOf, lexicon.Compile(entries))
+	if !book.PrepareChapters {
+		withoutPreparation(paras, segs)
+	}
+	engines, _ := r.TTS.(Engines)
+	items := plan(ch, paras, segs, voiceOf, lexicon.Compile(entries), engines)
 	text := fingerprint(paras, segs)
 	start := time.Now()
 
@@ -313,22 +482,57 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	files := make([]string, len(items))
 	var done int64
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(max(r.Concurrency, 1))
+	// Kokoro's requests are bounded here; other engines bound their own
+	// (so a slow engine does not hold Kokoro's slots).
+	kokoro := make(chan struct{}, max(r.Concurrency, 1))
 	progressCh := make(chan struct{}, len(items))
+	var todo []int
 	for i, it := range items {
-		files[i] = filepath.Join(cacheDir, fmt.Sprintf("%05d-%s.pcm", i, cacheKey(VoiceKey(it.voice, it.speed), it.text)))
+		files[i] = it.file(cacheDir, i)
 		if _, err := os.Stat(files[i]); err == nil {
 			progressCh <- struct{}{}
-			continue
+		} else {
+			todo = append(todo, i)
+		}
+	}
+	// Other engines' pieces first (they wait for their engine, not for
+	// Kokoro), then Kokoro's in order.
+	slices.SortStableFunc(todo, func(a, b int) int {
+		return cmp.Compare(boolInt(items[a].engine == ""), boolInt(items[b].engine == ""))
+	})
+	for _, i := range todo {
+		it := items[i]
+		// In order: a Kokoro slot is taken before the request starts.
+		if it.engine == "" {
+			select {
+			case kokoro <- struct{}{}:
+			case <-gctx.Done(): // a request failed
+			}
+		}
+		if gctx.Err() != nil {
+			break
 		}
 		g.Go(func() error {
-			pcm, err := r.TTS.Synthesize(gctx, tts.Speech{Text: it.text, Voice: it.voice, Speed: it.speed, Format: "pcm"})
+			if it.engine == "" {
+				defer func() { <-kokoro }()
+			}
+			pcm, words, err := r.synthesize(gctx, it.speech())
 			if err != nil {
 				var he *tts.HTTPError
 				if errors.As(err, &he) && he.Permanent() {
 					return jobs.Permanent(fmt.Errorf("synthesize %q: %w", truncate(it.text, 60), err))
 				}
 				return fmt.Errorf("synthesize %q: %w", truncate(it.text, 60), err)
+			}
+			// The words first: the audio marks the item as done.
+			if words != nil {
+				data, err := json.Marshal(words)
+				if err != nil {
+					return err
+				}
+				if err := writeAtomic(files[i]+".words", data); err != nil {
+					return err
+				}
 			}
 			if err := writeAtomic(files[i], pcm); err != nil {
 				return err
@@ -346,14 +550,18 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err := <-waitErr; err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil { // stopped before every piece was asked for
+		return err
+	}
 
 	// 2. Join with pauses and encode.
 	rel := AudioPath(book.ID, ch.ID, time.Now().UnixNano())
 	out := filepath.Join(r.DataDir, rel)
 	pr, pw := io.Pipe()
 	written := make(chan int64, 1)
+	pieces := make([]int64, len(files))
 	go func() {
-		n, err := writePCM(pw, files, items)
+		n, err := writePCM(pw, files, items, pieces)
 		written <- n
 		pw.CloseWithError(err)
 	}()
@@ -369,10 +577,24 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return err
 	}
+	// The cues are written before the audio is published: a player that
+	// sees the new version also finds its timings.
+	texts := map[int64]string{0: speakable(ch.Title)}
+	for _, s := range segs {
+		texts[s.ID] = s.Text
+	}
+	cueData, err := json.Marshal(Timings{Cues: cues(items, pieces, readWords(files), func(id int64) string { return texts[id] })})
+	if err != nil {
+		return err
+	}
+	if err := writeAtomic(filepath.Join(r.DataDir, TimingsPath(rel)), cueData); err != nil {
+		_ = RemoveAudio(r.DataDir, rel)
+		return err
+	}
 	// 3. The chapter may have been merged, split or deleted meanwhile:
 	// never mark audio of the old text as ready.
 	if err := r.checkUnchanged(ctx, ch.ID, text); err != nil {
-		if rerr := os.Remove(out); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+		if rerr := RemoveAudio(r.DataDir, rel); rerr != nil {
 			r.Log.Warn("remove outdated audio", "chapter", ch.ID, "err", rerr)
 		}
 		return err
@@ -433,6 +655,20 @@ func (r *Renderer) waitForVoices(ctx context.Context, b *store.Book, ch *store.C
 	return err == nil && soon(j), err
 }
 
+// waitForPreparation reports whether a render should wait for the
+// preparation of its chapter (queued if missing), unless that job cannot
+// run soon.
+func (r *Renderer) waitForPreparation(ctx context.Context, b *store.Book, ch *store.Chapter) (bool, error) {
+	if r.Preparation == nil || !prepare.Needed(b, ch) {
+		return false, nil
+	}
+	if err := r.Preparation.Start(ctx, b, ch, false, AttributionPriority); err != nil {
+		return false, err
+	}
+	j, err := r.Store.PendingChapterJob(ctx, prepare.JobType, ch.ID)
+	return err == nil && j != nil && j.NotBefore.Before(time.Now().Add(waitFor)), err
+}
+
 // speakerVoices resolves the voices of a chapter's speakers: their own
 // recipe or a pool voice (casting.Effective); narration, unknown speakers
 // and quotes not attributed yet are narrated.
@@ -442,7 +678,7 @@ func (r *Renderer) speakerVoices(ctx context.Context, b *store.Book, segs []stor
 	var ids []int64
 	seen := map[int64]bool{}
 	for _, s := range segs {
-		if id := s.SpeakerCharacterID; s.Kind == store.SegmentQuote && id != nil && !seen[*id] {
+		if id := s.SpeakerCharacterID; s.QuoteRef > 0 && id != nil && !seen[*id] {
 			seen[*id] = true
 			ids = append(ids, *id)
 		}
@@ -460,7 +696,8 @@ func (r *Renderer) speakerVoices(ctx context.Context, b *store.Book, segs []stor
 		voices[chars[i].ID] = casting.Effective(&chars[i], base, narrator, narratorSpeed)
 	}
 	return func(s *store.Segment) (string, float64) {
-		if s != nil && s.Kind == store.SegmentQuote && s.SpeakerCharacterID != nil {
+		// Quotations and thoughts are spoken by their speaker.
+		if s != nil && s.QuoteRef > 0 && s.SpeakerCharacterID != nil {
 			if v, ok := voices[*s.SpeakerCharacterID]; ok {
 				return v.Recipe, v.Speed
 			}
@@ -487,8 +724,38 @@ func (r *Renderer) checkUnchanged(ctx context.Context, chapterID int64, want str
 	return nil
 }
 
-// writePCM streams the lead-in, every cached piece and its pause.
-func writePCM(w io.Writer, files []string, items []item) (int64, error) {
+// synthesize renders a piece, with the time of its words when the TTS
+// reports them (words nil otherwise).
+func (r *Renderer) synthesize(ctx context.Context, s tts.Speech) ([]byte, []tts.Word, error) {
+	if t, ok := r.TTS.(TimedSynthesizer); ok {
+		pcm, words, err := t.SynthesizeTimed(ctx, s)
+		if !errors.Is(err, tts.ErrNoTimestamps) {
+			if words == nil && err == nil {
+				words = []tts.Word{}
+			}
+			return pcm, words, err
+		}
+	}
+	pcm, err := r.TTS.Synthesize(ctx, s)
+	return pcm, nil, err
+}
+
+// readWords loads the words of the cached pieces (nil where none).
+func readWords(files []string) [][]tts.Word {
+	out := make([][]tts.Word, len(files))
+	for i, f := range files {
+		data, err := os.ReadFile(f + ".words") //nolint:gosec // path built from the data dir
+		if err != nil {
+			continue
+		}
+		_ = json.Unmarshal(data, &out[i])
+	}
+	return out
+}
+
+// writePCM streams the lead-in, every cached piece (at its loudness) and
+// its pause, and records the length of each piece in pieces.
+func writePCM(w io.Writer, files []string, items []item, pieces []int64) (int64, error) {
 	var total int64
 	write := func(b []byte) error {
 		n, err := w.Write(b)
@@ -504,7 +771,10 @@ func writePCM(w io.Writer, files []string, items []item) (int64, error) {
 			return total, err
 		}
 		// Kokoro's PCM is 16-bit; never write half a sample.
-		if err := write(data[:len(data)&^1]); err != nil {
+		data = data[:len(data)&^1]
+		pieces[i] = int64(len(data))
+		applyGain(data, items[i].gain)
+		if err := write(data); err != nil {
 			return total, err
 		}
 		if err := write(audio.Silence(items[i].pause)); err != nil {

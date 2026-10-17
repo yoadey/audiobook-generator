@@ -28,7 +28,8 @@ func Compile(entries []store.LexiconEntry) *Lexicon {
 	var es []store.LexiconEntry
 	for _, e := range entries {
 		key := strings.ToLower(strings.Join(strings.Fields(e.Term), " "))
-		if key == "" || seen[key] {
+		// Suggestions apply once accepted.
+		if key == "" || seen[key] || e.Status != store.LexiconActive {
 			continue
 		}
 		seen[key] = true

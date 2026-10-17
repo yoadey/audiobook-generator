@@ -253,6 +253,28 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/chapters/{chapterId}/preparation': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Prepare the chapter for reading aloud
+     * @description Queues the LLM preparation of the chapter: the mood of narration, dramatic pauses, spoken forms of spots a TTS reads wrongly and pronunciation suggestions for the lexicon (a render does this by itself in books with prepareChapters). The text is never changed. With force, what an earlier preparation found is discarded.
+     */
+    post: operations['startPreparation'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/chapters/{chapterId}/quotes/{quoteRef}': {
     parameters: {
       query?: never;
@@ -315,6 +337,46 @@ export interface paths {
     options?: never;
     head?: never;
     patch?: never;
+    trace?: never;
+  };
+  '/chapters/{chapterId}/timings': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    /**
+     * When each segment is spoken in the chapter's audio (for reading along)
+     * @description With v (an audioVersion), the timings of that render while it is kept, else of the current render (version tells which). A current render made before timings were recorded gets an estimate (exact is false); an older one without timings gets the current render's.
+     */
+    get: operations['getChapterTimings'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/settings': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Settings of this instance */
+    get: operations['getSettings'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Change settings of this instance */
+    patch: operations['updateSettings'];
     trace?: never;
   };
   '/books/{bookId}/export': {
@@ -440,6 +502,23 @@ export interface paths {
     };
     /** The voice catalogue, reconciled with the voices the TTS server offers */
     get: operations['listVoices'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/tts/engines': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The speech engines configured besides Kokoro, with their voices */
+    get: operations['listTTSEngines'];
     put?: never;
     post?: never;
     delete?: never;
@@ -833,6 +912,10 @@ export interface components {
       narratorSpeed: number;
       /** @description Chapters after the listening position that are kept rendered */
       lookahead: number;
+      /** @description Sample text of voice previews in this book (empty - the instance's) */
+      previewText: string;
+      /** @description Chapters are prepared by the LLM before they are rendered (narration mood, pauses, spoken forms, pronunciation suggestions) */
+      prepareChapters: boolean;
       analysisStatus: components['schemas']['AnalysisStatus'];
       /** @description Share of analysed batches (0..1) once the analysis is planned */
       analysisProgress?: number;
@@ -848,6 +931,9 @@ export interface components {
       narratorVoice?: string;
       narratorSpeed?: number;
       lookahead?: number;
+      /** @description Sample text of voice previews in this book; empty for the instance's */
+      previewText?: string;
+      prepareChapters?: boolean;
     };
     BookPage: {
       items: components['schemas']['Book'][];
@@ -894,6 +980,7 @@ export interface components {
       audioVersion?: string;
       attributionStatus: components['schemas']['AttributionStatus'];
       attributionError?: string;
+      prepStatus: components['schemas']['PrepStatus'];
       narration?: components['schemas']['Narration'];
       /**
        * Format: int64
@@ -910,10 +997,40 @@ export interface components {
     };
     /** @enum {string} */
     ParagraphKind: 'text' | 'heading' | 'scene_break';
-    /** @enum {string} */
-    SegmentKind: 'narration' | 'quote';
+    /**
+     * @description thought - a character's thought (italics or single marks); attributed like a quote
+     * @enum {string}
+     */
+    SegmentKind: 'narration' | 'quote' | 'thought';
     /** @enum {string} */
     AttributionStatus: 'none' | 'queued' | 'running' | 'done' | 'failed';
+    /** @enum {string} */
+    PrepStatus: 'none' | 'queued' | 'running' | 'done' | 'failed';
+    /** @enum {string} */
+    Mood: 'calm' | 'tense' | 'action' | 'somber' | 'warm' | 'light' | 'mysterious';
+    PreparationStart: {
+      /** @description Prepare again, discarding what was found */
+      force?: boolean;
+    };
+    ChapterPreparation: {
+      status: components['schemas']['PrepStatus'];
+      error?: string;
+      /** @description Prompt version of the last preparation */
+      prompt?: string;
+      /** Format: date-time */
+      preparedAt?: string;
+      /** @description Paragraphs with a mood */
+      moods: number;
+      pauses: number;
+      spokenForms: number;
+      job?: components['schemas']['Job'];
+    };
+    SpokenForm: {
+      start: number;
+      end: number;
+      /** @description How the characters [start, end) of the text are read aloud */
+      say: string;
+    };
     /** @enum {string} */
     Emotion:
       | 'neutral'
@@ -960,9 +1077,11 @@ export interface components {
       id: number;
       idx: number;
       kind: components['schemas']['SegmentKind'];
-      /** @description Number of the quotation within the chapter (0 for narration) */
+      /** @description Number of the quotation or thought within the chapter (0 for narration) */
       quoteRef: number;
       text: string;
+      /** @description Italic runs of the text, [start, end) in characters */
+      emphasis?: number[][];
       /**
        * Format: int64
        * @description Who speaks the quotation (absent - the narrator reads it)
@@ -972,6 +1091,10 @@ export interface components {
       /** @description How sure the attribution is (0..1; 1 for a speaker chosen by hand) */
       confidence: number;
       speakerManual: boolean;
+      /** @description Pauses from the chapter preparation as [character offset, ms] (an offset of the text's length - after the segment) */
+      pauses?: number[][];
+      /** @description Spots read differently than written (from the chapter preparation) */
+      spokenAs?: components['schemas']['SpokenForm'][];
     };
     Paragraph: {
       /** Format: int64 */
@@ -979,6 +1102,7 @@ export interface components {
       idx: number;
       kind: components['schemas']['ParagraphKind'];
       text: string;
+      mood?: components['schemas']['Mood'];
       segments: components['schemas']['Segment'][];
     };
     ChapterDetail: components['schemas']['Chapter'] & {
@@ -992,6 +1116,7 @@ export interface components {
       /** @description Characters who speak a quotation of the chapter */
       speakers?: components['schemas']['CharacterRef'][];
       attribution?: components['schemas']['ChapterAttribution'];
+      preparation?: components['schemas']['ChapterPreparation'];
     };
     ChapterUpdate: {
       title?: string;
@@ -1055,6 +1180,11 @@ export interface components {
       chapterId?: number;
       /** Format: int64 */
       positionMs: number;
+      /**
+       * Format: int64
+       * @description The segment at the position (where reading along continues)
+       */
+      segmentId?: number;
       /** Format: date-time */
       updatedAt?: string;
     };
@@ -1063,6 +1193,42 @@ export interface components {
       chapterId: number;
       /** Format: int64 */
       positionMs: number;
+      /**
+       * Format: int64
+       * @description The segment at the position; when the chapter is read without audio, positionMs is 0 and the segment marks the position
+       */
+      segmentId?: number;
+    };
+    ChapterTimings: {
+      /** Format: int64 */
+      chapterId: number;
+      /** @description The audioVersion the timings belong to */
+      version: string;
+      /** @description Recorded while rendering (false - estimated from the text length) */
+      exact: boolean;
+      cues: components['schemas']['Cue'][];
+    };
+    Cue: {
+      /**
+       * Format: int64
+       * @description The segment spoken (0 - the chapter title)
+       */
+      segmentId: number;
+      /** Format: int64 */
+      startMs: number;
+      /** Format: int64 */
+      endMs: number;
+      /** @description When the segment's words start, as [character offset in its text (code points), ms]; missing when the TTS server reports no word times or for words read differently than written */
+      words?: number[][];
+    };
+    AppSettings: {
+      /** @description Sample text of voice previews (empty - defaultPreviewText) */
+      previewText: string;
+      /** @description The built-in sample text */
+      defaultPreviewText: string;
+    };
+    AppSettingsUpdate: {
+      previewText?: string;
     };
     Voice: {
       id: string;
@@ -1112,6 +1278,11 @@ export interface components {
       durationMs?: number;
       job?: components['schemas']['Job'];
     };
+    /**
+     * @description active - applied; suggested - proposed by the chapter preparation, applied once accepted; dismissed - not applied and not suggested again
+     * @enum {string}
+     */
+    LexiconStatus: 'active' | 'suggested' | 'dismissed';
     LexiconEntry: {
       /** Format: int64 */
       id: number;
@@ -1123,6 +1294,9 @@ export interface components {
       replacement: string;
       /** @description The replacement is a pronunciation in Kokoro's phoneme notation (IPA) */
       phonemes: boolean;
+      status: components['schemas']['LexiconStatus'];
+      /** @description Why it was suggested */
+      note?: string;
     };
     LexiconEntryInput: {
       term: string;
@@ -1133,6 +1307,7 @@ export interface components {
       term?: string;
       replacement?: string;
       phonemes?: boolean;
+      status?: components['schemas']['LexiconStatus'];
     };
     VoicePreview: {
       /**
@@ -1143,6 +1318,21 @@ export interface components {
       voice: string;
       speed?: number;
       text?: string;
+      /** @description Spoken with this emotion (as a quote would be) */
+      emotion?: components['schemas']['Emotion'];
+    };
+    /** @description A speech engine besides Kokoro; its voices are written "<name>:<voice>" */
+    TTSEngine: {
+      name: string;
+      /** @enum {string} */
+      kind: 'openai' | 'chatterbox';
+      /** @description Speaks emotions and moods itself (Kokoro voices get pace and loudness instead) */
+      emotions: boolean;
+      /** @description Takes a voice's speed */
+      speed: boolean;
+      voices: string[];
+      /** @description Why its voices could not be listed */
+      error?: string;
     };
     /** @description Provider limits; 0 means no limit. Daily limits reset at midnight in quotaTimezone. */
     LLMLimits: {
@@ -1400,6 +1590,8 @@ export interface components {
       voiceManual: boolean;
       /** @description Why the casting chose the recipe */
       voiceNote: string;
+      /** @description Sample text of the character's voice previews (empty - quotes from the book) */
+      previewText: string;
     };
     CharacterPage: {
       items: components['schemas']['Character'][];
@@ -1432,6 +1624,8 @@ export interface components {
       /** @description A recipe like "bf_emma(0.7)+af_bella(0.3)" (chosen by hand, kept by the casting); empty to leave the voice to the casting again */
       voice?: string;
       voiceSpeed?: number;
+      /** @description Sample text of the character's voice previews; empty for quotes from the book */
+      previewText?: string;
     };
     CharacterMerge: {
       /** Format: int64 */
@@ -1943,6 +2137,35 @@ export interface operations {
       default: components['responses']['Error'];
     };
   };
+  startPreparation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        'application/json': components['schemas']['PreparationStart'];
+      };
+    };
+    responses: {
+      /** @description The preparation is queued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterPreparation'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
   updateQuote: {
     parameters: {
       query?: never;
@@ -2023,6 +2246,79 @@ export interface operations {
         };
       };
       404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getChapterTimings: {
+    parameters: {
+      query?: {
+        v?: string;
+      };
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The timings */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterTimings'];
+        };
+      };
+      404: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  getSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The settings */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AppSettings'];
+        };
+      };
+      default: components['responses']['Error'];
+    };
+  };
+  updateSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AppSettingsUpdate'];
+      };
+    };
+    responses: {
+      /** @description The settings */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AppSettings'];
+        };
+      };
+      400: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };
@@ -2198,6 +2494,27 @@ export interface operations {
         };
       };
       502: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listTTSEngines: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Engines */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TTSEngine'][];
+        };
+      };
       default: components['responses']['Error'];
     };
   };

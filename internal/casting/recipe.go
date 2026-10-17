@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/yoadey/audiobook-generator/internal/tts"
 )
 
 // Part is one base voice of a recipe.
@@ -28,15 +30,23 @@ const (
 var partRe = regexp.MustCompile(`^([a-z]{2}_[a-z0-9]+)(?:\(([0-9]+(?:\.[0-9]+)?)\))?$`)
 
 // ErrRecipe describes a malformed recipe.
-var ErrRecipe = errors.New(`a voice must look like "af_heart" or a mix like "bf_emma(0.7)+af_bella(0.3)"`)
+var ErrRecipe = errors.New(`a voice must look like "af_heart", a mix like "bf_emma(0.7)+af_bella(0.3)" ` +
+	`or a voice of another engine like "chatterbox:Emily.wav"`)
 
 // ParseRecipe reads Kokoro's mix syntax ("af_heart",
 // "bf_emma(2)+af_bella(1)"); weights are normalized, repeated voices
-// added up.
+// added up. A voice of another engine ("chatterbox:Emily.wav") stands
+// alone: engines' voices do not mix.
 func ParseRecipe(s string) (Recipe, error) {
 	s = strings.TrimSpace(s)
 	if s == "" || len(s) > maxRecipeLen {
 		return nil, ErrRecipe
+	}
+	if strings.Contains(s, ":") {
+		if _, _, ok := tts.SplitVoice(s); !ok {
+			return nil, ErrRecipe
+		}
+		return Recipe{{Voice: s, Weight: 1}}, nil
 	}
 	var r Recipe
 	total := 0.0
