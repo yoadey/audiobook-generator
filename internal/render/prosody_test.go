@@ -105,10 +105,16 @@ func TestEmotionProsody(t *testing.T) {
 }
 
 // engines: voices "cb:…" are an expressive engine that paces itself.
-type engines struct{}
+type engines string // the engine's fingerprint
 
 func (engines) Expressive(v string) bool { return v[:3] == "cb:" }
 func (engines) TakesSpeed(v string) bool { return v[:3] != "cb:" }
+func (e engines) Fingerprint(v string) string {
+	if v[:3] == "cb:" {
+		return string(e)
+	}
+	return ""
+}
 
 func TestExpressiveEngine(t *testing.T) {
 	ps, ss := chapter([]string{"e:shouting:“Run!”", "n:she said."}, []string{"t:Too late,", "n:he thought."})
@@ -120,7 +126,7 @@ func TestExpressiveEngine(t *testing.T) {
 			return "cb:anna.wav", 1.2
 		}
 		return "af_heart", 1.1
-	}, lexicon.Compile(nil), engines{})
+	}, lexicon.Compile(nil), engines("v1"))
 	require.Len(t, items, 4)
 	shout, said, thought, narration := items[0], items[1], items[2], items[3]
 	assert.Equal(t, &style{emotion: "shouting"}, shout.style)
@@ -133,10 +139,14 @@ func TestExpressiveEngine(t *testing.T) {
 	assert.Equal(t, &style{thought: true}, thought.style)
 	assert.InDelta(t, 1.04*1.1, narration.speed, 0.006, "Kokoro narration in a tense mood")
 
-	// The style is part of the cache key.
+	// The style and the engine's settings are part of the cache key.
 	calm := shout
 	calm.style = &style{emotion: "happy"}
 	assert.NotEqual(t, shout.file("d", 0), calm.file("d", 0))
+	louder := shout
+	louder.engine = "|v2"
+	assert.NotEqual(t, shout.file("d", 0), louder.file("d", 0))
+	assert.Empty(t, said.engine)
 }
 
 func TestPhrases(t *testing.T) {

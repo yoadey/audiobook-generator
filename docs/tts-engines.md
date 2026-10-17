@@ -20,13 +20,17 @@ Kokoro keeps the narration (most of a book).
   such a voice (left from an earlier configuration) fail to render with a
   clear message.
 - Rendering sends each piece to its voice's engine, at most `concurrency`
-  at a time per engine. An engine that speaks emotions (`emotions: true`
+  at a time per engine; Kokoro keeps its own `ABG_TTS_CONCURRENCY`, so a
+  slow engine does not hold Kokoro up. An engine that speaks emotions (`emotions: true`
   in `GET /api/tts/engines`) gets the quote's emotion, the narration's
   mood and whether it is a thought, and the render does not change its
   pace for them (it still makes whispers softer and shouts louder). An
   engine that does not take a speed is left at its own pace.
 - Engines report no word timings: the reader marks their lines by
   sentence, the podcast transcript times them by segment.
+- Changing an engine's settings (URL, variant, model, gain) affects
+  chapters rendered afterwards; render a chapter again to apply them to
+  it.
 - Audio is converted to Kokoro's format (24 kHz mono 16-bit) from any WAV;
   `gain` evens out an engine's loudness against Kokoro's.
 
@@ -69,7 +73,14 @@ from Hugging Face on the first start) and the reference clips, and its
 `config.yaml` from the values (model by `variant`). Upload reference clips
 (10–30 s of clean speech, WAV or MP3) through the server's own UI
 (`kubectl port-forward svc/<release>-chatterbox 8004`) or
-`POST /upload_reference`; they appear as voices of the engine.
+`POST /upload_reference`; they appear as voices of the engine (on the
+volume; predefined voices added in `/app/voices` are not kept). The
+server synthesizes one request at a time and answers nothing else
+meanwhile, so keep `concurrency: 1`; its probes only check the port, and
+the app lists its voices at most once a minute (a failed listing is
+retried after 30 s; a voice is never guessed to be predefined or cloned
+before it was listed once). Renovate does not bump the image (its tags
+are commit hashes): bump `tts.chatterbox.image.tag` by hand.
 
 ## Chatterbox: evaluation (October 2026)
 
@@ -118,7 +129,9 @@ not act emotions by exaggeration. Real use needs an NVIDIA GPU with
 
 **Long-form quality.** The original model sometimes repeats or
 hallucinates at the end of an utterance; Multilingual V3 and the
-server's chunking, fixed seeds and trimming reduce it. A safeguard worth
+server's chunking, fixed seeds and trimming reduce it. The server splits
+only between sentences, so a single sentence longer than about 40 s of
+speech (roughly 600 characters) may be cut off. A safeguard worth
 adding later: check each piece with speech recognition and re-generate
 when the words do not match.
 

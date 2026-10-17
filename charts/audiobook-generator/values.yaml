@@ -255,7 +255,7 @@ tts:
     # original (0.5B) acts emotions (exaggeration); turbo (350M) is faster
     # but ignores them.
     variant: original
-    # Parallel requests (one GPU takes one or two).
+    # Parallel requests: the server synthesizes one at a time, keep 1.
     concurrency: 1
     timeout: 10m
     # Evens out its loudness against Kokoro's.

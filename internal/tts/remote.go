@@ -25,7 +25,10 @@ type remote struct {
 	mu         sync.Mutex
 	listed     []string
 	references map[string]bool
-	fetched    time.Time
+	fetched    time.Time     // of the last listing (zero: none yet)
+	listErr    error         // of the last attempt
+	failed     time.Time     // when it failed
+	listing    chan struct{} // closed when the running listing is done
 }
 
 func newRemote(c EngineConfig) *remote {
@@ -99,40 +102,82 @@ func (r *remote) synthesize(ctx context.Context, s Speech) ([]byte, error) {
 	if s.Format == "mp3" {
 		format = "mp3"
 	}
-	path := "/v1/audio/speech"
-	var fields map[string]any
-	speed := *r.cfg.Speed && s.Speed > 0 && s.Speed != 1
-	switch r.cfg.Kind {
-	case KindChatterbox:
-		// Chatterbox-TTS-Server's own endpoint, which takes the controls
-		// per request (its OpenAI one uses the configured defaults).
-		path = "/tts"
-		fields = map[string]any{
-			"text": s.Text, "output_format": format, "split_text": true, "chunk_size": chunkRunes,
-			"seed": seedOf(s.Voice),
-		}
-		if r.clone(ctx, s.Voice) {
-			fields["voice_mode"], fields["reference_audio_filename"] = "clone", s.Voice
-		} else {
-			fields["voice_mode"], fields["predefined_voice_id"] = "predefined", s.Voice
-		}
-		if r.cfg.Variant == VariantOriginal {
-			e := expressionOf(s)
-			fields["exaggeration"], fields["cfg_weight"] = e.exaggeration, e.cfgWeight
-		}
-		if speed {
-			fields["speed_factor"] = s.Speed
-		}
-	default:
+	var data []byte
+	var err error
+	if r.cfg.Kind == KindChatterbox {
+		data, err = r.chatterbox(ctx, s, format)
+	} else {
 		model := r.cfg.Model
 		if model == "" {
 			model = "tts-1"
 		}
-		fields = map[string]any{"model": model, "input": s.Text, "voice": s.Voice, "response_format": format}
-		if speed {
+		fields := map[string]any{"model": model, "input": s.Text, "voice": s.Voice, "response_format": format}
+		if r.speed(s) {
 			fields["speed"] = s.Speed
 		}
+		data, err = r.post(ctx, "/v1/audio/speech", fields)
 	}
+	if err != nil {
+		return nil, err
+	}
+	if format == "mp3" {
+		return data, nil
+	}
+	pcm, err := pcmFromWAV(data, r.cfg.Gain)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", r.cfg.Name, err)
+	}
+	return pcm, nil
+}
+
+func (r *remote) speed(s Speech) bool { return *r.cfg.Speed && s.Speed > 0 && s.Speed != 1 }
+
+// chatterbox asks Chatterbox-TTS-Server's own endpoint, which takes the
+// controls per request (its OpenAI one uses the configured defaults).
+func (r *remote) chatterbox(ctx context.Context, s Speech, format string) ([]byte, error) {
+	clone, err := r.clone(ctx, s.Voice)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"text": s.Text, "output_format": format, "split_text": true, "chunk_size": chunkRunes,
+		"seed": seedOf(s.Voice),
+	}
+	if r.cfg.Variant == VariantOriginal {
+		e := expressionOf(s)
+		fields["exaggeration"], fields["cfg_weight"] = e.exaggeration, e.cfgWeight
+	}
+	if r.speed(s) {
+		fields["speed_factor"] = s.Speed
+	}
+	mode := func(clone bool) {
+		delete(fields, "reference_audio_filename")
+		delete(fields, "predefined_voice_id")
+		if clone {
+			fields["voice_mode"], fields["reference_audio_filename"] = "clone", s.Voice
+		} else {
+			fields["voice_mode"], fields["predefined_voice_id"] = "predefined", s.Voice
+		}
+	}
+	mode(clone)
+	data, err := r.post(ctx, "/tts", fields)
+	var he *HTTPError
+	if errors.As(err, &he) && he.Status == http.StatusNotFound {
+		// A clip added or removed since the voices were listed: the other
+		// kind of voice, and list them again soon.
+		r.mu.Lock()
+		if !r.fetched.IsZero() {
+			r.fetched = time.Now().Add(-voicesTTL)
+		}
+		r.mu.Unlock()
+		mode(!clone)
+		data, err = r.post(ctx, "/tts", fields)
+	}
+	return data, err
+}
+
+// post sends a synthesis request and reads its audio.
+func (r *remote) post(ctx context.Context, path string, fields map[string]any) ([]byte, error) {
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return nil, err
@@ -160,15 +205,17 @@ func (r *remote) synthesize(ctx context.Context, s Speech) ([]byte, error) {
 	if len(data) > 2*MaxResponseBytes {
 		return nil, fmt.Errorf("%s: synthesis response too large", r.cfg.Name)
 	}
-	if format == "mp3" {
-		return data, nil
-	}
-	pcm, err := pcmFromWAV(data, r.cfg.Gain)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", r.cfg.Name, err)
-	}
-	return pcm, nil
+	return data, nil
 }
+
+// Fingerprint identifies an engine's settings that change its audio (and
+// the version of how styles are mapped to its controls).
+func (r *remote) fingerprint() string {
+	return fmt.Sprintf("%s|%s|%s|%s|%g|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Variant, r.cfg.Model, r.cfg.Gain, mappingVersion)
+}
+
+// mappingVersion changes with expressionOf's tables or chunkRunes.
+const mappingVersion = "1"
 
 // seedOf is a voice's fixed seed: Chatterbox samples, and a fixed seed
 // keeps a character sounding the same from piece to piece.
@@ -178,46 +225,92 @@ func seedOf(voice string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+// errUnlisted: an engine's voices have never been listed, so it is not
+// known whether a voice is predefined or cloned (transient).
+var errUnlisted = errors.New("its voices could not be listed yet")
+
 // clone: the voice is one of the server's reference clips (cloned), not
 // one of its predefined voices.
-func (r *remote) clone(ctx context.Context, voice string) bool {
-	_, _ = r.voices(ctx)
+func (r *remote) clone(ctx context.Context, voice string) (bool, error) {
+	_, err := r.voices(ctx)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.references[voice]
+	if r.fetched.IsZero() {
+		return false, fmt.Errorf("%s: %w: %w", r.cfg.Name, errUnlisted, err)
+	}
+	return r.references[voice], nil
 }
 
-// voicesTTL is how long a listing of an engine's voices is kept.
-const voicesTTL = time.Minute
+// Voice listings: kept for voicesTTL, a failure remembered for
+// listFailTTL (a busy Chatterbox server answers nothing while it
+// synthesizes), one request at a time.
+const (
+	voicesTTL   = time.Minute
+	listFailTTL = 30 * time.Second
+	listTimeout = 10 * time.Second
+)
 
 // voices lists the engine's voices: the configured ones plus those it
 // lists itself (Chatterbox-TTS-Server: its predefined voices and
 // reference clips; OpenAI-compatible: /v1/audio/voices, as Kokoro-FastAPI
-// and others offer).
+// and others offer). After a failure the last listing is returned with
+// the error.
 func (r *remote) voices(ctx context.Context) ([]string, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.listed != nil && time.Since(r.fetched) < voicesTTL {
-		return slices.Clone(r.listed), nil
-	}
-	listCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	var listed []string
-	var err error
-	references := map[string]bool{}
-	if r.cfg.Kind == KindChatterbox {
-		// Predefined voices and reference clips to clone.
-		if listed, err = r.list(listCtx, "/get_predefined_voices"); err == nil {
-			var refs []string
-			refs, err = r.list(listCtx, "/get_reference_files")
-			for _, f := range refs {
-				references[f] = true
+	for {
+		switch {
+		case !r.fetched.IsZero() && time.Since(r.fetched) < voicesTTL:
+			defer r.mu.Unlock()
+			return slices.Clone(r.listed), nil
+		case r.listErr != nil && time.Since(r.failed) < listFailTTL:
+			defer r.mu.Unlock()
+			return r.known(), r.listErr
+		case r.listing != nil:
+			// Another caller is asking; wait for its answer.
+			wait := r.listing
+			r.mu.Unlock()
+			select {
+			case <-wait:
+			case <-ctx.Done():
+				return nil, ctx.Err()
 			}
-			listed = append(listed, refs...)
+			r.mu.Lock()
+			continue
 		}
-	} else {
-		listed, err = r.list(listCtx, "/v1/audio/voices")
+		break
 	}
+	done := make(chan struct{})
+	r.listing = done
+	r.mu.Unlock()
+
+	// Shared by every waiting caller: one that gives up must not cancel it.
+	listCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), listTimeout)
+	defer cancel()
+	listed, references, err := r.fetch(listCtx)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.listing = nil
+	close(done)
+	if err != nil {
+		r.listErr, r.failed = fmt.Errorf("%s: %w", r.cfg.Name, err), time.Now()
+		return r.known(), r.listErr
+	}
+	r.listErr = nil
+	r.listed, r.references, r.fetched = r.merge(listed), references, time.Now()
+	return slices.Clone(r.listed), nil
+}
+
+// known: the last listing, or the configured voices (locked).
+func (r *remote) known() []string {
+	if !r.fetched.IsZero() {
+		return slices.Clone(r.listed)
+	}
+	return r.merge(nil)
+}
+
+// merge adds listed voices to the configured ones, sorted.
+func (r *remote) merge(listed []string) []string {
 	out := slices.Clone(r.cfg.Voices)
 	for _, v := range listed {
 		if EngineVoiceRe.MatchString(v) && !slices.Contains(out, v) {
@@ -225,11 +318,28 @@ func (r *remote) voices(ctx context.Context) ([]string, error) {
 		}
 	}
 	slices.Sort(out)
-	if err != nil {
-		return out, err
+	return out
+}
+
+func (r *remote) fetch(ctx context.Context) ([]string, map[string]bool, error) {
+	references := map[string]bool{}
+	if r.cfg.Kind != KindChatterbox {
+		listed, err := r.list(ctx, "/v1/audio/voices")
+		return listed, references, err
 	}
-	r.listed, r.references, r.fetched = out, references, time.Now()
-	return slices.Clone(out), nil
+	// Predefined voices and reference clips to clone.
+	listed, err := r.list(ctx, "/get_predefined_voices")
+	if err != nil {
+		return nil, nil, err
+	}
+	refs, err := r.list(ctx, "/get_reference_files")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, f := range refs {
+		references[f] = true
+	}
+	return append(listed, refs...), references, nil
 }
 
 func (r *remote) list(ctx context.Context, path string) ([]string, error) {

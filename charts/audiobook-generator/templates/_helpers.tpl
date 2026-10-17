@@ -84,6 +84,11 @@ app.kubernetes.io/component: chatterbox
 {{- end }}
 {{- if .Values.tts.chatterbox.enabled }}
 {{- $c := .Values.tts.chatterbox }}
+{{- range .Values.tts.engines }}
+{{- if eq .name $c.name }}
+{{- fail (printf "tts.engines: %q is the name of tts.chatterbox" .name) }}
+{{- end }}
+{{- end }}
 {{- $list = append $list (dict "name" $c.name "kind" "chatterbox" "url" (printf "http://%s:8004" (include "abg.chatterbox.fullname" .)) "variant" $c.variant "concurrency" (int $c.concurrency) "timeout" $c.timeout "gain" $c.gain) }}
 {{- end }}
 {{- if $list }}

@@ -31,7 +31,7 @@ const (
 )
 
 // EngineConfig configures an additional speech engine. Its voices are
-// written "<name>:<voice>" (e.g. "chatterbox:erin"); voices without a
+// written "<name>:<voice>" (e.g. "chatterbox:Emily.wav"); voices without a
 // prefix are Kokoro's.
 type EngineConfig struct {
 	Name string `json:"name"`
@@ -227,6 +227,16 @@ func (r *Router) SynthesizeTimed(ctx context.Context, s Speech) ([]byte, []Word,
 		return nil, nil, ErrNoTimestamps
 	}
 	return r.Client.SynthesizeTimed(ctx, s)
+}
+
+// Fingerprint identifies the settings of a voice's engine that change
+// its audio ("" for Kokoro's voices).
+func (r *Router) Fingerprint(voice string) string {
+	e, _, err := r.route(voice)
+	if err != nil || e == nil {
+		return ""
+	}
+	return e.fingerprint()
 }
 
 // Configured reports whether a voice's engine is configured (Kokoro's

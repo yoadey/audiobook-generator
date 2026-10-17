@@ -71,6 +71,17 @@ tests:
     asserts:
       - failedTemplate: {}
 
+  - it: rejects an engine named like the chart's Chatterbox
+    template: templates/deployment.yaml
+    set:
+      tts.chatterbox.enabled: true
+      tts.engines:
+        - name: chatterbox
+          kind: openai
+          url: http://x
+    asserts:
+      - failedTemplate: {}
+
   - it: passes engines and the chart's Chatterbox to the app
     template: templates/deployment.yaml
     set:

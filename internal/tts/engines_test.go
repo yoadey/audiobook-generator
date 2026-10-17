@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -217,4 +218,77 @@ func TestRouterTurboAndOpenAI(t *testing.T) {
 		{Name: "a", Kind: KindOpenAI, URL: "http://a"}, {Name: "a", Kind: KindOpenAI, URL: "http://b"},
 	})
 	assert.Error(t, err, "twice")
+}
+
+func TestChatterboxUnlistedAndMoved(t *testing.T) {
+	var mu sync.Mutex
+	down := true
+	refs := []string{}
+	var modes []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/get_predefined_voices", "/get_reference_files":
+			if down {
+				http.Error(w, "busy", http.StatusServiceUnavailable)
+				return
+			}
+			if r.URL.Path == "/get_reference_files" {
+				raw, _ := json.Marshal(refs)
+				_, _ = w.Write(raw)
+				return
+			}
+			_, _ = w.Write([]byte(`[]`))
+		case "/tts":
+			var body map[string]any
+			raw, _ := io.ReadAll(r.Body)
+			require.NoError(t, json.Unmarshal(raw, &body))
+			modes = append(modes, body["voice_mode"].(string))
+			if body["voice_mode"] != "clone" {
+				http.Error(w, "voice not found", http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write(wav(SampleRate, 1, []int16{7}))
+		}
+	}))
+	defer srv.Close()
+	r, err := NewRouter(New("http://kokoro", time.Second), []EngineConfig{{Name: "cb", Kind: KindChatterbox, URL: srv.URL}})
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// Never listed: whether a voice is cloned is unknown, so it waits
+	// (a transient error, no guess that would fail for good).
+	_, err = r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "cb:anna.wav"})
+	require.ErrorIs(t, err, errUnlisted)
+	var he *HTTPError
+	assert.False(t, errors.As(err, &he))
+	assert.Empty(t, modes)
+	// The failure is remembered: the busy server is not asked again at once.
+	es := r.Engines(ctx)
+	assert.NotEmpty(t, es[0].Err)
+
+	// Listed (no clips yet), then a clip is uploaded: tried as predefined,
+	// found as a clone.
+	mu.Lock()
+	down = false
+	mu.Unlock()
+	e := r.engines["cb"]
+	e.mu.Lock()
+	e.failed = time.Time{}
+	e.mu.Unlock()
+	_, err = e.voices(ctx)
+	require.NoError(t, err)
+	mu.Lock()
+	refs = []string{"anna.wav"}
+	mu.Unlock()
+	pcm, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "cb:anna.wav"})
+	require.NoError(t, err)
+	assert.Equal(t, []int16{7}, samples16(t, pcm))
+	assert.Equal(t, []string{"predefined", "clone"}, modes)
+	vs, err := e.voices(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"anna.wav"}, vs, "listed again after the miss")
+	assert.NotEmpty(t, r.Fingerprint("cb:anna.wav"))
+	assert.Empty(t, r.Fingerprint("af_heart"))
 }

@@ -210,7 +210,14 @@ export function VoiceEditor({
             size="xs"
             w="fit-content"
             value={engine}
-            onChange={setEngine}
+            onChange={(v) => {
+              setEngine(v);
+              // Another engine's voices differ; Kokoro starts from a voice.
+              setEngineVoice(v === initialEngine?.engine ? initialEngine.voice : '');
+              if (!v && parts.length === 0 && nextVoice) {
+                setParts([{ voice: nextVoice, weight: 1 }]);
+              }
+            }}
             data={[
               { value: '', label: 'Kokoro' },
               ...engineNames.map((n) => ({ value: n, label: n })),

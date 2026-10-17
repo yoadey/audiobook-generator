@@ -60,6 +60,9 @@ type Engines interface {
 	Expressive(voice string) bool
 	// TakesSpeed: the engine takes a speed.
 	TakesSpeed(voice string) bool
+	// Fingerprint identifies the engine's settings ("" for Kokoro's
+	// voices); it bounds its own concurrency.
+	Fingerprint(voice string) string
 }
 
 // VoiceCatalog lists the base voices pool voices are chosen from.
@@ -220,6 +223,8 @@ type item struct {
 	// style is how an expressive engine is told to speak it (nil: Kokoro
 	// gets pace and loudness instead).
 	style *style
+	// engine identifies the settings of the voice's engine ("": Kokoro).
+	engine string
 }
 
 // style is how to speak, for an engine that acts itself.
@@ -246,7 +251,7 @@ func (it item) speech() tts.Speech {
 
 // file is where an item's audio is cached.
 func (it item) file(dir string, i int) string {
-	return filepath.Join(dir, fmt.Sprintf("%05d-%s.pcm", i, cacheKey(VoiceKey(it.voice, it.speed)+it.style.key(), it.text)))
+	return filepath.Join(dir, fmt.Sprintf("%05d-%s.pcm", i, cacheKey(VoiceKey(it.voice, it.speed)+it.style.key()+it.engine, it.text)))
 }
 
 // voiceFunc returns the voice of a segment.
@@ -290,8 +295,14 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 				}
 			}
 		}
-		if engines != nil && !engines.TakesSpeed(voice) {
-			speed, pr.speed = 1, 1
+		engine := ""
+		if engines != nil {
+			if !engines.TakesSpeed(voice) {
+				speed, pr.speed = 1, 1
+			}
+			if engine = engines.Fingerprint(voice); engine != "" {
+				engine = "|" + engine
+			}
 		}
 		d := direct(s, text, lead)
 		for i, ph := range d.phrases {
@@ -305,6 +316,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			it := item{
 				text: t, voice: voice, speed: clampSpeed(speed * pr.speed), gain: pr.gain,
 				gap: gapPhrase, pause: d.pauses[i], segmentID: id, dialogue: dialogue, style: st,
+				engine: engine,
 			}
 			if s != nil {
 				it.quote, it.thought, it.emotion = s.QuoteRef > 0, s.Kind == store.SegmentThought, s.Emotion
@@ -462,7 +474,9 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	files := make([]string, len(items))
 	var done int64
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(max(r.Concurrency, 1))
+	// Kokoro's requests are bounded here; other engines bound their own
+	// (so a slow engine does not hold Kokoro's slots).
+	kokoro := make(chan struct{}, max(r.Concurrency, 1))
 	progressCh := make(chan struct{}, len(items))
 	for i, it := range items {
 		files[i] = it.file(cacheDir, i)
@@ -470,7 +484,20 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 			progressCh <- struct{}{}
 			continue
 		}
+		// In order: a Kokoro slot is taken before the request starts.
+		if it.engine == "" {
+			select {
+			case kokoro <- struct{}{}:
+			case <-gctx.Done(): // a request failed
+			}
+		}
+		if gctx.Err() != nil {
+			break
+		}
 		g.Go(func() error {
+			if it.engine == "" {
+				defer func() { <-kokoro }()
+			}
 			pcm, words, err := r.synthesize(gctx, it.speech())
 			if err != nil {
 				var he *tts.HTTPError

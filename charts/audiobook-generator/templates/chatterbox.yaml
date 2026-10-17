@@ -139,9 +139,10 @@ spec:
               port: http
             periodSeconds: 10
             failureThreshold: 180
+          # The server answers nothing else while it synthesizes (its
+          # handler blocks), so HTTP probes would fail during long pieces.
           readinessProbe:
-            httpGet:
-              path: /get_reference_files
+            tcpSocket:
               port: http
             periodSeconds: 15
             timeoutSeconds: 10
