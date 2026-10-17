@@ -99,6 +99,8 @@ type VoiceLister interface {
 type Catalog struct {
 	TTS VoiceLister
 	TTL time.Duration
+	// Engines lists the voices of other engines (optional).
+	Engines EngineVoiceLister
 
 	mu      sync.Mutex
 	fetched time.Time

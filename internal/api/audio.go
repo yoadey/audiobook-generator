@@ -33,7 +33,7 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 		return nil, err
 	}
 	fields := map[string]any{}
-	touch := false
+	touch, recast := false, false
 	if v := req.Body.PrepareChapters; v != nil && *v != b.PrepareChapters {
 		// The preparation changes what is said: renders made with (or
 		// without) it are outdated. Touched before the change too, so a
@@ -54,6 +54,10 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 		}
 		fields["NarratorVoice"] = strings.Join(strings.Fields(voice), "")
+		// Another engine: the characters are cast from its voices.
+		old, _ := casting.Narrator(b, s.DefaultVoice)
+		next, _ := casting.Narrator(&store.Book{NarratorVoice: voice}, s.DefaultVoice)
+		recast = tts.EngineOf(old) != tts.EngineOf(next)
 	}
 	if v := req.Body.NarratorSpeed; v != nil {
 		if *v < 0.5 || *v > 2 {
@@ -87,6 +91,19 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 	b, err = s.Store.GetBook(ctx, req.BookId)
 	if err != nil {
 		return nil, err
+	}
+	if recast {
+		if err := s.Store.ResetCastVoices(ctx, b.ID); err != nil {
+			return nil, err
+		}
+		if b.AnalysisStatus == store.AnalysisDone && s.Caster != nil {
+			if err := s.Caster.Start(ctx, b, false); err != nil {
+				return nil, err
+			}
+			if b, err = s.Store.GetBook(ctx, req.BookId); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return UpdateBook200JSONResponse(s.toBook(b)), nil
 }
@@ -257,11 +274,15 @@ func (s *Server) ListVoices(ctx context.Context, _ ListVoicesRequestObject) (Lis
 // engineMissing tells why a voice cannot be used: its engine is not
 // configured ("" when it can, or the TTS cannot tell).
 func (s *Server) engineMissing(voice string) string {
+	voice = strings.TrimSpace(voice)
 	c, ok := s.TTS.(interface{ Configured(voice string) bool })
-	if !ok || c.Configured(strings.TrimSpace(voice)) {
+	if voice == "" || !ok || c.Configured(voice) {
 		return ""
 	}
-	engine, _, _ := tts.SplitVoice(strings.TrimSpace(voice))
+	engine, _, isEngine := tts.SplitVoice(voice)
+	if !isEngine {
+		return "Kokoro is not part of this deployment: choose a voice of another engine"
+	}
 	return fmt.Sprintf("the engine %q of this voice is not configured (ABG_TTS_ENGINES)", engine)
 }
 
@@ -280,8 +301,8 @@ func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObje
 				voices = []string{}
 			}
 			out = append(out, TTSEngine{
-				Name: e.Name, Kind: TTSEngineKind(e.Kind), Emotions: e.Emotions, Speed: e.Speed, Voices: voices,
-				Error: nonEmpty(e.Err),
+				Name: e.Name, Kind: TTSEngineKind(e.Kind), Variant: nonEmpty(e.Variant), Emotions: e.Emotions,
+				Speed: e.Speed, Voices: voices, DefaultVoice: nonEmpty(e.DefaultVoice), Error: nonEmpty(e.Err),
 			})
 		}
 	}

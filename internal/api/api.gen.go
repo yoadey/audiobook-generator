@@ -784,6 +784,9 @@ type Book struct {
 	ChapterCount     int            `json:"chapterCount"`
 	CreatedAt        time.Time      `json:"createdAt"`
 
+	// Engine The engine the book speaks with, that of its narrator ("kokoro" or another engine's name); its characters are cast from its voices
+	Engine string `json:"engine"`
+
 	// Error Why the import failed
 	Error *string `json:"error,omitempty"`
 
@@ -797,7 +800,7 @@ type Book struct {
 	Lookahead     int     `json:"lookahead"`
 	NarratorSpeed float32 `json:"narratorSpeed"`
 
-	// NarratorVoice Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)"
+	// NarratorVoice Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)", or a voice of another engine ("chatterbox:Emily.wav")
 	NarratorVoice string `json:"narratorVoice"`
 
 	// PrepareChapters Chapters are prepared by the LLM before they are rendered (narration mood, pauses, spoken forms, pronunciation suggestions)
@@ -1589,7 +1592,9 @@ type SystemInfo struct {
 	Commit         string       `json:"commit"`
 	Database       DatabaseInfo `json:"database"`
 	MaxUploadBytes int64        `json:"maxUploadBytes"`
-	Tts            TTSInfo      `json:"tts"`
+
+	// Tts Kokoro (when configured)
+	Tts TTSInfo `json:"tts"`
 
 	// Version Example: 0.1.0
 	Version string `json:"version"`
@@ -1597,6 +1602,9 @@ type SystemInfo struct {
 
 // TTSEngine A speech engine besides Kokoro; its voices are written "<name>:<voice>"
 type TTSEngine struct {
+	// DefaultVoice The voice that narrates when a book switches to this engine ("<engine>:<voice>")
+	DefaultVoice *string `json:"defaultVoice,omitempty"`
+
 	// Emotions Speaks emotions and moods itself (Kokoro voices get pace and loudness instead)
 	Emotions bool `json:"emotions"`
 
@@ -1606,18 +1614,26 @@ type TTSEngine struct {
 	Name  string        `json:"name"`
 
 	// Speed Takes a voice's speed
-	Speed  bool     `json:"speed"`
-	Voices []string `json:"voices"`
+	Speed bool `json:"speed"`
+
+	// Variant The model a Chatterbox engine runs (original, turbo or nano)
+	Variant *string  `json:"variant,omitempty"`
+	Voices  []string `json:"voices"`
 }
 
 // TTSEngineKind defines model for TTSEngine.Kind.
 type TTSEngineKind string
 
-// TTSInfo defines model for TTSInfo.
+// TTSInfo Kokoro (when configured)
 type TTSInfo struct {
-	Error     *string `json:"error,omitempty"`
-	Reachable bool    `json:"reachable"`
-	Url       string  `json:"url"`
+	// Configured Kokoro is part of this deployment
+	Configured bool `json:"configured"`
+
+	// DefaultVoice Narrator of books without a voice of their own; its engine is the default one
+	DefaultVoice string  `json:"defaultVoice"`
+	Error        *string `json:"error,omitempty"`
+	Reachable    bool    `json:"reachable"`
+	Url          string  `json:"url"`
 
 	// VoiceCount Number of voices the TTS server offers (when reachable)
 	VoiceCount *int `json:"voiceCount,omitempty"`

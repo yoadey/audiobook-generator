@@ -14,12 +14,14 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
+	"github.com/yoadey/audiobook-generator/internal/tts"
 )
 
 func (s *Server) toBook(b *store.Book) Book {
 	voice, speed := render.NarratorVoice(b, s.DefaultVoice)
 	return Book{
 		NarratorVoice:   voice,
+		Engine:          tts.EngineOf(voice),
 		NarratorSpeed:   float32(speed),
 		Lookahead:       b.Lookahead,
 		PreviewText:     b.PreviewText,

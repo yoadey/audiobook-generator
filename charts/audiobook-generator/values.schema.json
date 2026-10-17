@@ -598,6 +598,9 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "defaultVoice": {
+                "type": "string"
               }
             }
           }
@@ -695,6 +698,9 @@
             },
             "resources": {
               "$ref": "#/definitions/object"
+            },
+            "defaultVoice": {
+              "type": "string"
             }
           }
         }

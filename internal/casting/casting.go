@@ -22,6 +22,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/llm"
 	"github.com/yoadey/audiobook-generator/internal/store"
+	"github.com/yoadey/audiobook-generator/internal/tts"
 )
 
 // JobType casts a book; it runs on the LLM queue.
@@ -235,15 +236,22 @@ func (c *Caster) Run(ctx context.Context, bookID int64, progress func(float64)) 
 		store.CastingQueued, store.CastingRunning); err != nil || !ok {
 		return err
 	}
-	voices, err := c.Catalog.Voices(ctx)
-	if err != nil {
-		return err // the server is needed to know what it offers
-	}
-	castable := Castable(voices)
-	if len(castable) == 0 {
-		return jobs.Permanent(errors.New("the TTS server offers no English voices"))
-	}
 	for {
+		// The characters speak with the narrator's engine (asked every
+		// round: the book may have switched engines meanwhile).
+		narratorVoice, _ := Narrator(b, c.DefaultVoice)
+		voices, err := c.Catalog.VoicesFor(ctx, narratorVoice)
+		if errors.Is(err, tts.ErrUnknownEngine) {
+			return jobs.Permanent(fmt.Errorf("the narrator's engine is not configured: %w", err))
+		}
+		if err != nil {
+			return err // the server is needed to know what it offers
+		}
+		castable := Castable(voices)
+		if len(castable) == 0 {
+			return jobs.Permanent(fmt.Errorf("the engine of the narrator (%s) offers no English voices of a known gender",
+				tts.EngineOf(narratorVoice)))
+		}
 		if err := c.cast(ctx, b, castable, progress); err != nil {
 			return err
 		}
@@ -285,6 +293,18 @@ func (c *Caster) cast(ctx context.Context, b *store.Book, castable []BaseVoice, 
 		ids[i] = ch.ID
 	}
 	if err := c.Store.PromoteCharacters(ctx, ids...); err != nil {
+		return err
+	}
+	// Voices cast from another engine (the book switched, or a casting
+	// was running when it did) are cast again.
+	engine := tts.EngineOf(narratorVoice)
+	var stale []int64
+	for _, ch := range chars {
+		if ch.VoiceRecipe != "" && !ch.VoiceManual && tts.EngineOf(ch.VoiceRecipe) != engine {
+			stale = append(stale, ch.ID)
+		}
+	}
+	if err := c.Store.ClearCastVoices(ctx, stale...); err != nil {
 		return err
 	}
 	if chars, err = c.Store.BookCharacters(ctx, bookID); err != nil {
@@ -462,6 +482,15 @@ func choose(voices []BaseVoice, ch *store.Character, p *proposal, narrator Recip
 		}
 	}
 	speed = math.Round(min(max(speed, MinSpeed), MaxSpeed)*100) / 100
+	mix := mixable(fit)
+	if !mix {
+		// Voices of other engines stand alone and keep their pace: only a
+		// voice of its own tells a character apart.
+		speed = 1
+		if len(want) > 1 {
+			want = Recipe{{Voice: want[0].Voice, Weight: 1}}
+		}
+	}
 
 	// gap is the smallest distance to the narrator and the other voices,
 	// relative to the required one (>= 1 fits).
@@ -482,11 +511,25 @@ func choose(voices []BaseVoice, ch *store.Character, p *proposal, narrator Recip
 		}
 		return s
 	}
+	// uses counts how often a voice is spoken already (nothing distinct
+	// left: the least used one; the narrator's last).
+	uses := func(r Recipe) int {
+		n := 0
+		if r.String() == narrator.String() {
+			n = len(used) + 1
+		}
+		for _, t := range used {
+			if t.recipe.String() == r.String() {
+				n++
+			}
+		}
+		return n
+	}
 	var best Recipe
 	bestScore := math.Inf(-1)
 	var fallback Recipe
 	fallbackGap := math.Inf(-1)
-	for _, r := range candidates(fit) {
+	for _, r := range candidates(fit, mix) {
 		g := gap(r)
 		if g >= 1 {
 			score := grade(r)
@@ -496,7 +539,8 @@ func choose(voices []BaseVoice, ch *store.Character, p *proposal, narrator Recip
 			if score > bestScore {
 				best, bestScore = r, score
 			}
-		} else if best == nil && (g > fallbackGap || g == fallbackGap && grade(r) > grade(fallback)) {
+		} else if best == nil && (g > fallbackGap || g == fallbackGap &&
+			(uses(r) < uses(fallback) || uses(r) == uses(fallback) && grade(r) > grade(fallback))) {
 			fallback, fallbackGap = r, g
 		}
 	}
@@ -517,11 +561,14 @@ func choose(voices []BaseVoice, ch *store.Character, p *proposal, narrator Recip
 }
 
 // candidates lists the blends code chooses from: every base voice alone,
-// and every pair evenly and 70/30.
-func candidates(vs []BaseVoice) []Recipe {
+// and (mix: Kokoro's voices) every pair evenly and 70/30.
+func candidates(vs []BaseVoice, mix bool) []Recipe {
 	var out []Recipe
 	for _, v := range vs {
 		out = append(out, Recipe{{Voice: v.ID, Weight: 1}})
+	}
+	if !mix {
+		return out
 	}
 	for i, a := range vs {
 		for j, b := range vs {
@@ -535,4 +582,45 @@ func candidates(vs []BaseVoice) []Recipe {
 		}
 	}
 	return out
+}
+
+// Reconcile starts the casting of books whose cast voices belong to
+// another engine than their narrator's (the deployment changed its
+// engines or default voice); it returns how many it started.
+func (c *Caster) Reconcile(ctx context.Context) (int, error) {
+	started := 0
+	for offset := 0; ; offset += 100 {
+		books, _, err := c.Store.ListBooks(ctx, offset, 100)
+		if err != nil {
+			return started, err
+		}
+		for i := range books {
+			b := &books[i]
+			if b.AnalysisStatus != store.AnalysisDone || Active(b) {
+				continue
+			}
+			voice, _ := Narrator(b, c.DefaultVoice)
+			chars, err := c.Store.BookCharacters(ctx, b.ID)
+			if err != nil {
+				return started, err
+			}
+			if !slices.ContainsFunc(chars, func(ch store.Character) bool {
+				return ch.VoiceRecipe != "" && !ch.VoiceManual && tts.EngineOf(ch.VoiceRecipe) != tts.EngineOf(voice)
+			}) {
+				continue
+			}
+			// Only when the narrator's engine can be cast from (not one
+			// this deployment lacks): that casting would fail every start.
+			if vs, err := c.Catalog.VoicesFor(ctx, voice); err != nil || len(Castable(vs)) == 0 {
+				continue
+			}
+			if err := c.Start(ctx, b, false); err != nil {
+				return started, err
+			}
+			started++
+		}
+		if len(books) < 100 {
+			return started, nil
+		}
+	}
 }

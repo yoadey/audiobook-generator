@@ -22,6 +22,7 @@ import {
   type CharacterUpdate,
   type Emotion,
   quotesQuery,
+  systemInfoQuery,
   ttsEnginesQuery,
   updateCharacter,
   type Voice,
@@ -97,6 +98,7 @@ export function VoiceEditor({
   onSaved: () => void;
 }) {
   const voices = useQuery(voicesQuery);
+  const system = useQuery(systemInfoQuery);
   const quotes = useQuery(quotesQuery(c.id));
   const preview = usePreview(c.bookId);
   const initialTier: TierChoice = c.tierManual ? c.tier : 'auto';
@@ -219,7 +221,10 @@ export function VoiceEditor({
               }
             }}
             data={[
-              { value: '', label: 'Kokoro' },
+              // Kokoro where this deployment has it (or the voice is Kokoro's).
+              ...(system.data?.tts.configured !== false || engine === ''
+                ? [{ value: '', label: 'Kokoro' }]
+                : []),
               ...engineNames.map((n) => ({ value: n, label: n })),
             ]}
             aria-label="Engine"

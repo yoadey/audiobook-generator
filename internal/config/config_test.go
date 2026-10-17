@@ -52,6 +52,7 @@ func TestValidate(t *testing.T) {
 		"bad tts url":           {"ABG_TTS_URL": "not a url"},
 		"bad engine":            {"ABG_TTS_ENGINES": `[{"name":"x","kind":"piper","url":"http://x"}]`},
 		"bad engines json":      {"ABG_TTS_ENGINES": `[{`},
+		"no engine at all":      {"ABG_TTS_KOKORO": "false"},
 	}
 	for name, envs := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -62,4 +63,13 @@ func TestValidate(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+}
+
+func TestWithoutKokoro(t *testing.T) {
+	t.Setenv("ABG_TTS_KOKORO", "false")
+	t.Setenv("ABG_TTS_URL", "not a url, not used")
+	t.Setenv("ABG_TTS_ENGINES", `[{"name":"chatterbox","kind":"chatterbox","url":"http://cb:8004"}]`)
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.TTS.Kokoro)
 }

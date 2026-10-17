@@ -207,6 +207,20 @@ engines="$(curl -fsS localhost:18080/api/tts/engines)"
 echo "$engines"
 grep -q '"Emily.wav"' <<<"$engines"
 grep -q '"emotions":true' <<<"$engines"
+# A book switched to that engine speaks with it.
+curl -fsS -X PATCH -H 'Content-Type: application/json' -d '{"narratorVoice":"chatterbox:Emily.wav"}' \
+  "localhost:18080/api/books/$id" | grep -q '"engine":"chatterbox"'
+curl -fsS -X PATCH -H 'Content-Type: application/json' -d '{"narratorVoice":""}' \
+  "localhost:18080/api/books/$id" | grep -q '"engine":"kokoro"'
+# Switching cast the characters again: wait for it (the export below
+# carries their voices).
+for _ in $(seq 1 120); do
+  status="$(curl -fsS "localhost:18080/api/books/$id")"
+  grep -q '"castingStatus":"done"' <<<"$status" && break
+  grep -q '"castingStatus":"failed"' <<<"$status" && break
+  sleep 1
+done
+curl -fsS "localhost:18080/api/books/$id" | grep -q '"castingStatus":"done"'
 code="$(curl -sS -o /tmp/preview.audio -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
   -d '{"voice":"chatterbox:Emily.wav","text":"Run!","emotion":"shouting"}' localhost:18080/api/voices/preview)"
 test "$code" = 200

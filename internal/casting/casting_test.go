@@ -542,3 +542,131 @@ func TestQuotes(t *testing.T) {
 		assert.False(t, re.MatchString("“Hi,” Rémile said."))
 	})
 }
+
+type engineVoices map[string][]string
+
+func (e engineVoices) EngineVoices(_ context.Context, engine string) ([]string, error) {
+	vs, ok := e[engine]
+	if !ok {
+		return nil, errors.New("unknown engine")
+	}
+	return vs, nil
+}
+
+func TestEngineCatalog(t *testing.T) {
+	c := NewCatalog(&fakeVoices{ids: []string{"af_heart"}})
+	c.Engines = engineVoices{"cb": {"Emily.wav", "Adrian.wav", "Taylor.wav", "f_anna.wav", "old-man-wizard.wav",
+		"anna.m4a", "f-01.wav"}}
+	ctx := context.Background()
+	vs, err := c.VoicesFor(ctx, "cb:Emily.wav")
+	require.NoError(t, err)
+	genders := map[string]store.Gender{}
+	for _, v := range vs {
+		genders[v.ID] = v.Gender
+	}
+	assert.Equal(t, map[string]store.Gender{
+		"cb:Emily.wav": store.GenderFemale, "cb:Adrian.wav": store.GenderMale,
+		"cb:Taylor.wav": store.GenderUnknown, "cb:f_anna.wav": store.GenderFemale,
+		"cb:old-man-wizard.wav": store.GenderMale, "cb:anna.m4a": store.GenderUnknown, "cb:f-01.wav": store.GenderFemale,
+	}, genders)
+	assert.Len(t, Castable(vs), 5, "a voice of unknown gender is only chosen by hand")
+	kokoro, err := c.VoicesFor(ctx, "bf_emma(0.7)+af_bella(0.3)")
+	require.NoError(t, err)
+	assert.Equal(t, "af_heart", Castable(kokoro)[0].ID)
+	_, err = c.VoicesFor(ctx, "orpheus:tara")
+	assert.Error(t, err)
+}
+
+func TestChooseEngineVoices(t *testing.T) {
+	c := NewCatalog(nil)
+	c.Engines = engineVoices{"cb": {"Emily.wav", "Alice.wav", "Cora.wav", "Adrian.wav"}}
+	all, err := c.VoicesFor(context.Background(), "cb:Emily.wav")
+	require.NoError(t, err)
+	vs := Castable(all)
+	narrator, _ := ParseRecipe("cb:Emily.wav")
+	woman := func(id int64) *store.Character {
+		return &store.Character{ID: id, Name: "w", Gender: store.GenderFemale, AgeGroup: store.AgeChild}
+	}
+	// A proposal of a blend keeps its first voice; speed stays 1 (the
+	// engine paces itself).
+	r, speed, _ := choose(vs, woman(1), prop(1.2, "cb:Alice.wav", 0.6, "cb:Cora.wav", 0.4), narrator, 1, nil)
+	assert.Equal(t, "cb:Alice.wav", r.String())
+	assert.InDelta(t, 1.0, speed, 1e-9)
+
+	// Distinct single voices while they last (never the narrator's), then
+	// the least used one.
+	var used []taken
+	counts := map[string]int{}
+	for i := range 6 {
+		r, speed, _ := choose(vs, woman(int64(i+2)), nil, narrator, 1, used)
+		require.Len(t, r, 1)
+		counts[r.String()]++
+		used = append(used, taken{"w", r, speed})
+	}
+	assert.Equal(t, map[string]int{"cb:Alice.wav": 3, "cb:Cora.wav": 3}, counts)
+}
+
+func TestEngineSwitchWhileCasting(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b := setup(t, s)
+		c, srv := newCaster(t, s)
+		c.Catalog.Engines = engineVoices{"cb": {"Emily.wav", "Alice.wav", "Adrian.wav"}}
+		anna := &store.Character{BookID: b.ID, Name: "Anna", Gender: store.GenderFemale, Speaks: true, Importance: 5}
+		tom := &store.Character{BookID: b.ID, Name: "Tom", Gender: store.GenderMale, Speaks: true, Importance: 4}
+		chosen := &store.Character{BookID: b.ID, Name: "Ida", Gender: store.GenderFemale, Speaks: true,
+			Tier: store.TierMain, VoiceRecipe: "bf_emma", VoiceManual: true}
+		for _, ch := range []*store.Character{anna, tom, chosen} {
+			require.NoError(t, s.CreateCharacter(ctx, ch))
+		}
+		require.NoError(t, c.Start(ctx, b, false))
+		_, err := s.ClaimJob(ctx, Queue, time.Now().UTC())
+		require.NoError(t, err)
+		calls := 0
+		srv.Respond = func(llmtest.Request) llmtest.Reply {
+			calls++
+			if calls == 1 {
+				// The book switches to another engine while Kokoro voices
+				// are being cast (as the API does).
+				require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"NarratorVoice": "cb:Emily.wav"}))
+				require.NoError(t, s.ResetCastVoices(ctx, b.ID))
+				got, err := s.GetBook(ctx, b.ID)
+				require.NoError(t, err)
+				require.NoError(t, c.Start(ctx, got, false))
+			}
+			return castAnswer(t)
+		}
+		require.NoError(t, c.Run(ctx, b.ID, func(float64) {}))
+		chars, err := s.BookCharacters(ctx, b.ID)
+		require.NoError(t, err)
+		for _, ch := range chars {
+			switch ch.Name {
+			case "Anna":
+				assert.Equal(t, "cb:Alice.wav", ch.VoiceRecipe, "not the narrator's")
+			case "Tom":
+				assert.Equal(t, "cb:Adrian.wav", ch.VoiceRecipe)
+			case "Ida":
+				assert.Equal(t, "bf_emma", ch.VoiceRecipe, "chosen voices stay")
+			}
+		}
+
+		// A deployment change of the default voice: Reconcile recasts.
+		finishJobs(t, s)
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"NarratorVoice": ""}))
+		n, err := c.Reconcile(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 1, n, "Kokoro narrates again, the cast voices are Chatterbox's")
+		n, err = c.Reconcile(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 0, n, "already queued")
+
+		// A narrator of an engine the deployment lacks is not recast at
+		// every start (the casting could only fail).
+		finishJobs(t, s)
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"NarratorVoice": "gone:x.wav",
+			"CastingStatus": store.CastingDone}))
+		n, err = c.Reconcile(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 0, n)
+	})
+}

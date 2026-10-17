@@ -66,9 +66,10 @@ type Engines interface {
 	Fingerprint(voice string) string
 }
 
-// VoiceCatalog lists the base voices pool voices are chosen from.
+// VoiceCatalog lists the voices pool voices are chosen from: those of the
+// engine of a voice (the narrator's).
 type VoiceCatalog interface {
-	Voices(ctx context.Context) ([]casting.BaseVoice, error)
+	VoicesFor(ctx context.Context, voice string) ([]casting.BaseVoice, error)
 }
 
 // Attributor queues speaker attributions (or chapter preparations).
@@ -689,11 +690,20 @@ func (r *Renderer) speakerVoices(ctx context.Context, b *store.Book, segs []stor
 	}
 	var base []casting.BaseVoice
 	if r.Voices != nil && len(chars) > 0 {
-		base, _ = r.Voices.Voices(ctx) // the catalogue is assumed when the server is down
+		// The characters speak with the narrator's engine (Kokoro's
+		// catalogue is assumed when the server is down).
+		base, _ = r.Voices.VoicesFor(ctx, narrator)
 	}
+	configured, _ := r.TTS.(interface{ Configured(voice string) bool })
 	voices := map[int64]casting.Voice{}
 	for i := range chars {
-		voices[chars[i].ID] = casting.Effective(&chars[i], base, narrator, narratorSpeed)
+		c := chars[i]
+		if configured != nil && c.VoiceRecipe != "" && !configured.Configured(c.VoiceRecipe) {
+			// A voice of an engine this deployment lacks (chosen before it
+			// changed): a pool voice instead.
+			c.VoiceRecipe = ""
+		}
+		voices[c.ID] = casting.Effective(&c, base, narrator, narratorSpeed)
 	}
 	return func(s *store.Segment) (string, float64) {
 		// Quotations and thoughts are spoken by their speaker.

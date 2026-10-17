@@ -115,14 +115,20 @@ type Database struct {
 	PostgresSSLMode  string `env:"POSTGRES_SSLMODE" envDefault:"prefer"`
 }
 
-// TTS configures the Kokoro-FastAPI (OpenAI-compatible) speech server.
+// TTS configures the speech engines: Kokoro-FastAPI (unless Kokoro is
+// false) and the others (Engines).
 type TTS struct {
+	// Kokoro: Kokoro-FastAPI at URL narrates; false for a deployment that
+	// speaks with other engines only.
+	Kokoro  bool          `env:"KOKORO" envDefault:"true"`
 	URL     string        `env:"URL" envDefault:"http://localhost:8880"`
 	Timeout time.Duration `env:"TIMEOUT" envDefault:"5m"`
 	// Concurrency is the number of parallel synthesis requests (roughly
 	// Kokoro replicas × 1-2).
 	Concurrency int `env:"CONCURRENCY" envDefault:"2"`
-	// DefaultVoice narrates books that have no voice set.
+	// DefaultVoice narrates books that have no voice set; its engine is
+	// the default one. Without Kokoro, a Kokoro voice here stands for the
+	// first engine's default voice.
 	DefaultVoice string `env:"DEFAULT_VOICE" envDefault:"af_heart"`
 	// Engines are speech servers besides Kokoro (a JSON list, see
 	// tts.EngineConfig), whose voices are written "<name>:<voice>".
@@ -156,8 +162,11 @@ func (c Config) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("ABG_DB_TYPE must be %q or %q, got %q", DialectSQLite, DialectPostgres, c.DB.Type))
 	}
-	if _, err := url.ParseRequestURI(c.TTS.URL); err != nil {
+	if _, err := url.ParseRequestURI(c.TTS.URL); c.TTS.Kokoro && err != nil {
 		errs = append(errs, fmt.Errorf("ABG_TTS_URL: %w", err))
+	}
+	if !c.TTS.Kokoro && len(c.TTS.Engines) == 0 {
+		errs = append(errs, errors.New("ABG_TTS_KOKORO=false needs another engine (ABG_TTS_ENGINES)"))
 	}
 	if c.PublicURL != "" {
 		if u, err := url.Parse(c.PublicURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {

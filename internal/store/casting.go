@@ -22,22 +22,45 @@ func (s *Store) TransitionCasting(ctx context.Context, bookID int64, to CastingS
 // the user did not choose.
 func (s *Store) ResetCasting(ctx context.Context, bookID int64) error {
 	return s.Tx(ctx, func(tx *Store) error {
-		db := tx.db
-		if err := db.Model(&Character{}).Where("book_id = ? AND tier_manual = ?", bookID, false).
+		if err := tx.db.Model(&Character{}).Where("book_id = ? AND tier_manual = ?", bookID, false).
 			Update("tier", TierMinor).Error; err != nil {
 			return err
 		}
-		// Chapters in which a character with a cast voice speaks get
-		// another voice for it.
+		return tx.ResetCastVoices(ctx, bookID)
+	})
+}
+
+// ResetCastVoices forgets the voices the casting chose for a book's
+// characters (not those the user chose), e.g. when the book changes to
+// another engine.
+func (s *Store) ResetCastVoices(ctx context.Context, bookID int64) error {
+	var cast []int64
+	if err := s.db.WithContext(ctx).Model(&Character{}).
+		Where("book_id = ? AND voice_manual = ? AND voice_recipe <> ''", bookID, false).
+		Pluck("id", &cast).Error; err != nil {
+		return err
+	}
+	return s.ClearCastVoices(ctx, cast...)
+}
+
+// ClearCastVoices forgets the voices the casting chose for characters
+// (voices the user chose stay); the chapters they speak in get another
+// voice for them.
+func (s *Store) ClearCastVoices(ctx context.Context, ids ...int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.Tx(ctx, func(tx *Store) error {
+		// Only those still cast (not chosen by the user meanwhile).
 		var cast []int64
-		if err := db.Model(&Character{}).Where("book_id = ? AND voice_manual = ? AND voice_recipe <> ''", bookID, false).
-			Pluck("id", &cast).Error; err != nil {
+		if err := tx.db.Model(&Character{}).Where("id IN ? AND voice_manual = ? AND voice_recipe <> ''", ids, false).
+			Pluck("id", &cast).Error; err != nil || len(cast) == 0 {
 			return err
 		}
 		if err := tx.TouchCharacterVoices(ctx, cast...); err != nil {
 			return err
 		}
-		return db.Model(&Character{}).Where("book_id = ? AND voice_manual = ?", bookID, false).
+		return tx.db.Model(&Character{}).Where("id IN ?", cast).
 			Updates(map[string]any{"voice_recipe": "", "voice_speed": 1, "voice_note": ""}).Error
 	})
 }

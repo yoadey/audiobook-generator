@@ -87,6 +87,7 @@ func TestEngineConfig(t *testing.T) {
 		"url":     {Name: "x", Kind: KindOpenAI, URL: "x:80"},
 		"variant": {Name: "x", Kind: KindChatterbox, URL: "http://x", Variant: "flash"},
 		"voice":   {Name: "x", Kind: KindOpenAI, URL: "http://x", Voices: []string{"a b"}},
+		"kokoro":  {Name: "kokoro", Kind: KindOpenAI, URL: "http://x"},
 	} {
 		assert.Error(t, c.Validate(), name)
 	}
@@ -150,8 +151,8 @@ func TestRouterChatterbox(t *testing.T) {
 
 	es := r.Engines(ctx)
 	require.Len(t, es, 1)
-	assert.Equal(t, Engine{Name: "chatterbox", Kind: KindChatterbox, Emotions: true,
-		Voices: []string{"Emily.wav", "anna.wav", "extra.wav"}}, es[0])
+	assert.Equal(t, Engine{Name: "chatterbox", Kind: KindChatterbox, Variant: VariantOriginal, Emotions: true,
+		Voices: []string{"Emily.wav", "anna.wav", "extra.wav"}, DefaultVoice: "chatterbox:Emily.wav"}, es[0])
 
 	pcm, err := r.Synthesize(ctx, Speech{Text: "Hello.", Voice: "chatterbox:Emily.wav", Speed: 1.2, Emotion: "angry"})
 	require.NoError(t, err)
@@ -304,4 +305,61 @@ func TestChatterboxUnlistedAndMoved(t *testing.T) {
 	assert.Equal(t, []string{"anna.wav"}, vs, "listed again after the miss")
 	assert.NotEmpty(t, r.Fingerprint("cb:anna.wav"))
 	assert.Empty(t, r.Fingerprint("af_heart"))
+}
+
+func TestRouterWithoutKokoro(t *testing.T) {
+	var got []map[string]any
+	srv := chatterboxServer(t, &got)
+	defer srv.Close()
+	_, err := NewRouter(nil, nil)
+	require.Error(t, err, "no engine at all")
+	r, err := NewRouter(nil, []EngineConfig{{Name: "cb", Kind: KindChatterbox, URL: srv.URL, DefaultVoice: "Adrian.wav"}})
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	assert.False(t, r.Kokoro())
+	assert.Empty(t, r.BaseURL())
+	vs, err := r.Voices(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, vs, "no Kokoro voices")
+	assert.False(t, r.Configured("af_heart"))
+	assert.True(t, r.Configured("cb:Emily.wav"))
+	_, err = r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "af_heart"})
+	var he *HTTPError
+	require.ErrorAs(t, err, &he)
+	assert.True(t, he.Permanent())
+
+	// Books without a voice of their own speak with the engine's default.
+	def, err := r.ResolveDefault("af_heart")
+	require.NoError(t, err)
+	assert.Equal(t, "cb:Adrian.wav", def)
+	def, err = r.ResolveDefault("cb:Emily.wav")
+	require.NoError(t, err)
+	assert.Equal(t, "cb:Emily.wav", def)
+	names, err := r.EngineVoices(ctx, "cb")
+	require.NoError(t, err)
+	assert.Contains(t, names, "Emily.wav")
+	_, err = r.EngineVoices(ctx, "nope")
+	assert.ErrorIs(t, err, ErrUnknownEngine)
+
+	assert.Equal(t, KokoroEngine, EngineOf("bf_emma(0.7)+af_bella(0.3)"))
+	assert.Equal(t, "cb", EngineOf("cb:Emily.wav"))
+	assert.True(t, r.Mixable("af_heart"))
+	assert.False(t, r.Mixable("cb:Emily.wav"))
+
+	// Defaults: Chatterbox's own, else the first configured voice.
+	r, err = NewRouter(New("http://kokoro", time.Second), []EngineConfig{
+		{Name: "cb", Kind: KindChatterbox, URL: srv.URL},
+		{Name: "o", Kind: KindOpenAI, URL: "http://o", Voices: []string{"tara"}},
+		{Name: "p", Kind: KindOpenAI, URL: "http://p"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "cb:Emily.wav", r.DefaultVoice("cb"))
+	assert.Equal(t, "o:tara", r.DefaultVoice("o"))
+	assert.Empty(t, r.DefaultVoice("p"))
+	def, err = r.ResolveDefault("af_heart")
+	require.NoError(t, err)
+	assert.Equal(t, "af_heart", def, "Kokoro's voice while it is there")
+	_, err = r.ResolveDefault("orpheus:tara")
+	assert.Error(t, err, "a default voice of an unconfigured engine is a mistake")
 }

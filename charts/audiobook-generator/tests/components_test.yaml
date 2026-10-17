@@ -33,6 +33,49 @@ tests:
       - hasDocuments:
           count: 0
 
+  - it: speaks with Chatterbox only when Kokoro is off
+    template: templates/deployment.yaml
+    set:
+      tts.kokoro.enabled: false
+      tts.chatterbox.enabled: true
+      tts.chatterbox.defaultVoice: Adrian.wav
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_KOKORO
+            value: "false"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_URL
+            value: http://abg-audiobook-generator-kokoro:8880
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "ABG_TTS_ENGINES")].value
+          pattern: '"defaultVoice":"Adrian.wav"'
+
+  - it: needs a default voice without Kokoro
+    template: templates/deployment.yaml
+    set:
+      tts.kokoro.enabled: false
+      tts.engines:
+        - name: orpheus
+          kind: openai
+          url: http://orpheus:5005
+    asserts:
+      - failedTemplate:
+          errorMessage: "without Kokoro, an engine needs a defaultVoice (or voices) to narrate new books"
+
+  - it: names the speech engines in the notes
+    template: templates/NOTES.txt
+    set:
+      tts.kokoro.enabled: false
+      tts.chatterbox.enabled: true
+      tts.chatterbox.variant: nano
+    asserts:
+      - matchRegexRaw:
+          pattern: "TTS:      no Kokoro, Chatterbox \\(nano\\)"
+
   - it: omits Chatterbox by default
     template: templates/chatterbox.yaml
     asserts:

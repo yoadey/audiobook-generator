@@ -649,13 +649,47 @@ describe('App', () => {
         commit: 'abc123',
         maxUploadBytes: 536870912,
         database: { dialect: 'postgres', schemaVersion: '202610150002_book_content_and_jobs' },
-        tts: { url: 'http://kokoro:8880', reachable: false, error: 'connection refused' },
+        tts: {
+          url: 'http://kokoro:8880',
+          reachable: false,
+          configured: true,
+          defaultVoice: 'af_heart',
+          error: 'connection refused',
+        },
       },
     });
     renderAt('/system');
     expect(await screen.findByText('postgres')).toBeInTheDocument();
     expect(screen.getByText('unreachable')).toBeInTheDocument();
     expect(screen.getByText('connection refused')).toBeInTheDocument();
+  });
+
+  it('shows a deployment without Kokoro', async () => {
+    stubApi({
+      '/api/system': {
+        version: '0.1.0',
+        commit: 'abc123',
+        maxUploadBytes: 536870912,
+        database: { dialect: 'sqlite', schemaVersion: 'x' },
+        tts: { url: '', reachable: false, configured: false, defaultVoice: 'chatterbox:Emily.wav' },
+      },
+      '/api/tts/engines': [
+        {
+          name: 'chatterbox',
+          kind: 'chatterbox',
+          variant: 'nano',
+          emotions: false,
+          speed: false,
+          voices: ['Emily.wav'],
+          defaultVoice: 'chatterbox:Emily.wav',
+        },
+      ],
+    });
+    renderAt('/system');
+    expect(await screen.findByText('Not part of this deployment.')).toBeInTheDocument();
+    expect(screen.getByText('chatterbox:Emily.wav')).toBeInTheDocument();
+    expect(await screen.findByText('Speech engine chatterbox')).toBeInTheDocument();
+    expect(screen.getByText('chatterbox (nano)')).toBeInTheDocument();
   });
 
   it('shows LLM providers with their quotas', async () => {
