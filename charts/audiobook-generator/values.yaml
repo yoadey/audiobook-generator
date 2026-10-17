@@ -279,6 +279,9 @@ tts:
     timeout: 10m
     # Evens out its loudness against Kokoro's.
     gain: 1
+    # Longest text sent at once: the pieces of a paragraph in one voice
+    # are joined up to it (the server splits longer text by sentences).
+    maxChars: 1000
     image:
       repository: ghcr.io/devnen/chatterbox-tts-server
       # -cpu, -nvidia (CUDA 12.1), -cu128, -cu130 or -rocm.

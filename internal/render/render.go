@@ -64,6 +64,9 @@ type Engines interface {
 	// Fingerprint identifies the engine's settings ("" for Kokoro's
 	// voices); it bounds its own concurrency.
 	Fingerprint(voice string) string
+	// JoinLimit is the longest text the engine takes in one request (0:
+	// pieces are never joined, Kokoro's).
+	JoinLimit(voice string) int
 }
 
 // VoiceCatalog lists the voices pool voices are chosen from: those of the
@@ -227,6 +230,15 @@ type item struct {
 	style *style
 	// engine identifies the settings of the voice's engine ("": Kokoro).
 	engine string
+	// parts are the segments a joined item speaks, in order, with their
+	// length in runes (nil: only segmentID).
+	parts []part
+}
+
+// part is a segment spoken in a joined item.
+type part struct {
+	segmentID int64
+	runes     int
 }
 
 // style is how to speak, for an engine that acts itself.
@@ -376,7 +388,49 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 	}
 	gapLast(gapTail)
 	pauses(items)
+	if engines != nil {
+		items = join(items, engines.JoinLimit)
+	}
 	return items
+}
+
+// join speaks the pieces of a paragraph in one request where an engine
+// that acts itself would otherwise get them one by one (a sentence, a
+// dialogue tag): consecutive items of one voice and style, separated only
+// by the plain pause between segments, up to the engine's limit. Pauses
+// that mean something (after a thought, a trailing line, one the chapter
+// preparation asks for) still split them, as do paragraphs.
+func join(items []item, limitOf func(voice string) int) []item {
+	out := items[:0:0]
+	for _, it := range items {
+		n := len(out)
+		if n == 0 {
+			out = append(out, it)
+			continue
+		}
+		prev := &out[n-1]
+		limit := limitOf(it.voice)
+		if prev.engine == "" || prev.engine != it.engine || prev.voice != it.voice || prev.speed != it.speed ||
+			prev.gain != it.gain || prev.style.key() != it.style.key() || prev.gap != gapSegment ||
+			prev.pause != withinPara || limit <= 0 ||
+			utf8.RuneCountInString(prev.text)+1+utf8.RuneCountInString(it.text) > limit {
+			out = append(out, it)
+			continue
+		}
+		if prev.parts == nil {
+			prev.parts = []part{{prev.segmentID, utf8.RuneCountInString(prev.text)}}
+		}
+		if it.parts == nil {
+			it.parts = []part{{it.segmentID, utf8.RuneCountInString(it.text)}}
+		}
+		prev.parts = append(prev.parts, it.parts...)
+		// The joined item ends where the last one did.
+		joined := it
+		joined.text = prev.text + " " + it.text
+		joined.segmentID, joined.parts = prev.segmentID, prev.parts
+		*prev = joined
+	}
+	return out
 }
 
 // withoutPreparation drops what a chapter preparation found (the book

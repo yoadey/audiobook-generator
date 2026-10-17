@@ -89,9 +89,10 @@ func expressionOf(s Speech) expression {
 	return e
 }
 
-// chunkRunes is the chunk size Chatterbox splits longer pieces into
-// (one generation is at most about 40 s of speech).
-const chunkRunes = 250
+// chunkRunes is the chunk size Chatterbox splits longer text into, by
+// sentences; text up to 1.5 times it is generated at once (one generation
+// is at most about 40 s of speech, 450 characters about 30 s).
+const chunkRunes = 300
 
 // synthesize renders with the engine: SampleRate mono PCM for "pcm", the
 // engine's MP3 for "mp3".
@@ -231,7 +232,7 @@ func (r *remote) fingerprint() string {
 }
 
 // mappingVersion changes with expressionOf's tables or chunkRunes.
-const mappingVersion = "1"
+const mappingVersion = "2"
 
 // seedOf is a voice's fixed seed: Chatterbox samples, and a fixed seed
 // keeps a character sounding the same from piece to piece.

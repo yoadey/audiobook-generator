@@ -89,7 +89,7 @@ app.kubernetes.io/component: chatterbox
 {{- fail (printf "tts.engines: %q is the name of tts.chatterbox" .name) }}
 {{- end }}
 {{- end }}
-{{- $e := dict "name" $c.name "kind" "chatterbox" "url" (printf "http://%s:8004" (include "abg.chatterbox.fullname" .)) "variant" $c.variant "concurrency" (int $c.concurrency) "timeout" $c.timeout "gain" $c.gain }}
+{{- $e := dict "name" $c.name "kind" "chatterbox" "url" (printf "http://%s:8004" (include "abg.chatterbox.fullname" .)) "variant" $c.variant "concurrency" (int $c.concurrency) "timeout" $c.timeout "gain" $c.gain "maxChars" (int $c.maxChars) }}
 {{- with $c.defaultVoice }}
 {{- $_ := set $e "defaultVoice" . }}
 {{- end }}

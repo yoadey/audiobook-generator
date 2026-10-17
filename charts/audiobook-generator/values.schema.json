@@ -605,6 +605,10 @@
               },
               "defaultVoice": {
                 "type": "string"
+              },
+              "maxChars": {
+                "type": "integer",
+                "minimum": 1
               }
             }
           }
@@ -705,6 +709,10 @@
             },
             "defaultVoice": {
               "type": "string"
+            },
+            "maxChars": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         }

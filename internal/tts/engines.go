@@ -60,6 +60,11 @@ type EngineConfig struct {
 	// Speed: the engine takes a speed (default true for openai, false for
 	// chatterbox, whose pace is left to it).
 	Speed *bool `json:"speed,omitempty"`
+	// MaxChars is the longest text sent in one request: the pieces of a
+	// paragraph in one voice are joined up to it (default 1000 for
+	// chatterbox, which splits longer text by sentences itself; 400 for
+	// openai).
+	MaxChars int `json:"maxChars,omitempty"`
 }
 
 // Engines is a list of engine configurations, read from JSON (an
@@ -125,8 +130,8 @@ func (c *EngineConfig) Validate() error {
 			return fmt.Errorf("engine %s: voice %q: letters, digits, dots, dashes and underscores", c.Name, v)
 		}
 	}
-	if c.Concurrency < 0 || c.Gain < 0 || c.Timeout < 0 {
-		return fmt.Errorf("engine %s: concurrency, gain and timeout must not be negative", c.Name)
+	if c.Concurrency < 0 || c.Gain < 0 || c.Timeout < 0 || c.MaxChars < 0 {
+		return fmt.Errorf("engine %s: concurrency, gain, timeout and maxChars must not be negative", c.Name)
 	}
 	switch {
 	case c.Kind != KindChatterbox:
@@ -148,6 +153,12 @@ func (c *EngineConfig) Validate() error {
 	if c.Speed == nil {
 		speed := c.Kind != KindChatterbox
 		c.Speed = &speed
+	}
+	if c.MaxChars == 0 {
+		c.MaxChars = 400
+		if c.Kind == KindChatterbox {
+			c.MaxChars = 1000
+		}
 	}
 	return nil
 }
@@ -387,6 +398,16 @@ func (r *Router) Expressive(voice string) bool {
 func (r *Router) TakesSpeed(voice string) bool {
 	e, _, err := r.route(voice)
 	return err == nil && (e == nil || *e.cfg.Speed)
+}
+
+// JoinLimit is the longest text a voice's engine takes in one request
+// (0 for Kokoro's voices: their pieces are never joined).
+func (r *Router) JoinLimit(voice string) int {
+	e, _, err := r.route(voice)
+	if err != nil || e == nil {
+		return 0
+	}
+	return e.cfg.MaxChars
 }
 
 // Engines lists the configured engines with their voices.
