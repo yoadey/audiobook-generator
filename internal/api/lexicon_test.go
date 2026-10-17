@@ -119,7 +119,8 @@ func TestPreparationAndSuggestions(t *testing.T) {
 		var prep api.ChapterPreparation
 		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, "/api/chapters/"+itoa(ids[1])+"/preparation",
 			nil, &prep))
-		assert.Equal(t, api.PrepStatusQueued, prep.Status)
+		// The runner may have picked the job up already.
+		assert.Contains(t, []api.PrepStatus{api.PrepStatusQueued, api.PrepStatusRunning}, prep.Status)
 		require.NotNil(t, prep.Job)
 		// Without an LLM provider the job waits (deferred).
 		require.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/chapters/"+itoa(ids[1])+"/preparation",
