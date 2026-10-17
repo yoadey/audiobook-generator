@@ -49,7 +49,7 @@ func WebVTT(c *store.Chapter, segs []store.Segment, t *render.Timings) []byte {
 		if q.EndMs <= q.StartMs || cueText(s) == "" {
 			continue
 		}
-		for _, l := range lines(s, q.StartMs, q.EndMs) {
+		for _, l := range lines(s, q.StartMs, q.EndMs, q.Words) {
 			n++
 			_, _ = fmt.Fprintf(&b, "\n%d\n%s --> %s\n%s\n", n, vttTime(l.from), vttTime(l.to), cueText(l.text))
 		}
@@ -62,9 +62,10 @@ type line struct {
 	from, to int64
 }
 
-// lines splits a cue's text into sentences over [from, to), each timed by
-// its share of the characters.
-func lines(text string, from, to int64) []line {
+// lines splits a cue's text into sentences over [from, to), each starting
+// with its first word when the TTS reported word times ([rune offset,
+// ms]), else timed by its share of the characters.
+func lines(text string, from, to int64, words [][2]int64) []line {
 	sentences := segment.Sentences(text)
 	total := 0
 	for _, s := range sentences {
@@ -74,15 +75,33 @@ func lines(text string, from, to int64) []line {
 		return []line{{text, from, to}}
 	}
 	out := make([]line, 0, len(sentences))
-	at, done := from, 0
+	at, done, offset := from, 0, 0
+	rest := text
 	for i, s := range sentences {
+		if k := strings.Index(rest, s); k >= 0 {
+			offset += utf8.RuneCountInString(rest[:k])
+			rest = rest[k:]
+		}
+		if i > 0 {
+			// The start of the sentence's first timed word.
+			for _, w := range words {
+				if int(w[0]) >= offset {
+					if w[1] > out[i-1].from && w[1] < to {
+						out[i-1].to, at = w[1], w[1]
+					}
+					break
+				}
+			}
+		}
 		done += utf8.RuneCountInString(s)
-		end := from + (to-from)*int64(done)/int64(total)
+		end := max(at, from+(to-from)*int64(done)/int64(total))
 		if i == len(sentences)-1 {
 			end = to
 		}
 		out = append(out, line{s, at, end})
 		at = end
+		offset += utf8.RuneCountInString(s)
+		rest = rest[len(s):]
 	}
 	return out
 }

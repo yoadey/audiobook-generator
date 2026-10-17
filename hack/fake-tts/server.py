@@ -1,9 +1,10 @@
 """Minimal stand-in for Kokoro-FastAPI and an LLM provider, used by the e2e
 test and local runs.
 
-Kokoro: GET /health, GET /v1/audio/voices (v0.9 response shape) and
-POST /v1/audio/speech. Speech is a quiet 220 Hz tone whose length grows with
-the text (20 ms per character), as 24 kHz 16-bit mono PCM; any other
+Kokoro: GET /health, GET /v1/audio/voices (v0.9 response shape),
+POST /v1/audio/speech and POST /dev/captioned_speech (non-streaming, with
+word timestamps). Speech is a quiet 220 Hz tone whose length grows with the
+text (20 ms per character), as 24 kHz 16-bit mono PCM; any other
 response_format gets a WAV file.
 
 LLM (OpenAI-compatible): GET /v1/models and POST /v1/chat/completions, which
@@ -15,6 +16,7 @@ paragraph, and anything else with "{}". When FAKE_LLM_KEY is set, requests
 must carry it as bearer token.
 """
 
+import base64
 import json
 import math
 import os
@@ -155,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
             }
             self._send(200, json.dumps(body).encode(), "application/json")
             return
-        if self.path != "/v1/audio/speech":
+        if self.path not in ("/v1/audio/speech", "/dev/captioned_speech"):
             self._send(404, b"not found", "text/plain")
             return
         req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
@@ -163,7 +165,19 @@ class Handler(BaseHTTPRequestHandler):
             if part.split("(")[0] not in VOICES:
                 self._send(400, json.dumps({"detail": "unknown voice"}).encode(), "application/json")
                 return
-        pcm = tone(0.02 * len(req.get("input", "")) / float(req.get("speed", 1) or 1))
+        text = req.get("input", "")
+        per_char = 0.02 / float(req.get("speed", 1) or 1)
+        pcm = tone(per_char * len(text))
+        if self.path == "/dev/captioned_speech":
+            # A word starts after the characters before it (as the tone).
+            words = [
+                {"word": m.group(), "start_time": round(per_char * m.start(), 3),
+                 "end_time": round(per_char * m.end(), 3)}
+                for m in re.finditer(r"\S+", text)
+            ]
+            body = {"audio": base64.b64encode(pcm).decode(), "audio_format": "audio/pcm", "timestamps": words}
+            self._send(200, json.dumps(body).encode(), "application/json")
+            return
         if req.get("response_format", "mp3") == "pcm":
             self._send(200, pcm, "audio/pcm")
         else:

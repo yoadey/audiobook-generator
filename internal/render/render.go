@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,6 +42,12 @@ const Queue = "render"
 // Synthesizer is the TTS server.
 type Synthesizer interface {
 	Synthesize(ctx context.Context, s tts.Speech) ([]byte, error)
+}
+
+// TimedSynthesizer also reports when each word is spoken (optional: a TTS
+// without it gives timings per segment only).
+type TimedSynthesizer interface {
+	SynthesizeTimed(ctx context.Context, s tts.Speech) ([]byte, []tts.Word, error)
 }
 
 // VoiceCatalog lists the base voices pool voices are chosen from.
@@ -185,9 +192,15 @@ type item struct {
 	text  string
 	voice string
 	speed float64
+	gain  float64
+	gap   gap
 	pause time.Duration
-	// segmentID is the segment spoken (0: the chapter title).
+	// segmentID is the segment spoken (0: the chapter title); a segment
+	// may be spoken in several items (phrases).
 	segmentID int64
+	// What the pause after it depends on.
+	quote, thought, dialogue bool
+	emotion                  string
 }
 
 // voiceFunc returns the voice of a segment.
@@ -202,54 +215,81 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 		byPara[s.ParagraphID] = append(byPara[s.ParagraphID], s)
 	}
 	var items []item
-	pauseLast := func(d time.Duration) {
+	gapLast := func(g gap) {
 		if len(items) > 0 {
-			items[len(items)-1].pause = max(items[len(items)-1].pause, d)
+			items[len(items)-1].gap = max(items[len(items)-1].gap, g)
 		}
 	}
 	narrator, narratorSpeed := voiceOf(nil)
-	say := func(segmentID int64, text, voice string, speed float64) {
-		// The book's pronunciations first (entries may name "AT&T"), then
-		// the cleanup for the TTS, which leaves Kokoro's syntax alone.
-		text = spoken(lex.Apply(text))
-		if speakable(text) == "" {
-			return
+	say := func(s *store.Segment, text, voice string, speed float64, dialogue bool) {
+		id, pr := int64(0), prosodyOf(s)
+		if s != nil {
+			id = s.ID
 		}
-		items = append(items, item{
-			text: text, voice: voice, speed: speed, pause: withinPara, segmentID: segmentID,
-		})
+		for _, ph := range phrases(text, nil) {
+			// The book's pronunciations first (entries may name "AT&T"),
+			// then the cleanup for the TTS, which leaves Kokoro's syntax
+			// alone.
+			t := spoken(lex.Apply(ph.text))
+			if speakable(t) == "" {
+				continue
+			}
+			it := item{
+				text: t, voice: voice, speed: clampSpeed(speed * pr.speed), gain: pr.gain,
+				gap: gapPhrase, pause: ph.pause, segmentID: id, dialogue: dialogue,
+			}
+			if s != nil {
+				it.quote, it.thought, it.emotion = s.QuoteRef > 0, s.Kind == store.SegmentThought, s.Emotion
+			}
+			items = append(items, it)
+		}
+		gapLast(gapSegment)
 	}
 	if len(paras) == 0 || paras[0].Kind != store.ParagraphHeading {
 		if t := speakable(ch.Title); t != "" {
-			say(0, t, narrator, narratorSpeed)
-			pauseLast(afterHeading)
+			say(nil, t, narrator, narratorSpeed, false)
+			gapLast(gapHeading)
 		}
 	}
 	for _, p := range paras {
 		switch p.Kind {
 		case store.ParagraphSceneBreak:
-			pauseLast(sceneBreak)
+			gapLast(gapScene)
 			continue
 		case store.ParagraphHeading:
-			for _, s := range byPara[p.ID] {
+			for i := range byPara[p.ID] {
+				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
-					say(s.ID, t, narrator, narratorSpeed)
+					say(s, t, narrator, narratorSpeed, false)
 				}
 			}
-			pauseLast(afterHeading)
+			gapLast(gapHeading)
 		default:
+			// A paragraph of only speech: an exchange of lines.
+			dialogue := len(byPara[p.ID]) > 0
+			for _, s := range byPara[p.ID] {
+				if s.QuoteRef == 0 && speakable(s.Text) != "" {
+					dialogue = false
+				}
+			}
 			for i := range byPara[p.ID] {
 				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
 					voice, speed := voiceOf(s)
-					say(s.ID, t, voice, speed)
+					say(s, t, voice, speed, dialogue)
 				}
 			}
-			pauseLast(betweenParas)
+			gapLast(gapPara)
 		}
 	}
-	pauseLast(tail)
+	gapLast(gapTail)
+	pauses(items)
 	return items
+}
+
+// clampSpeed keeps a speed within what Kokoro takes.
+func clampSpeed(v float64) float64 {
+	return math.Round(min(max(v, 0.5), 2)*100) / 100
 }
 
 // speakable strips quotation marks around a segment (Kokoro would otherwise
@@ -339,13 +379,23 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 			continue
 		}
 		g.Go(func() error {
-			pcm, err := r.TTS.Synthesize(gctx, tts.Speech{Text: it.text, Voice: it.voice, Speed: it.speed, Format: "pcm"})
+			pcm, words, err := r.synthesize(gctx, tts.Speech{Text: it.text, Voice: it.voice, Speed: it.speed, Format: "pcm"})
 			if err != nil {
 				var he *tts.HTTPError
 				if errors.As(err, &he) && he.Permanent() {
 					return jobs.Permanent(fmt.Errorf("synthesize %q: %w", truncate(it.text, 60), err))
 				}
 				return fmt.Errorf("synthesize %q: %w", truncate(it.text, 60), err)
+			}
+			// The words first: the audio marks the item as done.
+			if words != nil {
+				data, err := json.Marshal(words)
+				if err != nil {
+					return err
+				}
+				if err := writeAtomic(files[i]+".words", data); err != nil {
+					return err
+				}
 			}
 			if err := writeAtomic(files[i], pcm); err != nil {
 				return err
@@ -389,7 +439,11 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	}
 	// The cues are written before the audio is published: a player that
 	// sees the new version also finds its timings.
-	cueData, err := json.Marshal(Timings{Cues: cues(items, pieces)})
+	texts := map[int64]string{0: speakable(ch.Title)}
+	for _, s := range segs {
+		texts[s.ID] = s.Text
+	}
+	cueData, err := json.Marshal(Timings{Cues: cues(items, pieces, readWords(files), func(id int64) string { return texts[id] })})
 	if err != nil {
 		return err
 	}
@@ -516,8 +570,37 @@ func (r *Renderer) checkUnchanged(ctx context.Context, chapterID int64, want str
 	return nil
 }
 
-// writePCM streams the lead-in, every cached piece and its pause, and
-// records the length of each piece in pieces.
+// synthesize renders a piece, with the time of its words when the TTS
+// reports them (words nil otherwise).
+func (r *Renderer) synthesize(ctx context.Context, s tts.Speech) ([]byte, []tts.Word, error) {
+	if t, ok := r.TTS.(TimedSynthesizer); ok {
+		pcm, words, err := t.SynthesizeTimed(ctx, s)
+		if !errors.Is(err, tts.ErrNoTimestamps) {
+			if words == nil && err == nil {
+				words = []tts.Word{}
+			}
+			return pcm, words, err
+		}
+	}
+	pcm, err := r.TTS.Synthesize(ctx, s)
+	return pcm, nil, err
+}
+
+// readWords loads the words of the cached pieces (nil where none).
+func readWords(files []string) [][]tts.Word {
+	out := make([][]tts.Word, len(files))
+	for i, f := range files {
+		data, err := os.ReadFile(f + ".words") //nolint:gosec // path built from the data dir
+		if err != nil {
+			continue
+		}
+		_ = json.Unmarshal(data, &out[i])
+	}
+	return out
+}
+
+// writePCM streams the lead-in, every cached piece (at its loudness) and
+// its pause, and records the length of each piece in pieces.
 func writePCM(w io.Writer, files []string, items []item, pieces []int64) (int64, error) {
 	var total int64
 	write := func(b []byte) error {
@@ -534,8 +617,10 @@ func writePCM(w io.Writer, files []string, items []item, pieces []int64) (int64,
 			return total, err
 		}
 		// Kokoro's PCM is 16-bit; never write half a sample.
-		pieces[i] = int64(len(data) &^ 1)
-		if err := write(data[:len(data)&^1]); err != nil {
+		data = data[:len(data)&^1]
+		pieces[i] = int64(len(data))
+		applyGain(data, items[i].gain)
+		if err := write(data); err != nil {
 			return total, err
 		}
 		if err := write(audio.Silence(items[i].pause)); err != nil {

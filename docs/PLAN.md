@@ -335,17 +335,26 @@ As implemented in M6 (`internal/attribution`):
   narration and unknown speakers with the narrator. A per-chapter voice
   revision is bumped by attribution, speaker edits, character voice,
   tier, gender or age changes, merges and the casting; audio rendered at an
-  older revision is stale and re-rendered by the lookahead. Emotions are
-  stored and shown, not yet spoken (Kokoro has no emotion control).
+  older revision is stale and re-rendered by the lookahead. Kokoro has no
+  emotion control, so a quote's emotion is spoken through pace and
+  loudness (subtle: e.g. sad 0.92× speed, softer; shouting louder but never
+  clipping; whispering much softer); thoughts are a little softer than
+  speech. Changing an emotion by hand bumps the voice revision.
 
 ### 3.7 Rendering and assembly
 
-- Every segment → `POST /v1/audio/speech` (recipe, speed, PCM/WAV).
+- Every segment → `POST /dev/captioned_speech` (recipe, speed, PCM, word
+  timestamps; Kokoro-FastAPI ≥ v0.9), falling back to `/v1/audio/speech`
+  for servers without it. A segment with an ellipsis inside ("I just… I
+  don't know") is split there into phrases with a pause between them.
   Concurrency is configurable (≈ Kokoro replicas × 1–2).
 - A per-book pronunciation lexicon (fantasy names) is applied before the TTS
   call (text replacement or Kokoro phoneme syntax).
-- Assembly with ffmpeg: pauses (narration↔dialogue ~150 ms, paragraph
-  ~400 ms, scene break ~1.2 s, chapter title + 1 s), `loudnorm`,
+- Assembly with ffmpeg: pauses by context (narration↔dialogue ~150 ms,
+  around thoughts 250 ms, paragraph ~450 ms but 300 ms between lines of an
+  exchange of speech, after trailing speech "…" 450 ms, almost none after
+  cut-off speech "—" so the next speaker cuts in, sad lines a little more,
+  scene break ~1.2 s, chapter title + 1 s), `loudnorm`,
   **AAC 64 kbit/s mono** per chapter (`.m4a`) with metadata; optionally one
   M4B per volume with chapter markers.
 - Temporary files exist only during the job. In v1 a correction re-renders
@@ -354,10 +363,13 @@ As implemented in M6 (`internal/attribution`):
 - Storage for finished audio: ~22–29 MB/h ⇒ **~10–19 GB** per huge book.
 - While joining the pieces the render records when each segment is spoken
   (exact, from the PCM lengths and the known pauses) in a small JSON file
-  next to the audio version. The reader follows the voice with it, and the
-  podcast feed serves it as a WebVTT transcript per episode
-  (`<podcast:transcript>`). Renders from before get an estimate from the
-  text length; a re-render makes them exact.
+  next to the audio version, with the start of every word as reported by
+  Kokoro (matched to the segment's text; words read differently, such as
+  numbers, are skipped). The reader follows the voice with it, marking the
+  sentence and word being spoken, and the podcast feed serves it as a
+  WebVTT transcript per episode (`<podcast:transcript>`), its lines
+  starting with their first word. Renders from before get an estimate from
+  the text length; a re-render makes them exact.
 
 ### 3.8 Scheduler and jobs
 

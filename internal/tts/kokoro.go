@@ -4,11 +4,14 @@ package tts
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,6 +19,8 @@ import (
 type Client struct {
 	baseURL string
 	http    *http.Client
+	// untimed: the server answered that it has no word timestamps.
+	untimed atomic.Bool
 }
 
 // New returns a client for the server at baseURL (e.g. http://kokoro:8880).
@@ -80,24 +85,76 @@ const MaxResponseBytes = 16 << 20
 
 // Synthesize renders text to audio.
 func (c *Client) Synthesize(ctx context.Context, s Speech) ([]byte, error) {
+	return c.post(ctx, "/v1/audio/speech", s, nil, MaxResponseBytes)
+}
+
+// Word is when a word of a synthesis is spoken (seconds from its start).
+type Word struct {
+	Text  string  `json:"word"`
+	Start float64 `json:"start_time"`
+	End   float64 `json:"end_time"`
+}
+
+// ErrNoTimestamps is returned by SynthesizeTimed when the server has no
+// word timestamps (another server or an older Kokoro-FastAPI).
+var ErrNoTimestamps = errors.New("tts: the server has no word timestamps")
+
+// SynthesizeTimed renders text to PCM with the time of every word
+// (Kokoro-FastAPI's /dev/captioned_speech).
+func (c *Client) SynthesizeTimed(ctx context.Context, s Speech) ([]byte, []Word, error) {
+	if c.untimed.Load() {
+		return nil, nil, ErrNoTimestamps
+	}
+	s.Format = "pcm"
+	// The audio comes base64-encoded in JSON, next to the timestamps.
+	data, err := c.post(ctx, "/dev/captioned_speech", s, map[string]any{"return_timestamps": true},
+		MaxResponseBytes/3*4+(1<<20))
+	var he *HTTPError
+	if errors.As(err, &he) && (he.Status == http.StatusNotFound || he.Status == http.StatusMethodNotAllowed) {
+		c.untimed.Store(true)
+		return nil, nil, ErrNoTimestamps
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var out struct {
+		Audio      string `json:"audio"`
+		Timestamps []Word `json:"timestamps"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, nil, fmt.Errorf("decode captioned speech: %w", err)
+	}
+	pcm, err := base64.StdEncoding.DecodeString(out.Audio)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode captioned speech audio: %w", err)
+	}
+	return pcm, out.Timestamps, nil
+}
+
+// post sends a synthesis request (with extra fields) and reads the answer.
+func (c *Client) post(ctx context.Context, path string, s Speech, extra map[string]any, limit int) ([]byte, error) {
 	if s.Format == "" {
 		s.Format = "pcm"
 	}
 	if s.Speed == 0 {
 		s.Speed = 1
 	}
-	body, err := json.Marshal(map[string]any{
+	fields := map[string]any{
 		"model":           "kokoro",
 		"input":           s.Text,
 		"voice":           s.Voice,
 		"speed":           s.Speed,
 		"response_format": s.Format,
 		"stream":          false,
-	})
+	}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/audio/speech", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -111,12 +168,12 @@ func (c *Client) Synthesize(ctx context.Context, s Speech) ([]byte, error) {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, &HTTPError{Status: resp.StatusCode, Body: strings.TrimSpace(string(msg))}
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > MaxResponseBytes {
-		return nil, fmt.Errorf("synthesis response larger than %d bytes", MaxResponseBytes)
+	if len(data) > limit {
+		return nil, fmt.Errorf("synthesis response larger than %d bytes", limit)
 	}
 	return data, nil
 }

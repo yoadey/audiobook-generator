@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type Chapter, chapterQuery, type Cue, type Paragraph, type Segment } from '../api/client';
-import { cueOf, pieces, segmentAt, sentenceAt, startOf } from '../lib/reading';
+import { cueOf, pieces, segmentAt, sentenceAt, startOf, wordAt } from '../lib/reading';
 
 /** Reading preferences (kept per browser). */
 export type ReaderPrefs = { size: 'S' | 'M' | 'L' | 'XL'; font: 'serif' | 'sans' };
@@ -98,14 +98,16 @@ export function Reader({
   }, [text.data]);
   const activeParagraph = active !== undefined ? segments.byId.get(active)?.p : undefined;
 
-  // The sentence spoken now (by its share of the segment's time); the whole
-  // segment when that cannot be told.
+  // The sentence spoken now (by its words' times, or by its share of the
+  // segment's time); the whole segment when that cannot be told. The word
+  // spoken now when the render has word times.
   const activeSeg = active !== undefined ? segments.byId.get(active)?.s : undefined;
   const cue = cues && active !== undefined ? cueOf(cues, active) : undefined;
   const sentence = activeSeg && cue ? sentenceAt(activeSeg.text, cue, positionMs) : undefined;
   const mark: [number, number] | undefined = activeSeg
     ? (sentence ?? [0, Array.from(activeSeg.text).length])
     : undefined;
+  const word = activeSeg && cue && playing ? wordAt(activeSeg.text, cue, positionMs) : undefined;
 
   // A segment that is not spoken (only punctuation) stands for the next
   // one that is, so a position always has a time in the audio.
@@ -276,6 +278,7 @@ export function Reader({
             p={p}
             active={p.id === activeParagraph ? active : undefined}
             mark={p.id === activeParagraph ? mark : undefined}
+            word={p.id === activeParagraph ? word : undefined}
             onSelect={select}
           />
         ))}
@@ -321,6 +324,7 @@ const ParagraphView = memo(function ParagraphView({
   p,
   active,
   mark,
+  word,
   onSelect,
 }: {
   p: Paragraph;
@@ -328,6 +332,8 @@ const ParagraphView = memo(function ParagraphView({
   active?: number;
   /** The marked characters of the active segment. */
   mark?: [number, number];
+  /** The word of the active segment being spoken. */
+  word?: [number, number];
   onSelect: (segmentId: number) => void;
 }) {
   if (p.kind === 'scene_break') {
@@ -352,12 +358,21 @@ const ParagraphView = memo(function ParagraphView({
           fontStyle: s.kind === 'thought' ? 'italic' : undefined,
         }}
       >
-        {pieces(s.text, s.emphasis, s.id === active ? mark : undefined).map((piece, k) => (
+        {pieces(
+          s.text,
+          s.emphasis,
+          s.id === active ? mark : undefined,
+          s.id === active ? word : undefined,
+        ).map((piece, k) => (
           <span
             key={k}
             style={{
               fontStyle: piece.italic ? 'italic' : undefined,
-              background: piece.marked ? 'var(--mantine-color-yellow-light)' : undefined,
+              background: piece.word
+                ? 'var(--mantine-color-yellow-light-hover)'
+                : piece.marked
+                  ? 'var(--mantine-color-yellow-light)'
+                  : undefined,
               borderRadius: piece.marked ? 3 : undefined,
               boxDecorationBreak: 'clone',
               WebkitBoxDecorationBreak: 'clone',

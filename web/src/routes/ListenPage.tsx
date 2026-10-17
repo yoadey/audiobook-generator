@@ -199,6 +199,28 @@ function Player({
     cuesRef.current = cues;
   }, [cues]);
 
+  // With word times, the position follows the audio more finely than its
+  // time updates (a few per second) so the marked word keeps pace.
+  const wordTimed = !!cues?.some((c) => c.words?.length);
+  useEffect(() => {
+    if (!playing || !wordTimed) return;
+    let frame = 0;
+    let last = -1;
+    const tick = () => {
+      const a = audio.current;
+      if (a) {
+        const ms = a.currentTime * 1000;
+        if (Math.abs(ms - last) >= 60) {
+          last = ms;
+          setPosition(ms);
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, wordTimed]);
+
   const { mutate: saveMutate } = useMutation({
     mutationFn: ({
       chapterId,

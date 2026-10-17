@@ -301,3 +301,63 @@ func TestFailedRenderCleansUp(t *testing.T) {
 		assert.NoDirExists(t, cache)
 	})
 }
+
+// timedTTS reports every word of the text 10 ms apart, or no timestamps.
+type timedTTS struct {
+	fakeTTS
+	untimed bool
+}
+
+func (f *timedTTS) SynthesizeTimed(ctx context.Context, s tts.Speech) ([]byte, []tts.Word, error) {
+	if f.untimed {
+		return nil, nil, tts.ErrNoTimestamps
+	}
+	pcm, err := f.Synthesize(ctx, s)
+	var words []tts.Word
+	for i, w := range strings.Fields(s.Text) {
+		words = append(words, tts.Word{Text: w, Start: float64(i) * 0.01, End: float64(i+1) * 0.01})
+	}
+	return pcm, words, err
+}
+
+func TestRenderRecordsWords(t *testing.T) {
+	ff := ffmpeg(t)
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir, _, cs := setup(t, s)
+		ch := cs[1]
+		for _, untimed := range []bool{false, true} {
+			fake := &timedTTS{untimed: untimed}
+			r := &render.Renderer{
+				Store: s, TTS: fake, Encoder: audio.Encoder{FFmpeg: ff}, DataDir: dir,
+				Concurrency: 2, DefaultVoice: "af_heart", Log: slog.New(slog.DiscardHandler),
+			}
+			require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+			got, err := s.GetChapter(ctx, ch.ID)
+			require.NoError(t, err)
+			tm, err := render.ReadTimings(dir, got.AudioPath)
+			require.NoError(t, err)
+			_, segs, err := s.ChapterText(ctx, ch.ID)
+			require.NoError(t, err)
+			found := 0
+			for _, sg := range segs {
+				if sg.Text != "“Is it raining?”" {
+					continue
+				}
+				found++
+				for _, q := range tm.Cues {
+					if q.SegmentID != sg.ID {
+						continue
+					}
+					if untimed {
+						assert.Empty(t, q.Words, "a TTS without timestamps")
+						continue
+					}
+					// Offsets in the segment's text (after its opening mark).
+					assert.Equal(t, [][2]int64{{1, q.StartMs}, {4, q.StartMs + 10}, {7, q.StartMs + 20}}, q.Words)
+				}
+			}
+			assert.Equal(t, 1, found)
+		}
+	})
+}

@@ -23,7 +23,15 @@ func (s *Server) GetChapterTimings(ctx context.Context, req GetChapterTimingsReq
 	out := ChapterTimings{ChapterId: c.ID, Version: render.AudioVersion(path), Exact: exact,
 		Cues: make([]Cue, 0, len(t.Cues))}
 	for _, q := range t.Cues {
-		out.Cues = append(out.Cues, Cue{SegmentId: q.SegmentID, StartMs: q.StartMs, EndMs: q.EndMs})
+		c := Cue{SegmentId: q.SegmentID, StartMs: q.StartMs, EndMs: q.EndMs}
+		if len(q.Words) > 0 {
+			words := make([][]int64, len(q.Words))
+			for i, w := range q.Words {
+				words[i] = []int64{w[0], w[1]}
+			}
+			c.Words = &words
+		}
+		out.Cues = append(out.Cues, c)
 	}
 	return GetChapterTimings200JSONResponse(out), nil
 }

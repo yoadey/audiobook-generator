@@ -1142,6 +1142,8 @@ export interface components {
       startMs: number;
       /** Format: int64 */
       endMs: number;
+      /** @description When the segment's words start, as [character offset in its text (code points), ms]; missing when the TTS server reports no word times or for words read differently than written */
+      words?: number[][];
     };
     AppSettings: {
       /** @description Sample text of voice previews (empty - defaultPreviewText) */

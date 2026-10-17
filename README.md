@@ -93,7 +93,9 @@ URLs carry a token instead, so treat them like passwords.
 ### Reading along, podcast feeds, downloads, backup
 
 - **Reading along**: the listen page is a reader with a small player bar
-  at the bottom. It marks the sentence being spoken and follows the voice
+  at the bottom. It marks the sentence and the word being spoken (word
+  times come from Kokoro-FastAPI; other TTS servers give sentences only)
+  and follows the voice
   (scroll away and *Back to the voice* returns). A click on a passage
   listens from there; scrolling while paused moves the listening position
   to what you read (also in chapters without audio yet), so reading and
@@ -110,6 +112,11 @@ URLs carry a token instead, so treat them like passwords.
 - **Spoken text**: footnote markers, brackets of game texts ([Skill]) and
   decoration are not read; shouted capitals and Roman chapter numbers are
   read as words.
+- **Expression**: the emotion of a quote (from the speaker attribution or
+  set by hand) changes its pace and loudness; pauses follow the text:
+  short between lines of a dialogue, longer after speech that trails off,
+  almost none after speech that is cut off, and a pause at an ellipsis
+  within a sentence.
 - **Podcast**: the book page shows a feed URL (button *Podcast*) that any
   podcast app can subscribe to; rendered chapters are its episodes, each
   with a WebVTT transcript (`podcast:transcript`) that apps such as Apple

@@ -76,13 +76,27 @@ export function sentenceRanges(text: string): [number, number][] {
   return out;
 }
 
+/** Index in cue.words of the word spoken at ms (-1 before the first or without words). */
+function wordIndexAt(cue: Cue, ms: number): number {
+  const words = cue.words ?? [];
+  let found = -1;
+  for (let i = 0; i < words.length && words[i]![1]! <= ms; i++) found = i;
+  return found;
+}
+
 /**
- * The sentence of a segment being spoken at ms, assuming the sentences
- * take time by their length (the cue is the whole segment).
+ * The sentence of a segment being spoken at ms: the one of the word being
+ * spoken when the cue has word times, else assuming the sentences take
+ * time by their length (the cue is the whole segment).
  */
 export function sentenceAt(text: string, cue: Cue, ms: number): [number, number] | undefined {
   const ranges = sentenceRanges(text);
   if (ranges.length < 2) return undefined;
+  const words = cue.words ?? [];
+  if (words.length > 0) {
+    const at = words[Math.max(0, wordIndexAt(cue, ms))]![0]!;
+    return ranges.find(([, b]) => at < b) ?? ranges[ranges.length - 1];
+  }
   const total = ranges.reduce((n, [a, b]) => n + (b - a), 0);
   const share = Math.min(1, Math.max(0, (ms - cue.startMs) / Math.max(1, cue.endMs - cue.startMs)));
   let done = 0;
@@ -93,27 +107,51 @@ export function sentenceAt(text: string, cue: Cue, ms: number): [number, number]
   return ranges[ranges.length - 1];
 }
 
+/** The word being spoken at ms as [start, end) characters, when the cue has word times. */
+export function wordAt(text: string, cue: Cue, ms: number): [number, number] | undefined {
+  const i = wordIndexAt(cue, ms);
+  if (i < 0 || ms >= cue.endMs) return undefined;
+  const chars = Array.from(text);
+  const start = cue.words![i]![0]!;
+  let end = start;
+  while (
+    end < chars.length &&
+    (/[\p{L}\p{N}]/u.test(chars[end]!) ||
+      (/['’-]/.test(chars[end]!) && /[\p{L}\p{N}]/u.test(chars[end + 1] ?? '')))
+  ) {
+    end++;
+  }
+  return end > start ? [start, end] : undefined;
+}
+
 /** The cue of a segment. */
 export function cueOf(cues: Cue[], segmentId: number): Cue | undefined {
   return cues.find((c) => c.segmentId === segmentId);
 }
 
-export type Piece = { text: string; italic: boolean; marked: boolean };
+export type Piece = { text: string; italic: boolean; marked: boolean; word: boolean };
 
 /**
- * Splits text into pieces at the edges of its italic runs and of the
- * marked range, for rendering.
+ * Splits text into pieces at the edges of its italic runs, of the marked
+ * range and of the word being spoken, for rendering.
  */
-export function pieces(text: string, italic: number[][] = [], mark?: [number, number]): Piece[] {
+export function pieces(
+  text: string,
+  italic: number[][] = [],
+  mark?: [number, number],
+  word?: [number, number],
+): Piece[] {
   const chars = Array.from(text);
   const cuts = new Set([0, chars.length]);
   for (const [a, b] of italic) {
     cuts.add(Math.max(0, Math.min(chars.length, a!)));
     cuts.add(Math.max(0, Math.min(chars.length, b!)));
   }
-  if (mark) {
-    cuts.add(mark[0]);
-    cuts.add(mark[1]);
+  for (const r of [mark, word]) {
+    if (r) {
+      cuts.add(r[0]);
+      cuts.add(r[1]);
+    }
   }
   const at = [...cuts].sort((x, y) => x - y);
   const out: Piece[] = [];
@@ -124,6 +162,7 @@ export function pieces(text: string, italic: number[][] = [], mark?: [number, nu
       text: chars.slice(a, b).join(''),
       italic: italic.some(([s, e]) => s! <= a && b <= e!),
       marked: !!mark && mark[0] <= a && b <= mark[1],
+      word: !!word && word[0] <= a && b <= word[1],
     });
   }
   return out;

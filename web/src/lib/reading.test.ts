@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cueIndexAt,
   pieces,
+  wordAt,
   resumeAt,
   segmentAt,
   sentenceAt,
@@ -63,12 +64,36 @@ describe('sentences', () => {
     expect(sentenceAt('One sentence.', cue, 2000)).toBeUndefined();
   });
 
-  it('cuts text at italics and the mark', () => {
-    expect(pieces('It was very late.', [[7, 11]], [0, 17])).toEqual([
-      { text: 'It was ', italic: false, marked: true },
-      { text: 'very', italic: true, marked: true },
-      { text: ' late.', italic: false, marked: true },
+  it('finds the sentence and word spoken by word times', () => {
+    const t = 'Short one. And a don’t-know one.';
+    const cue = {
+      segmentId: 1,
+      startMs: 1000,
+      endMs: 4500,
+      words: [
+        [0, 1000],
+        [6, 1400],
+        [11, 3000],
+        [17, 3300],
+      ],
+    };
+    expect(sentenceAt(t, cue, 2900)).toEqual([0, 10]);
+    expect(sentenceAt(t, cue, 3000)).toEqual([11, 32]);
+    expect(wordAt(t, cue, 1500)).toEqual([6, 9]);
+    expect(wordAt(t, cue, 3400)).toEqual([17, 27]);
+    expect(wordAt(t, cue, 500)).toBeUndefined();
+    expect(wordAt(t, cue, 4600)).toBeUndefined();
+    expect(wordAt(t, { segmentId: 1, startMs: 0, endMs: 10 }, 5)).toBeUndefined();
+  });
+
+  it('cuts text at italics, the mark and the word', () => {
+    expect(pieces('It was very late.', [[7, 11]], [0, 17], [3, 6])).toEqual([
+      { text: 'It ', italic: false, marked: true, word: false },
+      { text: 'was', italic: false, marked: true, word: true },
+      { text: ' ', italic: false, marked: true, word: false },
+      { text: 'very', italic: true, marked: true, word: false },
+      { text: ' late.', italic: false, marked: true, word: false },
     ]);
-    expect(pieces('Plain')).toEqual([{ text: 'Plain', italic: false, marked: false }]);
+    expect(pieces('Plain')).toEqual([{ text: 'Plain', italic: false, marked: false, word: false }]);
   });
 });

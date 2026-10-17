@@ -106,6 +106,7 @@ code="$(curl -sS -o /tmp/chapter.m4a -w '%{http_code}' -r 0-1023 "localhost:1808
 timings="$(curl -fsS "localhost:18080/api/chapters/$chapter/timings")"
 grep -q '"exact":true' <<<"$timings"
 grep -q '"segmentId"' <<<"$timings"
+grep -q '"words":\[\[' <<<"$timings" # word times from the TTS
 
 # The configured LLM provider answers the structured-output test, with the
 # key from the Secret (the fake rejects anything else).

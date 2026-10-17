@@ -1063,6 +1063,9 @@ type Cue struct {
 	// SegmentId The segment spoken (0 - the chapter title)
 	SegmentId int64 `json:"segmentId"`
 	StartMs   int64 `json:"startMs"`
+
+	// Words When the segment's words start, as [character offset in its text (code points), ms]; missing when the TTS server reports no word times or for words read differently than written
+	Words *[][]int64 `json:"words,omitempty"`
 }
 
 // DatabaseInfo defines model for DatabaseInfo.

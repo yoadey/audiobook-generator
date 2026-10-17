@@ -14,6 +14,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/audio"
 	"github.com/yoadey/audiobook-generator/internal/lexicon"
 	"github.com/yoadey/audiobook-generator/internal/store"
+	"github.com/yoadey/audiobook-generator/internal/tts"
 )
 
 // Cue is when a segment is spoken in a chapter's audio. SegmentID 0 is the
@@ -22,6 +23,9 @@ type Cue struct {
 	SegmentID int64 `json:"s"`
 	StartMs   int64 `json:"a"`
 	EndMs     int64 `json:"b"`
+	// Words are when the segment's words start: [rune offset in its text,
+	// ms], for the words the TTS reported (none from other servers).
+	Words [][2]int64 `json:"w,omitempty"`
 }
 
 // Timings are the cues of one render, stored next to its audio file.
@@ -80,16 +84,37 @@ func RemoveVersions(dataDir, audioPath string) error {
 	return errors.Join(errs...)
 }
 
-// cues lists when each item is spoken, given the PCM length of each piece
-// in bytes, in the layout writePCM produces.
-func cues(items []item, pieceBytes []int64) []Cue {
+// cues lists when each segment is spoken, given the PCM length of each
+// item in bytes, in the layout writePCM produces, and the words the TTS
+// reported per item; textOf is the text of a segment (0: the title).
+func cues(items []item, pieceBytes []int64, words [][]tts.Word, textOf func(int64) string) []Cue {
 	out := make([]Cue, 0, len(items))
+	var spoken []timedWord
+	flush := func() {
+		if n := len(out); n > 0 && len(spoken) > 0 {
+			out[n-1].Words = alignWords(textOf(out[n-1].SegmentID), spoken)
+		}
+		spoken = spoken[:0]
+	}
 	at := leadIn
 	for i, it := range items {
 		d := pcmDuration(pieceBytes[i])
-		out = append(out, Cue{SegmentID: it.segmentID, StartMs: at.Milliseconds(), EndMs: (at + d).Milliseconds()})
+		// The phrases of a segment are one cue.
+		if n := len(out); n > 0 && out[n-1].SegmentID == it.segmentID && items[i-1].gap == gapPhrase {
+			out[n-1].EndMs = (at + d).Milliseconds()
+		} else {
+			flush()
+			out = append(out, Cue{SegmentID: it.segmentID, StartMs: at.Milliseconds(), EndMs: (at + d).Milliseconds()})
+		}
+		if i < len(words) {
+			for _, w := range words[i] {
+				ms := at.Milliseconds() + int64(w.Start*1000)
+				spoken = append(spoken, timedWord{w.Text, min(ms, (at + d).Milliseconds())})
+			}
+		}
 		at += d + it.pause
 	}
+	flush()
 	return out
 }
 
@@ -121,9 +146,13 @@ func EstimateTimings(ch *store.Chapter, paras []store.Paragraph, segs []store.Se
 	}
 	out := make([]Cue, 0, len(items))
 	at := time.Duration(float64(leadIn) * scale)
-	for _, it := range items {
+	for i, it := range items {
 		d := time.Duration(float64(speech) * float64(utf8.RuneCountInString(it.text)) / float64(max(chars, 1)))
-		out = append(out, Cue{SegmentID: it.segmentID, StartMs: at.Milliseconds(), EndMs: (at + d).Milliseconds()})
+		if n := len(out); n > 0 && out[n-1].SegmentID == it.segmentID && items[i-1].gap == gapPhrase {
+			out[n-1].EndMs = (at + d).Milliseconds()
+		} else {
+			out = append(out, Cue{SegmentID: it.segmentID, StartMs: at.Milliseconds(), EndMs: (at + d).Milliseconds()})
+		}
 		at += d + time.Duration(float64(it.pause)*scale)
 	}
 	return &Timings{Cues: out}

@@ -1948,6 +1948,19 @@ components:
         endMs:
           type: integer
           format: int64
+        words:
+          type: array
+          description: >-
+            When the segment's words start, as [character offset in its
+            text (code points), ms]; missing when the TTS server reports no
+            word times or for words read differently than written
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: integer
+              format: int64
     AppSettings:
       type: object
       required: [previewText, defaultPreviewText]
