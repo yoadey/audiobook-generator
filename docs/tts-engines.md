@@ -140,34 +140,42 @@ this: the sample text is fixed.
   chosen by hand.
 - A designed voice becomes the character's voice as one chosen by hand
   (`chatterbox:f_b<book>-c<character>-<hash>.wav`); the casting keeps it.
-  Designing again makes a new clip; earlier clips stay on Chatterbox's
+  Designing again makes a new clip with a new seed, so the same
+  description gives another take; earlier clips stay on Chatterbox's
   volume and are offered like any other reference clip (their gender
   tag lets casting use them for other books too).
 - Only books that speak with the design engine (Chatterbox) can design
   voices; switch a Kokoro book to Chatterbox first.
 - Each design is a persistent job (queue `design`, one at a time, three
   attempts). A description the server refuses fails at once; the error
-  is shown on the character.
+  is shown on the character. Canceling the job (*Jobs*) marks the design
+  failed, retrying it queues it again; choosing a voice by hand while a
+  design is pending drops that design. A design left without a job (the
+  app stopped, voice design turned off) is marked failed at startup.
 
 ### On demand, on CPU
 
 The model runs on CPU: expect one to a few minutes per voice (a ~15 s
 clip) and 10–16 GB of memory at `float32` (`dtype: bfloat16` halves the
 memory, slower on CPUs without AMX). It is meant to run rarely, so by
-default (`voiceDesign.onDemand: true`) its Deployment has zero replicas:
+default (`voiceDesign.onDemand: true`) the app runs it only while needed:
 
 1. A design job scales the Deployment to one (`deployments/scale`) and
    waits until the pod is ready and `/health` answers (the model is
    loaded; the first start downloads it, about 4 GB, to its volume).
-   Waiting longer than `readyTimeout` fails the attempt.
+   Waiting longer than `readyTimeout` fails the attempt. A model that
+   fails to load ends the server process, so the pod restarts.
 2. While designs are pending, the pod keeps running.
 3. Once no design is pending and none ran for `idle` (10 minutes), the
    app scales it back to zero. A pod left running when the app restarts
-   is stopped the same way.
+   is stopped the same way, as is the one Kubernetes starts at install
+   (the chart sets no replica count, so upgrades never reset the live
+   one).
 
-For this the app's ServiceAccount token is mounted and a Role allows
-`get`/`patch`/`update` on `deployments/scale` and `get` on
-`deployments`, both for exactly this one Deployment.
+For this a Role allows `patch` on `deployments/scale` and `get` on
+`deployments`, both for exactly this one Deployment, bound to the app's
+own ServiceAccount (the chart refuses the namespace's default one); the
+token is mounted into the app container only.
 
 ```yaml
 voiceDesign:
@@ -175,25 +183,9 @@ voiceDesign:
   # resources.requests.memory 10Gi, limits.memory 16Gi by default
 ```
 
-**Flux / GitOps:** the chart renders `replicas: 0` and Helm keeps the
-live count on upgrades, but a drift-detecting controller would scale the
-pod back down (or up) behind the app's back. With Flux, let drift
-detection ignore the field:
-
-```yaml
-spec:
-  driftDetection:
-    mode: enabled
-    ignore:
-      - paths: ["/spec/replicas"]
-        target:
-          kind: Deployment
-          name: <release>-voice-design
-```
-
-(No setting is needed while drift detection is disabled, Flux's
-default.) With `onDemand: false` the server always runs (one replica)
-and the app never touches the Kubernetes API.
+Helm, Flux and Argo CD leave the replica count to the app, since the
+chart does not set it. With `onDemand: false` the server always runs (one
+replica) and the app never touches the Kubernetes API.
 
 Outside the chart, set `ABG_VOICE_DESIGN_URL` (the server),
 `ABG_VOICE_DESIGN_ENGINE` (default `chatterbox`) and, for scaling,
@@ -205,7 +197,8 @@ The image (`images/voice-design`, released with the app as
 around the `qwen-tts` package: `POST /design` with
 `{"text", "description", "seed"}` answers a WAV (at most 29 s, peak
 normalized, 16-bit), `GET /health` answers 503 until the model is
-loaded. `voiceDesign.modelRevision` pins the model's commit. For local
+loaded. `voiceDesign.modelRevision` pins the model's commit (the whole
+repository is downloaded at that revision and loaded from disk). For local
 runs, `make fake-tts` answers `/design` with a tone.
 
 ## Chatterbox: evaluation (October 2026)

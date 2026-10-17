@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/yoadey/audiobook-generator/internal/analysis"
 	"github.com/yoadey/audiobook-generator/internal/api"
 	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -75,6 +76,21 @@ func TestVoiceDesign(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, c.json(http.MethodPost, path,
 			map[string]any{"description": "Again."}, nil), "already queued")
 
+		// Canceling the job fails the design; retrying it queues it again.
+		jobs, _, err := s.ListJobs(ctx, store.JobFilter{BookID: &cb.ID}, 0, 10)
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPost, "/api/jobs/"+itoa(jobs[0].ID)+"/cancel", nil, nil))
+		got, err := s.GetCharacter(ctx, anna.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.DesignFailed, got.DesignStatus)
+		assert.Equal(t, "canceled", got.DesignError)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPost, "/api/jobs/"+itoa(jobs[0].ID)+"/retry", nil, nil))
+		got, err = s.GetCharacter(ctx, anna.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.DesignQueued, got.DesignStatus)
+		assert.Empty(t, got.DesignError)
+
 		// A book of another engine designs none (its voices are another engine's).
 		var e api.Error
 		assert.Equal(t, http.StatusConflict, c.json(http.MethodPost, "/api/characters/"+itoa(ken.ID)+"/voice-design",
@@ -91,12 +107,19 @@ func TestVoiceDesign(t *testing.T) {
 		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, "/api/books/"+itoa(cb.ID)+"/voice-design", nil, &batch))
 		assert.Equal(t, 1, batch.Queued)
 		assert.Equal(t, http.StatusNotFound, c.json(http.MethodPost, "/api/books/999999/voice-design", nil, nil))
+
+		// A voice chosen by hand meanwhile wins over the pending design.
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/characters/"+itoa(anna.ID),
+			map[string]any{"voice": "cb:Adrian.wav"}, &detail))
+		assert.Equal(t, api.VoiceDesignStatusNone, detail.VoiceDesign.Status)
+		assert.Equal(t, "cb:Adrian.wav", detail.Voice)
 	})
 }
 
 func serve(t *testing.T, o api.Options) client {
 	t.Helper()
 	o.MaxUploadBytes = 10 << 20
+	o.Analyzer = &analysis.Analyzer{Store: o.Store, Log: o.Log}
 	o.Voices = casting.NewCatalog(fakeTTS{})
 	o.Voices.Engines = fakeTTS{}
 	mux := http.NewServeMux()

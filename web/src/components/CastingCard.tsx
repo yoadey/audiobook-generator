@@ -99,7 +99,10 @@ export function CastingCard({ book }: { book: Book }) {
           ? `Designing ${r.queued} voice${r.queued === 1 ? '' : 's'}: minutes each, the server starts first`
           : 'Every main character has a voice chosen by hand or being designed',
       );
-      return queryClient.invalidateQueries({ queryKey: ['characters'] });
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['characters'] }),
+        queryClient.invalidateQueries({ queryKey: ['books', book.id, 'casting'] }),
+      ]);
     },
     onError: (e) => notifyError('Could not design the voices', e),
   });

@@ -85,9 +85,8 @@ tests:
       - hasDocuments:
           count: 5
       - documentIndex: 1
-        equal:
+        notExists:
           path: spec.replicas
-          value: 0
       - documentIndex: 1
         equal:
           path: spec.template.spec.containers[0].image
@@ -99,9 +98,9 @@ tests:
             apiGroups: [apps]
             resources: [deployments/scale]
             resourceNames: [abg-audiobook-generator-voice-design]
-            verbs: [get, patch, update]
+            verbs: [patch]
 
-  - it: gives the app its token only to scale the voice design server
+  - it: gives the app container its token only to scale the voice design server
     template: templates/deployment.yaml
     set:
       tts.chatterbox.enabled: true
@@ -109,7 +108,18 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.automountServiceAccountToken
-          value: true
+          value: false
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kube-api-access
+            mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          any: true
+          content:
+            name: kube-api-access
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -130,6 +140,16 @@ tests:
         equal:
           path: spec.replicas
           value: 1
+
+  - it: does not grant scaling to the namespace's default ServiceAccount
+    template: templates/deployment.yaml
+    set:
+      tts.chatterbox.enabled: true
+      voiceDesign.enabled: true
+      serviceAccount.create: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "voiceDesign.onDemand grants the app's ServiceAccount the right to scale: set serviceAccount.create or serviceAccount.name (not the namespace's default one)"
 
   - it: needs a Chatterbox engine for voice design
     template: templates/deployment.yaml

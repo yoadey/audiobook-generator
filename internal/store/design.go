@@ -1,6 +1,10 @@
 package store
 
-import "context"
+import (
+	"context"
+	"strconv"
+	"time"
+)
 
 // TransitionDesign moves a character's voice design to status to (with
 // more fields) if it is in one of the from states; it reports whether it
@@ -43,4 +47,51 @@ func (s *Store) PendingJobsOfType(ctx context.Context, jobType string) (int64, e
 	err := s.db.WithContext(ctx).Model(&Job{}).
 		Where("type = ? AND status IN ?", jobType, []JobStatus{JobQueued, JobRunning}).Count(&n).Error
 	return n, err
+}
+
+// SettleDesigns runs at startup: without voice design (enabled false) its
+// pending jobs are canceled; characters left queued or running without a
+// pending job (canceled, lost, design turned off) are marked failed so
+// they can be designed again.
+func (s *Store) SettleDesigns(ctx context.Context, jobType string, enabled bool) error {
+	return s.Tx(ctx, func(tx *Store) error {
+		pending := tx.db.Model(&Job{}).Where("type = ? AND status IN ?", jobType, []JobStatus{JobQueued, JobRunning})
+		if !enabled {
+			if err := pending.Updates(map[string]any{"status": JobCanceled, "finished_at": time.Now().UTC()}).
+				Error; err != nil {
+				return err
+			}
+		}
+		var payloads []string
+		if err := tx.db.Model(&Job{}).Where("type = ? AND status IN ?", jobType, []JobStatus{JobQueued, JobRunning}).
+			Pluck("payload", &payloads).Error; err != nil {
+			return err
+		}
+		live := make(map[int64]bool, len(payloads))
+		for _, p := range payloads {
+			if id, err := strconv.ParseInt(p, 10, 64); err == nil {
+				live[id] = true
+			}
+		}
+		var busy []int64
+		if err := tx.db.Model(&Character{}).Where("design_status IN ?", []DesignStatus{DesignQueued, DesignRunning}).
+			Pluck("id", &busy).Error; err != nil {
+			return err
+		}
+		var orphans []int64
+		for _, id := range busy {
+			if !live[id] {
+				orphans = append(orphans, id)
+			}
+		}
+		if len(orphans) == 0 {
+			return nil
+		}
+		msg := "interrupted: design again"
+		if !enabled {
+			msg = "voice design is no longer configured"
+		}
+		return tx.db.Model(&Character{}).Where("id IN ?", orphans).
+			Updates(map[string]any{"design_status": DesignFailed, "design_error": msg}).Error
+	})
 }

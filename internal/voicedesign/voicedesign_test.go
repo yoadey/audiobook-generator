@@ -166,3 +166,45 @@ func itoa(i int64) string {
 	b, _ := json.Marshal(i)
 	return string(b)
 }
+
+func TestDesignWaitsForServer(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		b := &store.Book{Title: "B", Status: store.BookReady}
+		require.NoError(t, s.CreateBook(ctx, b))
+		c := &store.Character{BookID: b.ID, Name: "Tom", Gender: store.GenderMale}
+		require.NoError(t, s.CreateCharacter(ctx, c))
+		var mu sync.Mutex
+		healthChecks := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			switch r.URL.Path {
+			case "/health":
+				// Always on, but the model is still loading at first.
+				if healthChecks++; healthChecks < 2 {
+					http.Error(w, "loading", http.StatusServiceUnavailable)
+				}
+			case "/design":
+				assert.GreaterOrEqual(t, healthChecks, 2, "designed only once loaded")
+				// Meanwhile the user chooses a voice by hand.
+				assert.NoError(t, s.UpdateCharacter(ctx, c.ID, map[string]any{"DesignStatus": store.DesignNone,
+					"VoiceRecipe": "cb:Adrian.wav", "VoiceManual": true}))
+				_, _ = w.Write([]byte("RIFF....WAVEfmt "))
+			}
+		}))
+		defer srv.Close()
+		up := &uploads{}
+		d := &voicedesign.Designer{
+			Store: s, Jobs: &enqueuer{s}, Server: voicedesign.NewClient(srv.URL, time.Minute), Upload: up,
+			Engine: "cb", Idle: time.Hour, ReadyTimeout: time.Minute, Log: slog.New(slog.DiscardHandler),
+		}
+		require.NoError(t, d.Start(ctx, c, "A deep voice."))
+		require.NoError(t, d.Run(ctx, c.ID, func(float64) {}))
+		got, err := s.GetCharacter(ctx, c.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "cb:Adrian.wav", got.VoiceRecipe, "the user's choice stays")
+		assert.Equal(t, store.DesignNone, got.DesignStatus)
+		assert.Len(t, up.names, 1)
+	})
+}

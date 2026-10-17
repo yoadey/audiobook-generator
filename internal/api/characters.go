@@ -442,6 +442,10 @@ func voiceFields(c *store.Character, u *CharacterUpdate, fields map[string]any) 
 			recipe, manual = r.String(), true
 		}
 		fields["VoiceNote"] = ""
+		// The user's choice wins over a design still pending.
+		if c.DesignStatus == store.DesignQueued || c.DesignStatus == store.DesignRunning {
+			fields["DesignStatus"], fields["DesignError"] = store.DesignNone, ""
+		}
 	}
 	if u.Tier != nil {
 		switch *u.Tier {

@@ -274,6 +274,9 @@ true
 {{- if not $ok }}
 {{- fail (printf "voiceDesign.engine %q must be a Chatterbox engine (tts.chatterbox or tts.engines)" $engine) }}
 {{- end }}
+{{- if and (include "abg.voiceDesign.onDemand" .) (not .Values.serviceAccount.create) (not .Values.serviceAccount.name) }}
+{{- fail "voiceDesign.onDemand grants the app's ServiceAccount the right to scale: set serviceAccount.create or serviceAccount.name (not the namespace's default one)" }}
+{{- end }}
 {{- end }}
 {{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) }}
 {{- $default := false }}

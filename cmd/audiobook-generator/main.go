@@ -168,6 +168,9 @@ func run() error {
 		}
 		runner.Handle(voicedesign.JobType, designer.Handler())
 	}
+	if err := st.SettleDesigns(ctx, voicedesign.JobType, designer != nil); err != nil {
+		return fmt.Errorf("settle voice designs: %w", err)
+	}
 	scheduler := &render.Scheduler{Store: st, Jobs: runner, DefaultVoice: defaultVoice}
 	assembler := &assemble.Assembler{
 		Store: st, Jobs: runner, Scheduler: scheduler, FFmpeg: cfg.FFmpeg, FFprobe: cfg.FFprobe,

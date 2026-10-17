@@ -27,8 +27,13 @@ metadata:
     {{- include "abg.labels" . | nindent 4 }}
     app.kubernetes.io/component: voice-design
 spec:
-  # On demand the app scales it (Helm keeps the live count on upgrades).
-  replicas: {{ ternary 0 1 (eq (include "abg.voiceDesign.onDemand" .) "true") }}
+  {{- if eq (include "abg.voiceDesign.onDemand" .) "true" }}
+  # No replicas: the app scales it, and an upgrade must not reset the live
+  # count (Helm would patch a rendered value back). Kubernetes starts one
+  # at install; the app stops it once idle.
+  {{- else }}
+  replicas: 1
+  {{- end }}
   # One volume: never two pods at once.
   strategy:
     type: Recreate
@@ -161,7 +166,7 @@ rules:
   - apiGroups: [apps]
     resources: [deployments/scale]
     resourceNames: [{{ include "abg.voiceDesign.fullname" . }}]
-    verbs: [get, patch, update]
+    verbs: [patch]
   - apiGroups: [apps]
     resources: [deployments]
     resourceNames: [{{ include "abg.voiceDesign.fullname" . }}]

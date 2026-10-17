@@ -328,9 +328,10 @@ voiceDesign:
   # Engine that clones the clips (empty: tts.chatterbox.name); a Chatterbox
   # engine.
   engine: ""
-  # Scale the pod to zero when idle (the app gets a Role to scale exactly
-  # this Deployment). With Flux, its drift detection must ignore the
-  # Deployment's spec.replicas.
+  # Run the pod only while designing: the app scales it up for a design
+  # and to zero when idle (a Role lets the app's own ServiceAccount scale
+  # exactly this Deployment). The chart sets no replica count then, so
+  # upgrades never reset it.
   onDemand: true
   # How long the pod keeps running after the last design.
   idle: 10m

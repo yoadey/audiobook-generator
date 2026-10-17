@@ -20,6 +20,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
+	"github.com/yoadey/audiobook-generator/internal/voicedesign"
 )
 
 const defaultPreviewText = "It was a bright cold day in April, and the clocks were striking thirteen."
@@ -403,6 +404,14 @@ func (s *Server) RetryJob(ctx context.Context, req RetryJobRequestObject) (Retry
 			return nil, err
 		}
 	}
+	if j.Type == voicedesign.JobType {
+		if id, err := strconv.ParseInt(j.Payload, 10, 64); err == nil {
+			if _, err := s.Store.TransitionDesign(ctx, id, store.DesignQueued, map[string]any{"design_error": ""},
+				store.DesignFailed, store.DesignNone); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if w, ok := s.Jobs.(interface{ Wake(queue string) }); ok {
 		w.Wake(j.Queue)
 	}
@@ -442,6 +451,14 @@ func (s *Server) CancelJob(ctx context.Context, req CancelJobRequestObject) (Can
 		}
 		if err := s.Store.SetAudioStatus(ctx, status, "", *j.ChapterID); err != nil {
 			return nil, err
+		}
+	}
+	if j.Type == voicedesign.JobType {
+		if id, err := strconv.ParseInt(j.Payload, 10, 64); err == nil {
+			if _, err := s.Store.TransitionDesign(ctx, id, store.DesignFailed, map[string]any{"design_error": "canceled"},
+				store.DesignQueued, store.DesignRunning); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if j.Type == assemble.JobType && j.BookID != nil {

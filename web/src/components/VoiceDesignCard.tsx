@@ -76,6 +76,7 @@ export function VoiceDesignCard({ character: c }: { character: CharacterDetail }
           aria-label="Voice description"
           value={description}
           onChange={(e) => setDescription(e.currentTarget.value)}
+          disabled={busy}
           maxLength={500}
           autosize
           minRows={2}

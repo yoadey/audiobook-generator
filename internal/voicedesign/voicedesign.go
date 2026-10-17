@@ -14,9 +14,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
@@ -82,6 +82,7 @@ type Designer struct {
 
 	mu       sync.Mutex
 	lastUsed time.Time
+	busy     int // designs between ensureUp and their end
 }
 
 // DefaultDescription describes the voice of a character from its profile,
@@ -162,9 +163,17 @@ func (d *Designer) Start(ctx context.Context, c *store.Character, description st
 	if !ok {
 		return ErrBusy
 	}
-	return d.Jobs.Enqueue(ctx, &store.Job{
+	if err := d.Jobs.Enqueue(ctx, &store.Job{
 		Type: JobType, BookID: &c.BookID, Payload: strconv.FormatInt(c.ID, 10), MaxAttempts: 3,
-	})
+	}); err != nil {
+		// Not left queued without a job.
+		if _, rerr := d.Store.TransitionDesign(context.WithoutCancel(ctx), c.ID, store.DesignFailed,
+			map[string]any{"design_error": "could not be queued"}, store.DesignQueued); rerr != nil {
+			d.Log.Error("undo voice design", "character", c.ID, "err", rerr)
+		}
+		return err
+	}
+	return nil
 }
 
 // Handler is the job handler for JobType.
@@ -204,13 +213,14 @@ func (d *Designer) Run(ctx context.Context, characterID int64, progress func(flo
 		store.DesignQueued, store.DesignRunning); err != nil || !ok {
 		return err // asked again or undone meanwhile
 	}
-	d.used()
-	defer d.used()
+	d.begin()
+	defer d.end()
 	if err := d.ensureUp(ctx); err != nil {
 		return err
 	}
 	progress(0.2)
-	wav, err := d.Server.Design(ctx, SampleText, c.DesignDescription, seed(c))
+	// A new seed each time: designing again gives another voice.
+	wav, err := d.Server.Design(ctx, SampleText, c.DesignDescription, rand.IntN(1<<31)) //nolint:gosec // a voice seed, not a secret
 	if err != nil {
 		return err
 	}
@@ -222,8 +232,13 @@ func (d *Designer) Run(ctx context.Context, characterID int64, progress func(flo
 		return err
 	}
 	note := truncate("designed: "+c.DesignDescription, 200)
-	if _, err := d.Store.AssignDesignedVoice(ctx, c.ID, d.Engine+":"+name, note); err != nil {
+	ok, err := d.Store.AssignDesignedVoice(ctx, c.ID, d.Engine+":"+name, note)
+	if err != nil {
 		return err
+	}
+	if !ok {
+		d.Log.Info("voice designed but no longer wanted (a voice was chosen meanwhile)", "character", c.ID)
+		return nil
 	}
 	d.Log.Info("voice designed", "character", c.ID, "voice", d.Engine+":"+name)
 	return nil
@@ -240,15 +255,24 @@ func genderTag(g store.Gender) string {
 	return "x"
 }
 
-// seed fixes a character's design (the same description, the same voice).
-func seed(c *store.Character) int {
-	h := fnv.New32a()
-	_, _ = fmt.Fprintf(h, "%d", c.ID)
-	return int(h.Sum32() & 0x7fffffff)
-}
-
 func (d *Designer) used() {
 	d.mu.Lock()
+	d.lastUsed = time.Now()
+	d.mu.Unlock()
+}
+
+// begin marks a design as running: the idler waits for it (it takes the
+// same lock, so it never scales down between its check and a design).
+func (d *Designer) begin() {
+	d.mu.Lock()
+	d.busy++
+	d.lastUsed = time.Now()
+	d.mu.Unlock()
+}
+
+func (d *Designer) end() {
+	d.mu.Lock()
+	d.busy--
 	d.lastUsed = time.Now()
 	d.mu.Unlock()
 }
@@ -256,26 +280,31 @@ func (d *Designer) used() {
 // pollInterval is how often a starting server is checked.
 const pollInterval = 5 * time.Second
 
-// ensureUp scales the server up and waits until it answers. A server that
-// takes longer than ReadyTimeout fails the attempt (a pod that never
-// starts, e.g. out of memory, must not keep running for retries forever).
+// ensureUp scales the server up (if it runs on demand) and waits until it
+// answers. A server that takes longer than ReadyTimeout fails the attempt
+// (a pod that never starts, e.g. out of memory, must not keep running for
+// retries forever).
 func (d *Designer) ensureUp(ctx context.Context) error {
-	if d.Scaler == nil {
-		return nil // always on
-	}
-	st, err := d.Scaler.Status(ctx)
-	if err != nil {
-		return err
-	}
-	if st.Replicas < 1 {
-		d.Log.Info("starting the voice design server")
-		if err := d.Scaler.Scale(ctx, 1); err != nil {
+	if d.Scaler != nil {
+		st, err := d.Scaler.Status(ctx)
+		if err != nil {
 			return err
+		}
+		if st.Replicas < 1 {
+			d.Log.Info("starting the voice design server")
+			if err := d.Scaler.Scale(ctx, 1); err != nil {
+				return err
+			}
 		}
 	}
 	deadline := time.Now().Add(d.ReadyTimeout)
 	for {
-		if st, err := d.Scaler.Status(ctx); err == nil && st.Ready > 0 && d.Server.Health(ctx) == nil {
+		ready := true
+		if d.Scaler != nil {
+			st, err := d.Scaler.Status(ctx)
+			ready = err == nil && st.Ready > 0
+		}
+		if ready && d.Server.Health(ctx) == nil {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -309,9 +338,8 @@ func (d *Designer) Idler(ctx context.Context, every time.Duration) {
 
 func (d *Designer) scaleDownIfIdle(ctx context.Context) {
 	d.mu.Lock()
-	idle := time.Since(d.lastUsed) >= d.Idle
-	d.mu.Unlock()
-	if !idle {
+	defer d.mu.Unlock()
+	if d.busy > 0 || time.Since(d.lastUsed) < d.Idle {
 		return
 	}
 	if n, err := d.Store.PendingJobsOfType(ctx, JobType); err != nil || n > 0 {

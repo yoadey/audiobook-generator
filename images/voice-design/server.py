@@ -4,7 +4,8 @@ described in words, with Qwen3-TTS VoiceDesign on CPU.
 POST /design {"text", "description", "seed", "language"} answers a WAV
 (16-bit mono, at most MAX_SECONDS: a reference clip for Chatterbox);
 GET /health answers 200 once the model is loaded (503 before). One design
-runs at a time.
+runs at a time. A model that fails to load ends the process, so the
+kubelet starts it again (a broken download is resumed).
 """
 
 import io
@@ -28,25 +29,26 @@ log = logging.getLogger("voice-design")
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="voice-design")
 model = None
-load_error = None
 busy = threading.Lock()
 
 
 def load():
-    global model, load_error
+    global model
     try:
+        from huggingface_hub import snapshot_download
         from qwen_tts import Qwen3TTSModel
 
         if THREADS > 0:
             torch.set_num_threads(THREADS)
-        log.info("loading %s (%s)", MODEL, DTYPE)
-        model = Qwen3TTSModel.from_pretrained(
-            MODEL, revision=REVISION, device_map="cpu", dtype=DTYPE, attn_implementation="sdpa"
-        )
+        # The whole repository at one revision: qwen-tts itself loads its
+        # tokenizers from the default branch whatever revision it is given.
+        path = MODEL if os.path.isdir(MODEL) else snapshot_download(MODEL, revision=REVISION)
+        log.info("loading %s at %s (%s)", MODEL, REVISION or "main", DTYPE)
+        model = Qwen3TTSModel.from_pretrained(path, device_map="cpu", dtype=DTYPE, attn_implementation="sdpa")
         log.info("model loaded")
-    except Exception as e:  # reported by /health
-        load_error = str(e)
+    except Exception:
         log.exception("loading the model failed")
+        os._exit(1)
 
 
 threading.Thread(target=load, daemon=True).start()
@@ -61,8 +63,6 @@ class Design(BaseModel):
 
 @app.get("/health")
 def health():
-    if load_error:
-        raise HTTPException(500, f"model failed to load: {load_error}")
     if model is None:
         raise HTTPException(503, "loading the model")
     return {"status": "ok", "model": MODEL}
@@ -72,7 +72,7 @@ def health():
 def design(req: Design):
     # A sync handler runs in a worker thread: /health stays answered.
     if model is None:
-        raise HTTPException(503, load_error or "loading the model")
+        raise HTTPException(503, "loading the model")
     with busy:
         torch.manual_seed(req.seed)
         wavs, sr = model.generate_voice_design(
