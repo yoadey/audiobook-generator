@@ -223,6 +223,9 @@ func (r *restorer) table(table string, rows RowReader) error {
 			if c.AttributionStatus == AttributionQueued || c.AttributionStatus == AttributionRunning {
 				c.AttributionStatus, c.AttributionPart = AttributionNone, 0
 			}
+			if c.PrepStatus == PrepQueued || c.PrepStatus == PrepRunning || c.PrepStatus == "" {
+				c.PrepStatus, c.PrepPart = PrepNone, 0
+			}
 			return nil
 		})
 	case TableParagraphs:

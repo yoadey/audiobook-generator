@@ -26,12 +26,20 @@ const defaultPreviewText = "It was a bright cold day in April, and the clocks we
 
 // UpdateBook changes narration settings.
 func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (UpdateBookResponseObject, error) {
-	if _, err := s.Store.GetBook(ctx, req.BookId); isNotFound(err) {
+	b, err := s.Store.GetBook(ctx, req.BookId)
+	if isNotFound(err) {
 		return UpdateBook404JSONResponse{Message: "book not found"}, nil
 	} else if err != nil {
 		return nil, err
 	}
 	fields := map[string]any{}
+	touch := false
+	if v := req.Body.PrepareChapters; v != nil && *v != b.PrepareChapters {
+		// The preparation changes what is said: renders made with (or
+		// without) it are outdated.
+		fields["PrepareChapters"] = *v
+		touch = true
+	}
 	if v := req.Body.NarratorVoice; v != nil {
 		voice := strings.TrimSpace(*v)
 		if _, err := casting.ParseRecipe(voice); voice != "" && err != nil {
@@ -64,7 +72,12 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 			return nil, err
 		}
 	}
-	b, err := s.Store.GetBook(ctx, req.BookId)
+	if touch {
+		if err := s.Store.TouchBookVoices(ctx, b.ID); err != nil {
+			return nil, err
+		}
+	}
+	b, err = s.Store.GetBook(ctx, req.BookId)
 	if err != nil {
 		return nil, err
 	}

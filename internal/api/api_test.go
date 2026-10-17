@@ -29,6 +29,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/llm"
+	"github.com/yoadey/audiobook-generator/internal/prepare"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/store/storetest"
@@ -115,11 +116,14 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	pool := llm.NewPool(s, nil, log)
 	voices := casting.NewCatalog(fakeTTS{})
 	attributor := &attribution.Attributor{Store: s, LLM: pool, Jobs: runner, Log: log}
+	preparer := &prepare.Preparer{Store: s, LLM: pool, Jobs: runner, Log: log}
 	runner.Handle(attribution.JobType, attributor.Handler())
+	runner.Handle(prepare.JobType, preparer.Handler())
 	ffmpeg, _ := exec.LookPath("ffmpeg")
 	runner.Handle(render.JobType, (&render.Renderer{
 		Store: s, TTS: fakeTTS{}, Encoder: audio.Encoder{FFmpeg: ffmpeg}, DataDir: dir,
-		Concurrency: 2, DefaultVoice: "af_heart", Voices: voices, Attribution: attributor, Log: log,
+		Concurrency: 2, DefaultVoice: "af_heart", Voices: voices, Attribution: attributor,
+		Preparation: preparer, Log: log,
 	}).Handler())
 	scheduler := &render.Scheduler{Store: s, Jobs: runner, DefaultVoice: "af_heart"}
 	analyzer := &analysis.Analyzer{Store: s, LLM: pool, Jobs: runner, BatchTokens: analysis.DefaultBatchTokens, Log: log}
@@ -144,7 +148,7 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	mux := http.NewServeMux()
 	api.NewServer(api.Options{
 		Store: s, TTS: fakeTTS{}, Jobs: runner, Scheduler: scheduler, DefaultVoice: "af_heart",
-		LLM: pool, Analyzer: analyzer, Caster: caster, Attributor: attributor, Assembler: assembler, Voices: voices,
+		LLM: pool, Analyzer: analyzer, Caster: caster, Attributor: attributor, Preparer: preparer, Assembler: assembler, Voices: voices,
 		DataDir: dir, MaxUploadBytes: maxUpload, Log: log,
 	}).Register(mux)
 	srv := httptest.NewServer(mux)

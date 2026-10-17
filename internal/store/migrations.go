@@ -528,6 +528,77 @@ var migrations = []*gormigrate.Migration{
 			return tx.Migrator().DropColumn(&ListenProgress{}, "SegmentID")
 		},
 	},
+	{
+		ID: "202610240001_chapter_preparation",
+		Migrate: func(tx *gorm.DB) error {
+			type Book struct {
+				PrepareChapters bool `gorm:"not null;default:false"`
+			}
+			type Chapter struct {
+				PrepStatus string `gorm:"not null;default:'none'"`
+				PrepError  string `gorm:"not null;default:''"`
+				PrepPrompt string `gorm:"not null;default:''"`
+				PrepPart   int    `gorm:"not null;default:0"`
+				PreparedAt *time.Time
+			}
+			type Paragraph struct {
+				Mood string `gorm:"not null;default:''"`
+			}
+			type Segment struct {
+				Pauses   string `gorm:"not null;default:''"`
+				SpokenAs string `gorm:"not null;default:''"`
+			}
+			type LexiconEntry struct {
+				Status string `gorm:"not null;default:''"`
+				Note   string `gorm:"not null;default:''"`
+			}
+			for _, c := range []struct {
+				model any
+				cols  []string
+			}{
+				{&Book{}, []string{"PrepareChapters"}},
+				{&Chapter{}, []string{"PrepStatus", "PrepError", "PrepPrompt", "PrepPart", "PreparedAt"}},
+				{&Paragraph{}, []string{"Mood"}},
+				{&Segment{}, []string{"Pauses", "SpokenAs"}},
+				{&LexiconEntry{}, []string{"Status", "Note"}},
+			} {
+				for _, col := range c.cols {
+					if err := tx.Migrator().AddColumn(c.model, col); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+		Rollback: func(tx *gorm.DB) error {
+			type Book struct{ PrepareChapters bool }
+			type Chapter struct {
+				PrepStatus, PrepError, PrepPrompt string
+				PrepPart                          int
+				PreparedAt                        *time.Time
+			}
+			type Paragraph struct{ Mood string }
+			type Segment struct{ Pauses, SpokenAs string }
+			type LexiconEntry struct{ Status, Note string }
+			for _, c := range []struct {
+				model any
+				cols  []string
+			}{
+				{&LexiconEntry{}, []string{"Status", "Note"}},
+				{&Segment{}, []string{"Pauses", "SpokenAs"}},
+				{&Paragraph{}, []string{"Mood"}},
+				{&Chapter{}, []string{"PrepStatus", "PrepError", "PrepPrompt", "PrepPart", "PreparedAt"}},
+				{&Book{}, []string{"PrepareChapters"}},
+			} {
+				for _, col := range c.cols {
+					if err := tx.Migrator().DropColumn(c.model, col); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

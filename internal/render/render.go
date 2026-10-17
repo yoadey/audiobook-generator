@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/sync/errgroup"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/lexicon"
+	"github.com/yoadey/audiobook-generator/internal/prepare"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 )
@@ -55,7 +57,7 @@ type VoiceCatalog interface {
 	Voices(ctx context.Context) ([]casting.BaseVoice, error)
 }
 
-// Attributor queues speaker attributions.
+// Attributor queues speaker attributions (or chapter preparations).
 type Attributor interface {
 	Start(ctx context.Context, b *store.Book, c *store.Chapter, force bool, priority int) error
 }
@@ -73,6 +75,8 @@ type Renderer struct {
 	// without them everything is narrated).
 	Voices      VoiceCatalog
 	Attribution Attributor
+	// Preparation prepares chapters of books that ask for it (optional).
+	Preparation Attributor
 	Metrics     *Metrics
 	Log         *slog.Logger
 }
@@ -198,9 +202,11 @@ type item struct {
 	// segmentID is the segment spoken (0: the chapter title); a segment
 	// may be spoken in several items (phrases).
 	segmentID int64
-	// What the pause after it depends on.
+	// What the pause after it depends on; extra is a pause the chapter
+	// preparation asks for after it.
 	quote, thought, dialogue bool
 	emotion                  string
+	extra                    time.Duration
 }
 
 // voiceFunc returns the voice of a segment.
@@ -221,22 +227,30 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 		}
 	}
 	narrator, narratorSpeed := voiceOf(nil)
-	say := func(s *store.Segment, text, voice string, speed float64, dialogue bool) {
+	say := func(s *store.Segment, text, voice string, speed float64, dialogue bool, mood string) {
 		id, pr := int64(0), prosodyOf(s)
+		lead := 0
 		if s != nil {
 			id = s.ID
+			if i := strings.Index(s.Text, text); i > 0 {
+				lead = utf8.RuneCountInString(s.Text[:i])
+			}
+			if m, ok := moods[mood]; ok && s.QuoteRef == 0 {
+				pr = m // narration in the paragraph's mood
+			}
 		}
-		for _, ph := range phrases(text, nil) {
+		d := direct(s, text, lead)
+		for i, ph := range d.phrases {
 			// The book's pronunciations first (entries may name "AT&T"),
 			// then the cleanup for the TTS, which leaves Kokoro's syntax
 			// alone.
-			t := spoken(lex.Apply(ph.text))
+			t := spoken(lex.Apply(ph))
 			if speakable(t) == "" {
 				continue
 			}
 			it := item{
 				text: t, voice: voice, speed: clampSpeed(speed * pr.speed), gain: pr.gain,
-				gap: gapPhrase, pause: ph.pause, segmentID: id, dialogue: dialogue,
+				gap: gapPhrase, pause: d.pauses[i], segmentID: id, dialogue: dialogue,
 			}
 			if s != nil {
 				it.quote, it.thought, it.emotion = s.QuoteRef > 0, s.Kind == store.SegmentThought, s.Emotion
@@ -244,10 +258,13 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			items = append(items, it)
 		}
 		gapLast(gapSegment)
+		if n := len(items); n > 0 && items[n-1].segmentID == id {
+			items[n-1].extra = max(items[n-1].extra, d.extra)
+		}
 	}
 	if len(paras) == 0 || paras[0].Kind != store.ParagraphHeading {
 		if t := speakable(ch.Title); t != "" {
-			say(nil, t, narrator, narratorSpeed, false)
+			say(nil, t, narrator, narratorSpeed, false, "")
 			gapLast(gapHeading)
 		}
 	}
@@ -260,7 +277,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			for i := range byPara[p.ID] {
 				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
-					say(s, t, narrator, narratorSpeed, false)
+					say(s, t, narrator, narratorSpeed, false, "")
 				}
 			}
 			gapLast(gapHeading)
@@ -276,7 +293,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
 					voice, speed := voiceOf(s)
-					say(s, t, voice, speed, dialogue)
+					say(s, t, voice, speed, dialogue, p.Mood)
 				}
 			}
 			gapLast(gapPara)
@@ -285,6 +302,17 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 	gapLast(gapTail)
 	pauses(items)
 	return items
+}
+
+// withoutPreparation drops what a chapter preparation found (the book
+// no longer asks for it).
+func withoutPreparation(paras []store.Paragraph, segs []store.Segment) {
+	for i := range paras {
+		paras[i].Mood = ""
+	}
+	for i := range segs {
+		segs[i].Pauses, segs[i].SpokenAs = "", ""
+	}
 }
 
 // clampSpeed keeps a speed within what Kokoro takes.
@@ -332,6 +360,12 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return jobs.Permanent(err)
 	}
+	if wait, err := r.waitForPreparation(ctx, book, ch); err != nil || wait {
+		if err == nil {
+			err = prepare.WaitError()
+		}
+		return err
+	}
 	if wait, err := r.waitForVoices(ctx, book, ch); err != nil || wait {
 		if err == nil {
 			err = attribution.WaitError()
@@ -356,6 +390,9 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	entries, err := r.Store.ListLexicon(ctx, book.ID)
 	if err != nil {
 		return err
+	}
+	if !book.PrepareChapters {
+		withoutPreparation(paras, segs)
 	}
 	items := plan(ch, paras, segs, voiceOf, lexicon.Compile(entries))
 	text := fingerprint(paras, segs)
@@ -513,6 +550,20 @@ func (r *Renderer) waitForVoices(ctx context.Context, b *store.Book, ch *store.C
 	}
 	j, err := r.Store.PendingBookJob(ctx, casting.JobType, b.ID)
 	return err == nil && soon(j), err
+}
+
+// waitForPreparation reports whether a render should wait for the
+// preparation of its chapter (queued if missing), unless that job cannot
+// run soon.
+func (r *Renderer) waitForPreparation(ctx context.Context, b *store.Book, ch *store.Chapter) (bool, error) {
+	if r.Preparation == nil || !prepare.Needed(b, ch) {
+		return false, nil
+	}
+	if err := r.Preparation.Start(ctx, b, ch, false, AttributionPriority); err != nil {
+		return false, err
+	}
+	j, err := r.Store.PendingChapterJob(ctx, prepare.JobType, ch.ID)
+	return err == nil && j != nil && j.NotBefore.Before(time.Now().Add(waitFor)), err
 }
 
 // speakerVoices resolves the voices of a chapter's speakers: their own

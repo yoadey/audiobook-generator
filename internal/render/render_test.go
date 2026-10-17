@@ -21,6 +21,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/epub/epubtest"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/prepare"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/store/storetest"
@@ -359,5 +360,60 @@ func TestRenderRecordsWords(t *testing.T) {
 			}
 			assert.Equal(t, 1, found)
 		}
+	})
+}
+
+// preparer queues a preparation job, as prepare.Preparer does.
+type preparer struct {
+	s      *store.Store
+	starts int
+}
+
+func (p *preparer) Start(ctx context.Context, b *store.Book, c *store.Chapter, _ bool, _ int) error {
+	p.starts++
+	return p.s.EnqueueJob(ctx, &store.Job{Type: prepare.JobType, Queue: prepare.Queue, BookID: &b.ID, ChapterID: &c.ID})
+}
+
+func TestRenderWaitsForPreparation(t *testing.T) {
+	ff := ffmpeg(t)
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir, b, cs := setup(t, s)
+		ch := cs[1]
+		prep := &preparer{s: s}
+		fake := &fakeTTS{}
+		r := &render.Renderer{
+			Store: s, TTS: fake, Encoder: audio.Encoder{FFmpeg: ff}, DataDir: dir, Concurrency: 1,
+			DefaultVoice: "af_heart", Preparation: prep, Log: slog.New(slog.DiscardHandler),
+		}
+		// Not asked for: no waiting.
+		require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+		assert.Zero(t, prep.starts)
+
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"PrepareChapters": true}))
+		var deferred jobs.DeferError
+		require.ErrorAs(t, r.Render(ctx, ch.ID, func(float64) {}), &deferred)
+		assert.Equal(t, 1, prep.starts)
+
+		// Prepared: rendered with what the preparation found; without the
+		// book asking for it, that is left out.
+		_, segs, err := s.ChapterText(ctx, ch.ID)
+		require.NoError(t, err)
+		var said int64
+		for _, sg := range segs {
+			if sg.Text == "said Anna." {
+				said = sg.ID
+			}
+		}
+		require.NoError(t, s.DB().Model(&store.Segment{}).Where("id = ?", said).
+			Update("spoken_as", `[{"a":5,"b":9,"t":"Ah-na"}]`).Error)
+		require.NoError(t, s.DB().Model(&store.Chapter{}).Where("id = ?", ch.ID).Update("prep_status", store.PrepDone).Error)
+		fake.texts = nil
+		require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+		assert.Contains(t, fake.texts, "said Ah-na.")
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"PrepareChapters": false}))
+		fake.texts = nil
+		require.NoError(t, r.Render(ctx, ch.ID, func(float64) {}))
+		assert.Contains(t, fake.texts, "said Anna.")
 	})
 }

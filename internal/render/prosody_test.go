@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yoadey/audiobook-generator/internal/lexicon"
+	"github.com/yoadey/audiobook-generator/internal/prepare"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
 )
@@ -121,7 +122,7 @@ func TestPhrases(t *testing.T) {
 	cs := cues(items, []int64{4800, 4800}, words, func(int64) string { return text })
 	require.Len(t, cs, 1)
 	assert.Equal(t, int64(300), cs[0].StartMs)
-	second := int64(300 + 100 + phraseEllipsis.Milliseconds())
+	second := 300 + 100 + phraseEllipsis.Milliseconds()
 	assert.Equal(t, second+100, cs[0].EndMs)
 	assert.Equal(t, [][2]int64{{1, 300}, {3, 350}, {9, second}, {11, second + 20}, {17, second + 40}, {23, second + 70}},
 		cs[0].Words)
@@ -149,4 +150,37 @@ func TestApplyGain(t *testing.T) {
 	assert.InDelta(t, -0.97*math.MaxInt16/2, float64(b), 1)
 	applyGain(pcm, 0.5)
 	assert.InDelta(t, float64(a)/2, float64(int16(binary.LittleEndian.Uint16(pcm))), 1)
+}
+
+func TestDirectedText(t *testing.T) {
+	// “At Lv. 5 he stopped. The door was open.” with a spoken form for
+	// "Lv. 5", a pause after "stopped." and one after the segment.
+	s := &store.Segment{QuoteRef: 1, Kind: store.SegmentQuote, Text: "“At Lv. 5 he stopped. The door was open.”"}
+	s.SpokenAs = store.EncodeSpokenAs([]store.SpokenForm{{Start: 4, End: 9, Say: "level five"}})
+	s.Pauses = store.EncodePauses([]store.Pause{{Offset: 21, Ms: 800}, {Offset: 41, Ms: 1000}})
+	d := direct(s, speakable(s.Text), 1)
+	assert.Equal(t, []string{"At level five he stopped.", "The door was open."}, d.phrases)
+	assert.Equal(t, []time.Duration{800 * time.Millisecond, 0}, d.pauses)
+	assert.Equal(t, time.Second, d.extra)
+
+	// In a plan: the segment's pause after it outlasts the paragraph's.
+	ps := []store.Paragraph{{ID: 1, Kind: store.ParagraphText}, {ID: 2, Kind: store.ParagraphText, Mood: "tense"}}
+	s.ParagraphID, s.ID = 1, 1
+	n := store.Segment{ID: 2, ParagraphID: 2, Kind: store.SegmentNarration, Text: "He ran."}
+	items := planOf(ps, []store.Segment{*s, n})
+	require.Len(t, items, 3)
+	assert.Equal(t, 800*time.Millisecond, items[0].pause)
+	assert.Equal(t, time.Second, items[1].pause)
+	assert.Equal(t, 1.04, items[2].speed, "narration in a tense paragraph")
+
+	// Broken data is ignored.
+	s.SpokenAs, s.Pauses = `[{"a":3,"b":99,"t":"x"}]`, "nonsense"
+	d = direct(s, speakable(s.Text), 1)
+	assert.Equal(t, []string{"At Lv. 5 he stopped. The door was open."}, d.phrases)
+}
+
+func TestMoodsCovered(t *testing.T) {
+	for _, m := range prepare.Moods {
+		assert.Contains(t, moods, m)
+	}
 }

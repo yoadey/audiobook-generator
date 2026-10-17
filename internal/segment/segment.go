@@ -474,8 +474,8 @@ func (s *Segmenter) singleQuoted(runes []rune, from, to int) []Span {
 	}
 	var out []Span
 	for i := from; i < to; i++ {
-		if runes[i] != open || !opensAfter(runes, i) || isElision(runes, i) ||
-			i+1 >= to || !unicode.IsUpper(runes[i+1]) && !(unicode.IsLetter(runes[i+1]) && opensClause(runes, i)) {
+		if runes[i] != open || !opensAfter(runes, i) || isElision(runes, i) || i+1 >= to ||
+			!startsThought(runes, i) {
 			continue
 		}
 		for j := i + 1; j < to; j++ {
@@ -492,6 +492,13 @@ func (s *Segmenter) singleQuoted(runes []rune, from, to int) []Span {
 		}
 	}
 	return out
+}
+
+// startsThought: the text after an opening mark at i starts a thought: a
+// capital, or any letter after a dash, a colon or a thought tag.
+func startsThought(runes []rune, i int) bool {
+	c := runes[i+1]
+	return unicode.IsUpper(c) || unicode.IsLetter(c) && opensClause(runes, i)
 }
 
 // disjoint sorts spans and drops those overlapping an earlier one.

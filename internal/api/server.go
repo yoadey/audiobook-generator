@@ -14,6 +14,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/buildinfo"
 	"github.com/yoadey/audiobook-generator/internal/casting"
 	"github.com/yoadey/audiobook-generator/internal/llm"
+	"github.com/yoadey/audiobook-generator/internal/prepare"
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
@@ -41,6 +42,7 @@ type Options struct {
 	Analyzer       *analysis.Analyzer
 	Caster         *casting.Caster
 	Attributor     *attribution.Attributor
+	Preparer       *prepare.Preparer
 	Assembler      *assemble.Assembler
 	Voices         *casting.Catalog
 	DefaultVoice   string

@@ -42,6 +42,7 @@ import {
 } from '../api/client';
 import { AudioBadge } from '../components/AudioBadge';
 import { AttributionBar, Emphasized, QuoteSpan } from '../components/ChapterSpeakers';
+import { PreparationBar } from '../components/PreparationBar';
 import { AnchorLink } from '../components/links';
 import { confirmMerge } from '../lib/confirm';
 import { formatListeningTime, formatNumber } from '../lib/format';
@@ -401,6 +402,7 @@ export function ChapterPage() {
         onlyUnsure={onlyUnsure}
         onOnlyUnsure={(on) => setUnsureFor(on ? chapter.id : null)}
       />
+      <PreparationBar chapter={chapter} enabled={!!book.data?.prepareChapters} />
       {onlyUnsure && visible.length === 0 && (
         <Text c="dimmed" size="sm">
           Nothing left to check in this chapter.

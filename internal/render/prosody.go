@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
@@ -55,18 +56,21 @@ func applyGain(pcm []byte, gain float64) {
 	if gain == 1 || len(pcm) < 2 {
 		return
 	}
+	samples := make([]int16, len(pcm)/2)
+	if _, err := binary.Decode(pcm, binary.LittleEndian, samples); err != nil {
+		return
+	}
 	peak := 0
-	for i := 0; i+1 < len(pcm); i += 2 {
-		v := int(int16(binary.LittleEndian.Uint16(pcm[i:])))
-		peak = max(peak, v, -v)
+	for _, v := range samples {
+		peak = max(peak, int(v), -int(v))
 	}
 	if peak > 0 {
 		gain = min(gain, 0.97*math.MaxInt16/float64(peak))
 	}
-	for i := 0; i+1 < len(pcm); i += 2 {
-		v := float64(int16(binary.LittleEndian.Uint16(pcm[i:]))) * gain
-		binary.LittleEndian.PutUint16(pcm[i:], uint16(int16(math.Round(max(min(v, math.MaxInt16), math.MinInt16)))))
+	for i, v := range samples {
+		samples[i] = int16(math.Round(max(min(float64(v)*gain, math.MaxInt16), math.MinInt16)))
 	}
+	_, _ = binary.Encode(pcm, binary.LittleEndian, samples)
 }
 
 // gap is what follows a piece of speech; plan decides the kind, pauses
@@ -139,6 +143,7 @@ func pauses(items []item) {
 		if it.emotion == "sad" {
 			it.pause += afterSad
 		}
+		it.pause = max(it.pause, it.extra)
 	}
 }
 
@@ -163,24 +168,24 @@ func ending(s string) end {
 	return plain
 }
 
-// phrases splits a segment's text at an ellipsis within it ("I just… I
-// don't know"), where Kokoro barely pauses, and at extra breaks: rune
-// offsets where a phrase starts after a pause of the given length.
-func phrases(text string, breaks map[int]time.Duration) []phrase {
-	r := []rune(text)
+// phrases splits a segment's text (runes) at an ellipsis within it ("I
+// just… I don't know"), where Kokoro barely pauses, and at extra breaks:
+// rune offsets where a phrase starts after a pause of the given length.
+func phrases(r []rune, breaks map[int]time.Duration) []phrase {
 	var out []phrase
 	at := 0
 	cutAt := func(i int, d time.Duration) {
-		if s := strings.TrimSpace(string(r[at:i])); s != "" && i < len(r) {
-			out = append(out, phrase{text: s, pause: d})
-			at = i
+		if i <= at || i >= len(r) || strings.TrimSpace(string(r[at:i])) == "" {
+			return
 		}
+		out = append(out, phrase{from: at, to: i, pause: d})
+		at = i
 	}
 	for i := 0; i < len(r); i++ {
-		if d, ok := breaks[i]; ok && i > 0 {
+		if d, ok := breaks[i]; ok {
 			cutAt(i, d)
 		}
-		if r[i] != '…' && !(r[i] == '.' && i+2 < len(r) && r[i+1] == '.' && r[i+2] == '.') {
+		if r[i] != '…' && (r[i] != '.' || i+2 >= len(r) || r[i+1] != '.' || r[i+2] != '.') {
 			continue
 		}
 		j := i + 1
@@ -190,17 +195,96 @@ func phrases(text string, breaks map[int]time.Duration) []phrase {
 		// Followed by a space and more words (not an ellipsis at the end or
 		// before a closing mark).
 		if j+1 < len(r) && unicode.IsSpace(r[j]) && strings.IndexFunc(string(r[j:]), unicode.IsLetter) >= 0 {
-			cutAt(j, phraseEllipsis)
+			// A pause asked for there (after the spaces) is the same one.
+			k := j
+			for k < len(r) && unicode.IsSpace(r[k]) {
+				k++
+			}
+			cutAt(j, max(phraseEllipsis, breaks[k]))
 		}
 		i = j - 1
 	}
-	if s := strings.TrimSpace(string(r[at:])); s != "" {
-		out = append(out, phrase{text: s})
+	if strings.TrimSpace(string(r[at:])) != "" {
+		out = append(out, phrase{from: at, to: len(r)})
 	}
 	return out
 }
 
+// phrase is the runes [from, to) of a segment's text and the pause after.
 type phrase struct {
-	text  string
-	pause time.Duration // after it
+	from, to int
+	pause    time.Duration
+}
+
+// moods are how the narrator reads by the mood of a paragraph (from the
+// chapter preparation), subtler than the emotions of speech.
+var moods = map[string]prosody{
+	"calm":       {0.97, 1},
+	"tense":      {1.04, 1},
+	"action":     {1.06, 1.04},
+	"somber":     {0.94, 0.94},
+	"warm":       {0.98, 1},
+	"light":      {1.03, 1},
+	"mysterious": {0.95, 0.95},
+}
+
+// directed is a segment's text for the TTS with the chapter preparation
+// applied: its spoken forms replace their spots, its pauses split it into
+// phrases (extra: the pause it asks for after the segment).
+type directed struct {
+	phrases []string
+	pauses  []time.Duration
+	extra   time.Duration
+}
+
+// direct prepares a segment's text (already without its surrounding
+// marks, which started lead runes into the segment's text).
+func direct(s *store.Segment, text string, lead int) directed {
+	r := []rune(text)
+	var breaks map[int]time.Duration
+	var forms []store.SpokenForm
+	var out directed
+	if s != nil {
+		n := utf8.RuneCountInString(s.Text)
+		for _, p := range store.DecodePauses(s.Pauses, n) {
+			at := p.Offset - lead
+			d := time.Duration(p.Ms) * time.Millisecond
+			switch {
+			case at >= len(r):
+				out.extra = max(out.extra, d)
+			case at > 0:
+				if breaks == nil {
+					breaks = map[int]time.Duration{}
+				}
+				// The pause goes before the spaces after the words.
+				for at < len(r) && unicode.IsSpace(r[at]) {
+					at++
+				}
+				breaks[at] = max(breaks[at], d)
+			}
+		}
+		for _, f := range store.DecodeSpokenAs(s.SpokenAs, n) {
+			f.Start -= lead
+			f.End -= lead
+			if f.Start >= 0 && f.End <= len(r) {
+				forms = append(forms, f)
+			}
+		}
+	}
+	for _, ph := range phrases(r, breaks) {
+		var b strings.Builder
+		at := ph.from
+		for _, f := range forms {
+			if f.Start < ph.from || f.End > ph.to {
+				continue // across a break: left as it is
+			}
+			b.WriteString(string(r[at:f.Start]))
+			b.WriteString(f.Say)
+			at = f.End
+		}
+		b.WriteString(string(r[at:ph.to]))
+		out.phrases = append(out.phrases, strings.TrimSpace(b.String()))
+		out.pauses = append(out.pauses, ph.pause)
+	}
+	return out
 }

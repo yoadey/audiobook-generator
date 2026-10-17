@@ -430,6 +430,39 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /chapters/{chapterId}/preparation:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      operationId: startPreparation
+      summary: Prepare the chapter for reading aloud
+      description: >-
+        Queues the LLM preparation of the chapter: the mood of narration,
+        dramatic pauses, spoken forms of spots a TTS reads wrongly and
+        pronunciation suggestions for the lexicon (a render does this by
+        itself in books with prepareChapters). The text is never changed.
+        With force, what an earlier preparation found is discarded.
+      tags: [chapters]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreparationStart"
+      responses:
+        "202":
+          description: The preparation is queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterPreparation"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /chapters/{chapterId}/quotes/{quoteRef}:
     parameters:
       - $ref: "#/components/parameters/ChapterId"
@@ -1468,6 +1501,7 @@ components:
         - narratorSpeed
         - lookahead
         - previewText
+        - prepareChapters
         - analysisStatus
         - castingStatus
         - createdAt
@@ -1508,6 +1542,11 @@ components:
         previewText:
           type: string
           description: Sample text of voice previews in this book (empty - the instance's)
+        prepareChapters:
+          type: boolean
+          description: >-
+            Chapters are prepared by the LLM before they are rendered
+            (narration mood, pauses, spoken forms, pronunciation suggestions)
         analysisStatus:
           $ref: "#/components/schemas/AnalysisStatus"
         analysisProgress:
@@ -1542,6 +1581,8 @@ components:
           type: string
           maxLength: 500
           description: Sample text of voice previews in this book; empty for the instance's
+        prepareChapters:
+          type: boolean
     BookPage:
       type: object
       required: [items, total]
@@ -1580,7 +1621,7 @@ components:
     Chapter:
       type: object
       required: [id, bookId, idx, title, wordCount, quoteCount, excluded, status, audioStatus, audioStale,
-        audioRerendering, attributionStatus]
+        audioRerendering, attributionStatus, prepStatus]
       properties:
         id:
           type: integer
@@ -1625,6 +1666,8 @@ components:
           $ref: "#/components/schemas/AttributionStatus"
         attributionError:
           type: string
+        prepStatus:
+          $ref: "#/components/schemas/PrepStatus"
         narration:
           $ref: "#/components/schemas/Narration"
         povCharacterId:
@@ -1655,6 +1698,52 @@ components:
     AttributionStatus:
       type: string
       enum: [none, queued, running, done, failed]
+    PrepStatus:
+      type: string
+      enum: [none, queued, running, done, failed]
+    Mood:
+      type: string
+      enum: [calm, tense, action, somber, warm, light, mysterious]
+    PreparationStart:
+      type: object
+      properties:
+        force:
+          type: boolean
+          description: Prepare again, discarding what was found
+    ChapterPreparation:
+      type: object
+      required: [status, moods, pauses, spokenForms]
+      properties:
+        status:
+          $ref: "#/components/schemas/PrepStatus"
+        error:
+          type: string
+        prompt:
+          type: string
+          description: Prompt version of the last preparation
+        preparedAt:
+          type: string
+          format: date-time
+        moods:
+          type: integer
+          description: Paragraphs with a mood
+        pauses:
+          type: integer
+        spokenForms:
+          type: integer
+        job:
+          $ref: "#/components/schemas/Job"
+    SpokenForm:
+      type: object
+      required: [start, end, say]
+      properties:
+        start:
+          type: integer
+        end:
+          type: integer
+        say:
+          type: string
+          description: How the characters [start, end) of the text are read aloud
     Emotion:
       type: string
       enum: [neutral, happy, sad, angry, afraid, surprised, whispering, shouting, sarcastic]
@@ -1741,6 +1830,22 @@ components:
           description: How sure the attribution is (0..1; 1 for a speaker chosen by hand)
         speakerManual:
           type: boolean
+        pauses:
+          type: array
+          description: >-
+            Pauses from the chapter preparation as [character offset, ms]
+            (an offset of the text's length - after the segment)
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: integer
+        spokenAs:
+          type: array
+          description: Spots read differently than written (from the chapter preparation)
+          items:
+            $ref: "#/components/schemas/SpokenForm"
     Paragraph:
       type: object
       required: [id, idx, kind, text, segments]
@@ -1754,6 +1859,8 @@ components:
           $ref: "#/components/schemas/ParagraphKind"
         text:
           type: string
+        mood:
+          $ref: "#/components/schemas/Mood"
         segments:
           type: array
           items:
@@ -1786,6 +1893,8 @@ components:
                 $ref: "#/components/schemas/CharacterRef"
             attribution:
               $ref: "#/components/schemas/ChapterAttribution"
+            preparation:
+              $ref: "#/components/schemas/ChapterPreparation"
     ChapterUpdate:
       type: object
       properties:
@@ -2050,9 +2159,15 @@ components:
           format: int64
         job:
           $ref: "#/components/schemas/Job"
+    LexiconStatus:
+      type: string
+      enum: [active, suggested, dismissed]
+      description: >-
+        active - applied; suggested - proposed by the chapter preparation,
+        applied once accepted; dismissed - not applied and not suggested again
     LexiconEntry:
       type: object
-      required: [id, bookId, term, replacement, phonemes]
+      required: [id, bookId, term, replacement, phonemes, status]
       properties:
         id:
           type: integer
@@ -2069,6 +2184,11 @@ components:
         phonemes:
           type: boolean
           description: The replacement is a pronunciation in Kokoro's phoneme notation (IPA)
+        status:
+          $ref: "#/components/schemas/LexiconStatus"
+        note:
+          type: string
+          description: Why it was suggested
     LexiconEntryInput:
       type: object
       required: [term, replacement]
@@ -2096,6 +2216,8 @@ components:
           maxLength: 200
         phonemes:
           type: boolean
+        status:
+          $ref: "#/components/schemas/LexiconStatus"
     VoicePreview:
       type: object
       required: [voice]

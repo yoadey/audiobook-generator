@@ -10,7 +10,22 @@ import (
 )
 
 func toLexiconEntry(e *store.LexiconEntry) LexiconEntry {
-	return LexiconEntry{Id: e.ID, BookId: e.BookID, Term: e.Term, Replacement: e.Replacement, Phonemes: e.IsPhonemes}
+	status := LexiconStatus(e.Status)
+	if e.Status == store.LexiconActive {
+		status = LexiconStatusActive
+	}
+	return LexiconEntry{
+		Id: e.ID, BookId: e.BookID, Term: e.Term, Replacement: e.Replacement, Phonemes: e.IsPhonemes,
+		Status: status, Note: nonEmpty(e.Note),
+	}
+}
+
+// lexiconStatus maps the API's status to the store's.
+func lexiconStatus(s LexiconStatus) store.LexiconStatus {
+	if s == LexiconStatusActive {
+		return store.LexiconActive
+	}
+	return store.LexiconStatus(s)
 }
 
 // validateLexicon normalizes and checks an entry ("" when valid).
@@ -78,7 +93,13 @@ func (s *Server) UpdateLexiconEntry(ctx context.Context, req UpdateLexiconEntryR
 	} else if err != nil {
 		return nil, err
 	}
-	oldTerm := e.Term
+	oldTerm, wasActive := e.Term, e.Status == store.LexiconActive
+	if v := req.Body.Status; v != nil {
+		if !v.Valid() {
+			return UpdateLexiconEntry400JSONResponse{ErrorJSONResponse(errMsg("unknown status"))}, nil
+		}
+		e.Status = lexiconStatus(*v)
+	}
 	if req.Body.Term != nil {
 		e.Term = *req.Body.Term
 	}
@@ -96,15 +117,21 @@ func (s *Server) UpdateLexiconEntry(ctx context.Context, req UpdateLexiconEntryR
 	} else if taken {
 		return UpdateLexiconEntry409JSONResponse{Message: fmt.Sprintf("%q is already in the lexicon", e.Term)}, nil
 	}
-	if err := s.touchTerms(ctx, e.BookID, oldTerm, e.Term); err != nil {
-		return nil, err
+	// Only an entry that applies (before or after) changes what is said.
+	audible := wasActive || e.Status == store.LexiconActive
+	if audible {
+		if err := s.touchTerms(ctx, e.BookID, oldTerm, e.Term); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.Store.SaveLexiconEntry(ctx, e); errors.Is(err, store.ErrConflict) {
 		return UpdateLexiconEntry409JSONResponse{Message: err.Error()}, nil
 	} else if err != nil {
 		return nil, err
 	}
-	s.touchTermsAgain(ctx, e.BookID, oldTerm, e.Term)
+	if audible {
+		s.touchTermsAgain(ctx, e.BookID, oldTerm, e.Term)
+	}
 	return UpdateLexiconEntry200JSONResponse(toLexiconEntry(e)), nil
 }
 
@@ -116,13 +143,18 @@ func (s *Server) DeleteLexiconEntry(ctx context.Context, req DeleteLexiconEntryR
 	} else if err != nil {
 		return nil, err
 	}
-	if err := s.touchTerms(ctx, e.BookID, e.Term); err != nil {
-		return nil, err
+	active := e.Status == store.LexiconActive
+	if active {
+		if err := s.touchTerms(ctx, e.BookID, e.Term); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.Store.DeleteLexiconEntry(ctx, e.ID); err != nil && !isNotFound(err) {
 		return nil, err
 	}
-	s.touchTermsAgain(ctx, e.BookID, e.Term)
+	if active {
+		s.touchTermsAgain(ctx, e.BookID, e.Term)
+	}
 	return DeleteLexiconEntry204Response{}, nil
 }
 

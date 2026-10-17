@@ -117,6 +117,12 @@ URLs carry a token instead, so treat them like passwords.
   short between lines of a dialogue, longer after speech that trails off,
   almost none after speech that is cut off, and a pause at an ellipsis
   within a sentence.
+- **Chapter preparation** (optional, per book under *Narrator*): before a
+  chapter is rendered, the LLM marks the mood of the narration, dramatic
+  pauses and spots the voice would misread ("Lv. 5" → "level five"), and
+  suggests pronunciations of invented names, which you accept or dismiss
+  under *Pronunciation*. The text itself is never changed; the chapter page
+  shows what was found and can prepare it again.
 - **Podcast**: the book page shows a feed URL (button *Podcast*) that any
   podcast app can subscribe to; rendered chapters are its episodes, each
   with a WebVTT transcript (`podcast:transcript`) that apps such as Apple

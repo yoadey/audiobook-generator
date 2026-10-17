@@ -253,6 +253,28 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/chapters/{chapterId}/preparation': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Prepare the chapter for reading aloud
+     * @description Queues the LLM preparation of the chapter: the mood of narration, dramatic pauses, spoken forms of spots a TTS reads wrongly and pronunciation suggestions for the lexicon (a render does this by itself in books with prepareChapters). The text is never changed. With force, what an earlier preparation found is discarded.
+     */
+    post: operations['startPreparation'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/chapters/{chapterId}/quotes/{quoteRef}': {
     parameters: {
       query?: never;
@@ -875,6 +897,8 @@ export interface components {
       lookahead: number;
       /** @description Sample text of voice previews in this book (empty - the instance's) */
       previewText: string;
+      /** @description Chapters are prepared by the LLM before they are rendered (narration mood, pauses, spoken forms, pronunciation suggestions) */
+      prepareChapters: boolean;
       analysisStatus: components['schemas']['AnalysisStatus'];
       /** @description Share of analysed batches (0..1) once the analysis is planned */
       analysisProgress?: number;
@@ -892,6 +916,7 @@ export interface components {
       lookahead?: number;
       /** @description Sample text of voice previews in this book; empty for the instance's */
       previewText?: string;
+      prepareChapters?: boolean;
     };
     BookPage: {
       items: components['schemas']['Book'][];
@@ -938,6 +963,7 @@ export interface components {
       audioVersion?: string;
       attributionStatus: components['schemas']['AttributionStatus'];
       attributionError?: string;
+      prepStatus: components['schemas']['PrepStatus'];
       narration?: components['schemas']['Narration'];
       /**
        * Format: int64
@@ -961,6 +987,33 @@ export interface components {
     SegmentKind: 'narration' | 'quote' | 'thought';
     /** @enum {string} */
     AttributionStatus: 'none' | 'queued' | 'running' | 'done' | 'failed';
+    /** @enum {string} */
+    PrepStatus: 'none' | 'queued' | 'running' | 'done' | 'failed';
+    /** @enum {string} */
+    Mood: 'calm' | 'tense' | 'action' | 'somber' | 'warm' | 'light' | 'mysterious';
+    PreparationStart: {
+      /** @description Prepare again, discarding what was found */
+      force?: boolean;
+    };
+    ChapterPreparation: {
+      status: components['schemas']['PrepStatus'];
+      error?: string;
+      /** @description Prompt version of the last preparation */
+      prompt?: string;
+      /** Format: date-time */
+      preparedAt?: string;
+      /** @description Paragraphs with a mood */
+      moods: number;
+      pauses: number;
+      spokenForms: number;
+      job?: components['schemas']['Job'];
+    };
+    SpokenForm: {
+      start: number;
+      end: number;
+      /** @description How the characters [start, end) of the text are read aloud */
+      say: string;
+    };
     /** @enum {string} */
     Emotion:
       | 'neutral'
@@ -1021,6 +1074,10 @@ export interface components {
       /** @description How sure the attribution is (0..1; 1 for a speaker chosen by hand) */
       confidence: number;
       speakerManual: boolean;
+      /** @description Pauses from the chapter preparation as [character offset, ms] (an offset of the text's length - after the segment) */
+      pauses?: number[][];
+      /** @description Spots read differently than written (from the chapter preparation) */
+      spokenAs?: components['schemas']['SpokenForm'][];
     };
     Paragraph: {
       /** Format: int64 */
@@ -1028,6 +1085,7 @@ export interface components {
       idx: number;
       kind: components['schemas']['ParagraphKind'];
       text: string;
+      mood?: components['schemas']['Mood'];
       segments: components['schemas']['Segment'][];
     };
     ChapterDetail: components['schemas']['Chapter'] & {
@@ -1041,6 +1099,7 @@ export interface components {
       /** @description Characters who speak a quotation of the chapter */
       speakers?: components['schemas']['CharacterRef'][];
       attribution?: components['schemas']['ChapterAttribution'];
+      preparation?: components['schemas']['ChapterPreparation'];
     };
     ChapterUpdate: {
       title?: string;
@@ -1202,6 +1261,11 @@ export interface components {
       durationMs?: number;
       job?: components['schemas']['Job'];
     };
+    /**
+     * @description active - applied; suggested - proposed by the chapter preparation, applied once accepted; dismissed - not applied and not suggested again
+     * @enum {string}
+     */
+    LexiconStatus: 'active' | 'suggested' | 'dismissed';
     LexiconEntry: {
       /** Format: int64 */
       id: number;
@@ -1213,6 +1277,9 @@ export interface components {
       replacement: string;
       /** @description The replacement is a pronunciation in Kokoro's phoneme notation (IPA) */
       phonemes: boolean;
+      status: components['schemas']['LexiconStatus'];
+      /** @description Why it was suggested */
+      note?: string;
     };
     LexiconEntryInput: {
       term: string;
@@ -1223,6 +1290,7 @@ export interface components {
       term?: string;
       replacement?: string;
       phonemes?: boolean;
+      status?: components['schemas']['LexiconStatus'];
     };
     VoicePreview: {
       /**
@@ -2030,6 +2098,35 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['ChapterAttribution'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  startPreparation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        chapterId: components['parameters']['ChapterId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        'application/json': components['schemas']['PreparationStart'];
+      };
+    };
+    responses: {
+      /** @description The preparation is queued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterPreparation'];
         };
       };
       404: components['responses']['Error'];

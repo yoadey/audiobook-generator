@@ -482,6 +482,60 @@ func (e LLMStructuredOutput) Valid() bool {
 	}
 }
 
+// Defines values for LexiconStatus.
+const (
+	LexiconStatusActive    LexiconStatus = "active"
+	LexiconStatusDismissed LexiconStatus = "dismissed"
+	LexiconStatusSuggested LexiconStatus = "suggested"
+)
+
+// Valid indicates whether the value is a known member of the LexiconStatus enum.
+func (e LexiconStatus) Valid() bool {
+	switch e {
+	case LexiconStatusActive:
+		return true
+	case LexiconStatusDismissed:
+		return true
+	case LexiconStatusSuggested:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for Mood.
+const (
+	MoodAction     Mood = "action"
+	MoodCalm       Mood = "calm"
+	MoodLight      Mood = "light"
+	MoodMysterious Mood = "mysterious"
+	MoodSomber     Mood = "somber"
+	MoodTense      Mood = "tense"
+	MoodWarm       Mood = "warm"
+)
+
+// Valid indicates whether the value is a known member of the Mood enum.
+func (e Mood) Valid() bool {
+	switch e {
+	case MoodAction:
+		return true
+	case MoodCalm:
+		return true
+	case MoodLight:
+		return true
+	case MoodMysterious:
+		return true
+	case MoodSomber:
+		return true
+	case MoodTense:
+		return true
+	case MoodWarm:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Narration.
 const (
 	NarrationFirstPerson Narration = "first_person"
@@ -521,6 +575,33 @@ func (e ParagraphKind) Valid() bool {
 	case ParagraphKindSceneBreak:
 		return true
 	case ParagraphKindText:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PrepStatus.
+const (
+	PrepStatusDone    PrepStatus = "done"
+	PrepStatusFailed  PrepStatus = "failed"
+	PrepStatusNone    PrepStatus = "none"
+	PrepStatusQueued  PrepStatus = "queued"
+	PrepStatusRunning PrepStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the PrepStatus enum.
+func (e PrepStatus) Valid() bool {
+	switch e {
+	case PrepStatusDone:
+		return true
+	case PrepStatusFailed:
+		return true
+	case PrepStatusNone:
+		return true
+	case PrepStatusQueued:
+		return true
+	case PrepStatusRunning:
 		return true
 	default:
 		return false
@@ -701,6 +782,9 @@ type Book struct {
 	// NarratorVoice Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)"
 	NarratorVoice string `json:"narratorVoice"`
 
+	// PrepareChapters Chapters are prepared by the LLM before they are rendered (narration mood, pauses, spoken forms, pronunciation suggestions)
+	PrepareChapters bool `json:"prepareChapters"`
+
 	// PreviewText Sample text of voice previews in this book (empty - the instance's)
 	PreviewText string `json:"previewText"`
 
@@ -723,9 +807,10 @@ type BookStatus string
 
 // BookUpdate defines model for BookUpdate.
 type BookUpdate struct {
-	Lookahead     *int     `json:"lookahead,omitempty"`
-	NarratorSpeed *float32 `json:"narratorSpeed,omitempty"`
-	NarratorVoice *string  `json:"narratorVoice,omitempty"`
+	Lookahead       *int     `json:"lookahead,omitempty"`
+	NarratorSpeed   *float32 `json:"narratorSpeed,omitempty"`
+	NarratorVoice   *string  `json:"narratorVoice,omitempty"`
+	PrepareChapters *bool    `json:"prepareChapters,omitempty"`
 
 	// PreviewText Sample text of voice previews in this book; empty for the instance's
 	PreviewText *string `json:"previewText,omitempty"`
@@ -807,6 +892,7 @@ type Chapter struct {
 
 	// PovCharacterId Point-of-view character found by the analysis
 	PovCharacterId *int64        `json:"povCharacterId,omitempty"`
+	PrepStatus     PrepStatus    `json:"prepStatus"`
 	QuoteCount     int           `json:"quoteCount"`
 	Status         ChapterStatus `json:"status"`
 	Title          string        `json:"title"`
@@ -867,9 +953,11 @@ type ChapterDetail struct {
 	Paragraphs    []Paragraph `json:"paragraphs"`
 
 	// PovCharacterId Point-of-view character found by the analysis
-	PovCharacterId *int64 `json:"povCharacterId,omitempty"`
-	PrevChapterId  *int64 `json:"prevChapterId,omitempty"`
-	QuoteCount     int    `json:"quoteCount"`
+	PovCharacterId *int64              `json:"povCharacterId,omitempty"`
+	PrepStatus     PrepStatus          `json:"prepStatus"`
+	Preparation    *ChapterPreparation `json:"preparation,omitempty"`
+	PrevChapterId  *int64              `json:"prevChapterId,omitempty"`
+	QuoteCount     int                 `json:"quoteCount"`
 
 	// Speakers Characters who speak a quotation of the chapter
 	Speakers  *[]CharacterRef `json:"speakers,omitempty"`
@@ -883,6 +971,22 @@ type ChapterDetail struct {
 type ChapterPage struct {
 	Items []Chapter `json:"items"`
 	Total int64     `json:"total"`
+}
+
+// ChapterPreparation defines model for ChapterPreparation.
+type ChapterPreparation struct {
+	Error *string `json:"error,omitempty"`
+	Job   *Job    `json:"job,omitempty"`
+
+	// Moods Paragraphs with a mood
+	Moods      int        `json:"moods"`
+	Pauses     int        `json:"pauses"`
+	PreparedAt *time.Time `json:"preparedAt,omitempty"`
+
+	// Prompt Prompt version of the last preparation
+	Prompt      *string    `json:"prompt,omitempty"`
+	SpokenForms int        `json:"spokenForms"`
+	Status      PrepStatus `json:"status"`
 }
 
 // ChapterRef defines model for ChapterRef.
@@ -1298,11 +1402,17 @@ type LexiconEntry struct {
 	BookId int64 `json:"bookId"`
 	Id     int64 `json:"id"`
 
+	// Note Why it was suggested
+	Note *string `json:"note,omitempty"`
+
 	// Phonemes The replacement is a pronunciation in Kokoro's phoneme notation (IPA)
 	Phonemes bool `json:"phonemes"`
 
 	// Replacement What is said instead, or phonemes when phonemes is true
 	Replacement string `json:"replacement"`
+
+	// Status active - applied; suggested - proposed by the chapter preparation, applied once accepted; dismissed - not applied and not suggested again
+	Status LexiconStatus `json:"status"`
 
 	// Term Word or name as written in the book (whole words, any case)
 	Term string `json:"term"`
@@ -1319,8 +1429,14 @@ type LexiconEntryInput struct {
 type LexiconEntryUpdate struct {
 	Phonemes    *bool   `json:"phonemes,omitempty"`
 	Replacement *string `json:"replacement,omitempty"`
-	Term        *string `json:"term,omitempty"`
+
+	// Status active - applied; suggested - proposed by the chapter preparation, applied once accepted; dismissed - not applied and not suggested again
+	Status *LexiconStatus `json:"status,omitempty"`
+	Term   *string        `json:"term,omitempty"`
 }
+
+// LexiconStatus active - applied; suggested - proposed by the chapter preparation, applied once accepted; dismissed - not applied and not suggested again
+type LexiconStatus string
 
 // Me defines model for Me.
 type Me struct {
@@ -1330,6 +1446,9 @@ type Me struct {
 	Subject     *string `json:"subject,omitempty"`
 }
 
+// Mood defines model for Mood.
+type Mood string
+
 // Narration defines model for Narration.
 type Narration string
 
@@ -1338,12 +1457,22 @@ type Paragraph struct {
 	Id       int64         `json:"id"`
 	Idx      int           `json:"idx"`
 	Kind     ParagraphKind `json:"kind"`
+	Mood     *Mood         `json:"mood,omitempty"`
 	Segments []Segment     `json:"segments"`
 	Text     string        `json:"text"`
 }
 
 // ParagraphKind defines model for ParagraphKind.
 type ParagraphKind string
+
+// PrepStatus defines model for PrepStatus.
+type PrepStatus string
+
+// PreparationStart defines model for PreparationStart.
+type PreparationStart struct {
+	// Force Prepare again, discarding what was found
+	Force *bool `json:"force,omitempty"`
+}
 
 // Progress defines model for Progress.
 type Progress struct {
@@ -1410,17 +1539,32 @@ type Segment struct {
 	// Kind thought - a character's thought (italics or single marks); attributed like a quote
 	Kind SegmentKind `json:"kind"`
 
+	// Pauses Pauses from the chapter preparation as [character offset, ms] (an offset of the text's length - after the segment)
+	Pauses *[][]int `json:"pauses,omitempty"`
+
 	// QuoteRef Number of the quotation or thought within the chapter (0 for narration)
 	QuoteRef int `json:"quoteRef"`
 
 	// SpeakerId Who speaks the quotation (absent - the narrator reads it)
 	SpeakerId     *int64 `json:"speakerId,omitempty"`
 	SpeakerManual bool   `json:"speakerManual"`
-	Text          string `json:"text"`
+
+	// SpokenAs Spots read differently than written (from the chapter preparation)
+	SpokenAs *[]SpokenForm `json:"spokenAs,omitempty"`
+	Text     string        `json:"text"`
 }
 
 // SegmentKind thought - a character's thought (italics or single marks); attributed like a quote
 type SegmentKind string
+
+// SpokenForm defines model for SpokenForm.
+type SpokenForm struct {
+	End int `json:"end"`
+
+	// Say How the characters [start, end) of the text are read aloud
+	Say   string `json:"say"`
+	Start int    `json:"start"`
+}
 
 // SystemInfo defines model for SystemInfo.
 type SystemInfo struct {
@@ -1609,6 +1753,9 @@ type UpdateChapterJSONRequestBody = ChapterUpdate
 // StartAttributionJSONRequestBody defines body for StartAttribution for application/json ContentType.
 type StartAttributionJSONRequestBody = AttributionStart
 
+// StartPreparationJSONRequestBody defines body for StartPreparation for application/json ContentType.
+type StartPreparationJSONRequestBody = PreparationStart
+
 // UpdateQuoteJSONRequestBody defines body for UpdateQuote for application/json ContentType.
 type UpdateQuoteJSONRequestBody = QuoteUpdate
 
@@ -1731,6 +1878,9 @@ type ServerInterface interface {
 	// MergeChapterWithNext Append the following chapter to this one
 	// (POST /chapters/{chapterId}/merge-next)
 	MergeChapterWithNext(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
+	// StartPreparation Prepare the chapter for reading aloud
+	// (POST /chapters/{chapterId}/preparation)
+	StartPreparation(w http.ResponseWriter, r *http.Request, chapterId ChapterId)
 	// UpdateQuote Choose the speaker or emotion of a quotation
 	// (PATCH /chapters/{chapterId}/quotes/{quoteRef})
 	UpdateQuote(w http.ResponseWriter, r *http.Request, chapterId ChapterId, quoteRef int)
@@ -2742,6 +2892,32 @@ func (siw *ServerInterfaceWrapper) MergeChapterWithNext(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// StartPreparation operation middleware
+func (siw *ServerInterfaceWrapper) StartPreparation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chapterId" -------------
+	var chapterId ChapterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chapterId", r.PathValue("chapterId"), &chapterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chapterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartPreparation(w, r, chapterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // UpdateQuote operation middleware
 func (siw *ServerInterfaceWrapper) UpdateQuote(w http.ResponseWriter, r *http.Request) {
 
@@ -3565,6 +3741,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/progress", wrapper.GetProgress)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/books/{bookId}/progress", wrapper.SaveProgress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/attribution", wrapper.StartAttribution)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/preparation", wrapper.StartPreparation)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/chapters/{chapterId}/quotes/{quoteRef}", wrapper.UpdateQuote)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/chapters/{chapterId}/render", wrapper.RenderChapter)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/chapters/{chapterId}/audio", wrapper.GetChapterAudio)
@@ -5375,6 +5552,74 @@ func (response MergeChapterWithNextdefaultJSONResponse) VisitMergeChapterWithNex
 	return err
 }
 
+type StartPreparationRequestObject struct {
+	ChapterId ChapterId `json:"chapterId"`
+	Body      *StartPreparationJSONRequestBody
+}
+
+type StartPreparationResponseObject interface {
+	VisitStartPreparationResponse(w http.ResponseWriter) error
+}
+
+type StartPreparation202JSONResponse ChapterPreparation
+
+func (response StartPreparation202JSONResponse) VisitStartPreparationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartPreparation404JSONResponse struct{ ErrorJSONResponse }
+
+func (response StartPreparation404JSONResponse) VisitStartPreparationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartPreparation409JSONResponse Error
+
+func (response StartPreparation409JSONResponse) VisitStartPreparationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartPreparationdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response StartPreparationdefaultJSONResponse) VisitStartPreparationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type UpdateQuoteRequestObject struct {
 	ChapterId ChapterId `json:"chapterId"`
 	QuoteRef  int       `json:"quoteRef"`
@@ -7098,6 +7343,9 @@ type StrictServerInterface interface {
 	// MergeChapterWithNext Append the following chapter to this one
 	// (POST /chapters/{chapterId}/merge-next)
 	MergeChapterWithNext(ctx context.Context, request MergeChapterWithNextRequestObject) (MergeChapterWithNextResponseObject, error)
+	// StartPreparation Prepare the chapter for reading aloud
+	// (POST /chapters/{chapterId}/preparation)
+	StartPreparation(ctx context.Context, request StartPreparationRequestObject) (StartPreparationResponseObject, error)
 	// UpdateQuote Choose the speaker or emotion of a quotation
 	// (PATCH /chapters/{chapterId}/quotes/{quoteRef})
 	UpdateQuote(ctx context.Context, request UpdateQuoteRequestObject) (UpdateQuoteResponseObject, error)
@@ -8049,6 +8297,42 @@ func (sh *strictHandler) MergeChapterWithNext(w http.ResponseWriter, r *http.Req
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(MergeChapterWithNextResponseObject); ok {
 		if err := validResponse.VisitMergeChapterWithNextResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartPreparation operation middleware
+func (sh *strictHandler) StartPreparation(w http.ResponseWriter, r *http.Request, chapterId ChapterId) {
+	var request StartPreparationRequestObject
+
+	request.ChapterId = chapterId
+
+	var body StartPreparationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartPreparation(ctx, request.(StartPreparationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartPreparation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartPreparationResponseObject); ok {
+		if err := validResponse.VisitStartPreparationResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

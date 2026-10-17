@@ -17,6 +17,7 @@ export type BookPage = components['schemas']['BookPage'];
 export type Chapter = components['schemas']['Chapter'];
 export type ChapterAttribution = components['schemas']['ChapterAttribution'];
 export type ChapterDetail = components['schemas']['ChapterDetail'];
+export type ChapterPreparation = components['schemas']['ChapterPreparation'];
 export type ChapterTimings = components['schemas']['ChapterTimings'];
 export type Cue = components['schemas']['Cue'];
 export type ChapterUpdate = components['schemas']['ChapterUpdate'];
@@ -31,6 +32,7 @@ export type Me = components['schemas']['Me'];
 export type LexiconEntry = components['schemas']['LexiconEntry'];
 export type LexiconEntryInput = components['schemas']['LexiconEntryInput'];
 export type LexiconEntryUpdate = components['schemas']['LexiconEntryUpdate'];
+export type LexiconStatus = components['schemas']['LexiconStatus'];
 export type LLMProvider = components['schemas']['LLMProvider'];
 export type LLMProviderInput = components['schemas']['LLMProviderInput'];
 export type LLMProviderUpdate = components['schemas']['LLMProviderUpdate'];
@@ -460,6 +462,14 @@ export const startAnalysis = (bookId: number, restart = false) =>
 export const startAttribution = (chapterId: number, force = false) =>
   unwrap(
     api.POST('/chapters/{chapterId}/attribution', {
+      params: { path: { chapterId } },
+      body: { force },
+    }),
+  );
+
+export const startPreparation = (chapterId: number, force = false) =>
+  unwrap(
+    api.POST('/chapters/{chapterId}/preparation', {
       params: { path: { chapterId } },
       body: { force },
     }),

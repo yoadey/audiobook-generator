@@ -12,7 +12,8 @@ answers the app's provider test prompt correctly, the character analysis
 with everyone who "said" something, merge checks with "different", voice
 casting with the first offered voice for everyone (code then makes the
 voices distinct), speaker attribution by the "said Name" of the quote's
-paragraph, and anything else with "{}". When FAKE_LLM_KEY is set, requests
+paragraph, chapter preparation with a pause after "said Anna." and a
+pronunciation for Anna, and anything else with "{}". When FAKE_LLM_KEY is set, requests
 must carry it as bearer token.
 """
 
@@ -93,6 +94,16 @@ def attribute(text: str) -> str:
     return json.dumps({"quotes": quotes})
 
 
+def prepare(text: str) -> str:
+    """Chapter preparation: a pause after "said Anna.", a respelling of Anna."""
+    out = {"moods": [], "pauses": [], "spoken": [], "pronunciations": []}
+    for n, para in re.findall(r"^\[p(\d+)\] (.*)$", text, flags=re.M):
+        if "said Anna." in para:
+            out["pauses"].append({"p": int(n), "after": "said Anna.", "length": "long"})
+            out["pronunciations"] = [{"term": "Anna", "say": "ah-nah", "note": "fake"}]
+    return json.dumps(out)
+
+
 def chat_answer(req: dict) -> str:
     """Answers the app's prompts (see the module docstring)."""
     for m in reversed(req.get("messages", [])):
@@ -107,6 +118,8 @@ def chat_answer(req: dict) -> str:
             return cast(text)
         if "Quotations to attribute" in text:
             return attribute(text)
+        if "Paragraphs to prepare" in text:
+            return prepare(text)
         if "Chapters (" in text:
             return analyse(text)
     return "{}"

@@ -37,6 +37,7 @@ func (s *Server) toChapter(b *store.Book, c *store.Chapter, rendering bool) Chap
 
 		AttributionStatus: AttributionStatus(cmp.Or(c.AttributionStatus, store.AttributionNone)),
 		AttributionError:  nonEmpty(c.AttributionError),
+		PrepStatus:        PrepStatus(cmp.Or(c.PrepStatus, store.PrepNone)),
 	}
 	if c.Narration != "" {
 		n := Narration(c.Narration)
@@ -179,6 +180,21 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 			}
 			seg.Emphasis = &emph
 		}
+		n := utf8.RuneCountInString(sg.Text)
+		if ps := store.DecodePauses(sg.Pauses, n); len(ps) > 0 {
+			pauses := make([][]int, len(ps))
+			for i, p := range ps {
+				pauses[i] = []int{p.Offset, p.Ms}
+			}
+			seg.Pauses = &pauses
+		}
+		if fs := store.DecodeSpokenAs(sg.SpokenAs, n); len(fs) > 0 {
+			forms := make([]SpokenForm, len(fs))
+			for i, f := range fs {
+				forms[i] = SpokenForm{Start: f.Start, End: f.End, Say: f.Say}
+			}
+			seg.SpokenAs = &forms
+		}
 		if id := sg.SpeakerCharacterID; id != nil && !seen[*id] {
 			seen[*id] = true
 			speakerIDs = append(speakerIDs, *id)
@@ -197,8 +213,14 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		AudioStale: ch.AudioStale, AudioRerendering: ch.AudioRerendering, AudioVersion: ch.AudioVersion,
 		Narration:      ch.Narration,
 		PovCharacterId: ch.PovCharacterId, AttributionStatus: ch.AttributionStatus, AttributionError: ch.AttributionError,
+		PrepStatus: ch.PrepStatus,
 		Paragraphs: make([]Paragraph, 0, len(paras)),
 	}
+	prep, err := s.toPreparation(ctx, c)
+	if err != nil {
+		return ChapterDetail{}, err
+	}
+	out.Preparation = &prep
 	att, err := s.toAttribution(ctx, c)
 	if err != nil {
 		return ChapterDetail{}, err
@@ -233,9 +255,11 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		if ss == nil {
 			ss = []Segment{}
 		}
-		out.Paragraphs = append(out.Paragraphs, Paragraph{
-			Id: p.ID, Idx: p.Idx, Kind: ParagraphKind(p.Kind), Text: p.Text, Segments: ss,
-		})
+		para := Paragraph{Id: p.ID, Idx: p.Idx, Kind: ParagraphKind(p.Kind), Text: p.Text, Segments: ss}
+		if m := Mood(p.Mood); m.Valid() {
+			para.Mood = &m
+		}
+		out.Paragraphs = append(out.Paragraphs, para)
 	}
 	return out, nil
 }

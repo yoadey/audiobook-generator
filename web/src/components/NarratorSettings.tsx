@@ -7,6 +7,7 @@ import {
   Select,
   Slider,
   Stack,
+  Switch,
   Text,
   Textarea,
   TextInput,
@@ -29,6 +30,7 @@ export function NarratorSettings({ book }: { book: Book }) {
   const [speed, setSpeed] = useState(book.narratorSpeed);
   const [lookahead, setLookahead] = useState<number | string>(book.lookahead);
   const [sampleText, setSampleText] = useState(book.previewText);
+  const [prepare, setPrepare] = useState(book.prepareChapters);
   const settings = useQuery(settingsQuery);
   const [playing, setPlaying] = useState(false);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -52,6 +54,7 @@ export function NarratorSettings({ book }: { book: Book }) {
         narratorSpeed: speed,
         lookahead: Number(lookahead) || 0,
         previewText: sampleText,
+        prepareChapters: prepare,
       }),
     onSuccess: () => {
       notifySuccess('Narrator settings saved');
@@ -79,7 +82,8 @@ export function NarratorSettings({ book }: { book: Book }) {
     voice !== book.narratorVoice ||
     speed !== book.narratorSpeed ||
     Number(lookahead) !== book.lookahead ||
-    sampleText.trim() !== book.previewText;
+    sampleText.trim() !== book.previewText ||
+    prepare !== book.prepareChapters;
 
   return (
     <Card withBorder>
@@ -158,14 +162,21 @@ export function NarratorSettings({ book }: { book: Book }) {
           minRows={1}
           maw={720}
         />
+        <Switch
+          label="Prepare chapters with AI"
+          description="Before a chapter is rendered, the LLM marks the mood of the narration, dramatic pauses and spots the voice would misread, and suggests pronunciations for the lexicon. The text itself is never changed; this uses LLM quota like the speaker attribution."
+          checked={prepare}
+          onChange={(e) => setPrepare(e.currentTarget.checked)}
+          maw={720}
+        />
         <Group>
           <Button onClick={() => save.mutate()} disabled={!dirty} loading={save.isPending}>
             Save
           </Button>
         </Group>
         <Text size="xs" c="dimmed">
-          Changing the voice or speed marks existing audio as outdated; chapters in the lookahead
-          window are rendered again automatically while you listen.
+          Changing the voice, speed or preparation marks existing audio as outdated; chapters in the
+          lookahead window are rendered again automatically while you listen.
         </Text>
       </Stack>
     </Card>

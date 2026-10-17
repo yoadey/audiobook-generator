@@ -341,6 +341,38 @@ As implemented in M6 (`internal/attribution`):
   clipping; whispering much softer); thoughts are a little softer than
   speech. Changing an emotion by hand bumps the voice revision.
 
+### 3.6a Chapter preparation (per chapter, just in time, optional)
+
+A book can ask for its chapters to be prepared for reading aloud
+(`prepareChapters`, off by default because it spends LLM quota). Like the
+attribution, a render waits for it (queued if missing) unless the job
+cannot run soon; it needs no character analysis. The LLM gets the chapter
+with numbered paragraphs (`[pN]`, long chapters in parts, each stored with
+its answer so a stopped job resumes) and returns labels only
+(`prepare_chapter` prompt):
+
+- **moods** of narration per paragraph (calm, tense, action, somber, warm,
+  light, mysterious) → the narrator's pace and loudness in that paragraph
+  (subtle, e.g. tense 1.04×, somber 0.94× and softer);
+- **dramatic pauses**, anchored by the 3–8 words before them, which must be
+  found in the paragraph and end a sentence or clause (short 0.5 s, long
+  1 s; at most one per paragraph and a handful per chapter); a pause
+  inside a segment splits it into phrases;
+- **spoken forms** for spots a TTS misreads ("Lv. 5" → "level five", status
+  screens, units, symbols): the spot must occur verbatim within one
+  segment, be short, not be ordinary lower-case prose, and the spoken form
+  plain words (Kokoro syntax is removed);
+- **pronunciations** of invented names as respellings, stored in the book's
+  lexicon as *suggestions* (applied only once accepted; dismissed ones are
+  not suggested again); the terms must occur in the text.
+
+All of it applies to the TTS input only: the book text, the reader and
+the transcripts stay as written, and word timings skip the replaced spots.
+Applying a part bumps the voice revision; turning the option on or off
+outdates the book's audio, and the render ignores preparations while it
+is off. "Prepare again" discards a chapter's moods, pauses and spoken
+forms (the lexicon keeps its entries).
+
 ### 3.7 Rendering and assembly
 
 - Every segment → `POST /dev/captioned_speech` (recipe, speed, PCM, word
@@ -701,8 +733,8 @@ Every milestone ends with an installable chart.
 | **M5** | Casting + voice catalogue + voice editor + previews | every main character has a recipe |
 | **M6** | Speaker attribution + multi-voice rendering + chapter editor | **A multi-voice audiobook** |
 | **M7** | Pronunciation lexicon, podcast RSS, OIDC, metrics/ServiceMonitor, Litestream, export/import, M4B per volume | feature-complete v1.0 |
-| **M8** | Reading along: segment timings recorded while rendering, a reader (page scrolling, sticky player bar, sentence marking) that follows the voice and shares its position with the player, WebVTT transcripts per sentence in the podcast feed; more quotation styles (single, guillemets, low-high, dash dialogue), italics kept and italic/single-quoted thoughts attributed and voiced; spoken-text cleanup; custom sample texts for voice previews (instance, book, character) | read and listen at once |
-| **M9** (optional) | segment cache, emotions/thoughts, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
+| **M8** | Reading along: segment timings recorded while rendering, a reader (page scrolling, sticky player bar, sentence marking) that follows the voice and shares its position with the player, WebVTT transcripts per sentence in the podcast feed; more quotation styles (single, guillemets, low-high, dash dialogue), italics kept and italic/single-quoted thoughts attributed and voiced; spoken-text cleanup; custom sample texts for voice previews (instance, book, character); expression: emotions as pace and loudness, pauses by context, word timings from Kokoro (word marking in the reader, WebVTT lines by word), optional LLM chapter preparation (moods, dramatic pauses, spoken forms, pronunciation suggestions) | read and listen at once |
+| **M9** (optional) | segment cache, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
 
 Integration into the cluster repo (`HelmRelease`, Zitadel client via
 Terraform, secrets via SOPS, Garage bucket for Litestream or a CNPG

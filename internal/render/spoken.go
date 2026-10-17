@@ -85,7 +85,7 @@ func romans(s string) string {
 		name, num := s[m[2]:m[3]], s[m[4]:m[5]]
 		n := roman(num)
 		lone := len(num) == 1
-		if n == 0 || lone && !strings.Contains("IVX", num) || lone && !afterLoneRe.MatchString(s[m[1]:]) {
+		if n == 0 || lone && num != "I" && num != "V" && num != "X" || lone && !afterLoneRe.MatchString(s[m[1]:]) {
 			continue
 		}
 		b.WriteString(s[at:m[0]])
@@ -147,7 +147,7 @@ func shout(m string) string {
 	}
 	excl := strings.HasSuffix(m, "!")
 	switch {
-	case len(words) == 1 && !(excl && len([]rune(words[0])) >= 4):
+	case len(words) == 1 && (!excl || len([]rune(words[0])) < 4):
 		return m
 	case len(words) > 1 && !excl && n < 2:
 		return m

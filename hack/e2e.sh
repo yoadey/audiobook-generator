@@ -164,6 +164,23 @@ grep -q '"audioStatus":"ready"' <<<"$detail"
 grep -q '"audioRerendering":false' <<<"$detail"
 if grep -q '"audioError"' <<<"$detail"; then exit 1; fi
 
+# With chapter preparation, a render waits for it: a pause and a
+# pronunciation suggestion (not applied until accepted).
+curl -fsS -X PATCH -H 'Content-Type: application/json' -d '{"prepareChapters":true}' \
+  "localhost:18080/api/books/$id" | grep -q '"prepareChapters":true'
+curl -fsS -X POST "localhost:18080/api/chapters/$chapter/render?force=true" >/dev/null
+for _ in $(seq 1 90); do
+  detail="$(curl -fsS "localhost:18080/api/chapters/$chapter")"
+  grep -q '"prepStatus":"done"' <<<"$detail" && grep -q '"audioStatus":"ready"' <<<"$detail" &&
+    grep -q '"audioRerendering":false' <<<"$detail" && ! grep -q '"audioStale":true' <<<"$detail" && break
+  sleep 1
+done
+grep -q '"prepStatus":"done"' <<<"$detail" || { echo "$detail" | head -c 2000; exit 1; }
+grep -q '"pauses":\[\[' <<<"$detail"
+lexicon="$(curl -fsS "localhost:18080/api/books/$id/lexicon")"
+echo "$lexicon"
+grep -q '"status":"suggested"' <<<"$lexicon"
+
 # Podcast feed: works without a session and lists the rendered chapters.
 feed="$(curl -fsS "localhost:18080/api/books/$id" |
   python3 -c 'import sys, json; print(json.load(sys.stdin)["feedPath"])')"
