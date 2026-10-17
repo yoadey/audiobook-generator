@@ -1,10 +1,34 @@
-# Speech engines besides Kokoro
+# Speech engines
 
-Kokoro (82M, CPU) narrates everything by default. It is fast and clear but
-cannot act: emotions are given by pace and loudness, moods and pauses by
-the text (see `PLAN.md` §3.6a, §3.7). Additional engines can be configured
-for voices that should really act, typically a few main characters, while
-Kokoro keeps the narration (most of a book).
+Kokoro (82M, CPU) is fast and clear but cannot act: emotions are given by
+pace and loudness, moods and pauses by the text (see `PLAN.md` §3.6a,
+§3.7). Other engines, such as Chatterbox, can be configured beside it or
+instead of it.
+
+## Which engine a book speaks with
+
+- The deployment decides which engines exist: Kokoro (the chart's or an
+  external one; `ABG_TTS_KOKORO=false` without), the chart's Chatterbox,
+  further engines (`tts.engines`), in any combination with at least one.
+- A book speaks with the engine of its narrator. The book page
+  (*Narrator*) offers each engine of the deployment; switching starts from
+  the engine's default voice, and saving casts the characters again from
+  that engine's voices (voices you chose for characters stay).
+- New books speak with the default engine: that of `ABG_TTS_DEFAULT_VOICE`
+  (chart `tts.defaultVoice`). Without Kokoro, a Kokoro voice there stands
+  for the first engine's default voice (`defaultVoice` of the engine, for
+  Chatterbox `Emily.wav`), so a Chatterbox-only deployment needs no other
+  setting.
+- Casting with another engine gives each main character a voice of its
+  own (engines' voices do not blend and keep their own pace), avoiding the
+  narrator's; once every voice is taken, the least used one is shared.
+  Minor characters get a voice of their gender by hash, as with Kokoro.
+  A voice's gender comes from Chatterbox-TTS-Server's known predefined
+  voices (by name) or a tag in a clip's file name (`f_anna.wav`,
+  `old-man.wav`, `female`, `male`); voices of unknown gender are used
+  only when chosen by hand.
+- A character voice whose engine is no longer configured is replaced by
+  a pool voice when rendering.
 
 ## How engines are used
 
@@ -14,9 +38,9 @@ Kokoro keeps the narration (most of a book).
 - *Voices* lists each engine with its voices and previews them (with an
   emotion if the engine speaks emotions itself); *System* shows whether
   each engine is reachable.
-- The voice editor of a character offers *Kokoro* or each engine. The
-  narrator's voice (book page, *Narrator*) offers the engines' voices too,
-  though narrating a whole book with a slow engine is rarely sensible.
+- The voice editor of a character offers *Kokoro* (when deployed) or
+  each engine. A slow engine narrating a whole book takes long without a
+  GPU (see below).
 - A voice whose engine is not configured is refused when saved; lines of
   such a voice (left from an earlier configuration) fail to render with a
   clear message.
@@ -60,6 +84,7 @@ and `tts.chatterbox`):
 | `gain` | Loudness factor (default 1; never clips) |
 | `speed` | Whether it takes a voice's speed (default: `openai` yes, `chatterbox` no) |
 | `voices` | Voices to offer in addition to those the server lists |
+| `defaultVoice` | Narrator when a book switches to this engine (default: Chatterbox `Emily.wav`, else the first of `voices`) |
 
 Voices are listed from the server: Chatterbox-TTS-Server's predefined
 voices (`/get_predefined_voices`) and reference clips

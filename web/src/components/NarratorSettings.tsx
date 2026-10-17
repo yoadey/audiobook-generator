@@ -4,6 +4,7 @@ import {
   Card,
   Group,
   NumberInput,
+  SegmentedControl,
   Select,
   Slider,
   Stack,
@@ -21,6 +22,7 @@ import {
   type Book,
   previewVoice,
   settingsQuery,
+  systemInfoQuery,
   ttsEnginesQuery,
   updateBook,
   voicesQuery,
@@ -29,6 +31,9 @@ import { splitEngineVoice } from '../lib/recipe';
 import { notifyError, notifySuccess } from '../lib/notify';
 
 const accents: Record<string, string> = { 'en-US': 'American', 'en-GB': 'British' };
+
+/** The engine name of Kokoro's voices (as the API reports a book's engine). */
+const KOKORO = 'kokoro';
 
 /** Narrator voice, synthesis speed and lookahead of a book. */
 export function NarratorSettings({ book }: { book: Book }) {
@@ -53,19 +58,44 @@ export function NarratorSettings({ book }: { book: Book }) {
         label: `${v.id} · ${v.gender}${v.grade ? ` · grade ${v.grade}` : ''}${v.traits ? ` · ${v.traits}` : ''}`,
       })),
   }));
-  // Voices of other engines ("chatterbox:Emily.wav"), one group each.
+  // The book speaks with the engine of its narrator: Kokoro (when this
+  // deployment has it) or another engine ("chatterbox:Emily.wav").
+  const system = useQuery(systemInfoQuery);
   const engines = useQuery(ttsEnginesQuery);
-  for (const e of engines.data ?? []) {
-    groups.push({
-      group: `${e.name}${e.variant ? ` (${e.variant})` : ''}`,
-      items: e.voices.map((v) => ({ value: `${e.name}:${v}`, label: `${e.name}:${v}` })),
-    });
-  }
+  const kokoro = system.data?.tts.configured ?? true;
   const engineVoice = splitEngineVoice(voice);
-  const engineInfo = engines.data?.find((e) => e.name === engineVoice?.engine);
-  const isMix =
-    !english.some((v) => v.id === voice) &&
-    !(engineVoice && engineInfo?.voices.includes(engineVoice.voice));
+  const engine = engineVoice?.engine ?? KOKORO;
+  const engineInfo = engines.data?.find((e) => e.name === engine);
+  const engineChoices = [
+    ...(kokoro || engine === KOKORO ? [{ value: KOKORO, label: 'Kokoro' }] : []),
+    ...(engines.data ?? []).map((e) => ({
+      value: e.name,
+      label: `${e.name}${e.variant ? ` (${e.variant})` : ''}`,
+    })),
+  ];
+  if (engine !== KOKORO && !engineInfo) {
+    engineChoices.push({ value: engine, label: `${engine} (not configured)` });
+  }
+  const options =
+    engine === KOKORO
+      ? groups
+      : [...new Set([...(engineInfo?.voices ?? []), engineVoice?.voice ?? ''])]
+          .filter(Boolean)
+          .map((v) => ({ value: `${engine}:${v}`, label: v }));
+  const isMix = engine === KOKORO && !english.some((v) => v.id === voice);
+  // Changing the engine starts from its default voice.
+  const switchEngine = (next: string) => {
+    if (next === engine) {
+      return;
+    }
+    if (next === KOKORO) {
+      const def = system.data?.tts.defaultVoice ?? '';
+      setVoice(splitEngineVoice(def) ? (english[0]?.id ?? 'af_heart') : def || 'af_heart');
+      return;
+    }
+    const info = engines.data?.find((e) => e.name === next);
+    setVoice(info?.defaultVoice ?? (info?.voices[0] ? `${next}:${info.voices[0]}` : ''));
+  };
 
   const save = useMutation({
     mutationFn: () =>
@@ -109,11 +139,32 @@ export function NarratorSettings({ book }: { book: Book }) {
     <Card withBorder>
       <Stack gap="sm">
         <Text fw={600}>Narrator</Text>
+        {engineChoices.length > 1 && (
+          <Stack gap={4}>
+            <Text size="sm" fw={500}>
+              Engine
+            </Text>
+            <SegmentedControl
+              w="fit-content"
+              value={engine}
+              onChange={switchEngine}
+              data={engineChoices}
+              aria-label="Engine"
+            />
+            {engine !== book.engine && (
+              <Text size="xs" c="dimmed">
+                Saving switches the book to {engine === KOKORO ? 'Kokoro' : engine}: the narrator
+                and the characters cast automatically speak with its voices (the casting runs
+                again); voices you chose for characters stay.
+              </Text>
+            )}
+          </Stack>
+        )}
         <Group align="flex-end" wrap="wrap">
           {isMix ? (
             <TextInput
               label="Voice (mix)"
-              description="e.g. bf_emma(2)+af_bella(1) or chatterbox:Emily.wav"
+              description="e.g. bf_emma(2)+af_bella(1)"
               value={voice}
               onChange={(e) => setVoice(e.currentTarget.value)}
               w={300}
@@ -121,13 +172,19 @@ export function NarratorSettings({ book }: { book: Book }) {
           ) : (
             <Select
               label="Voice"
-              data={groups}
-              value={voice}
+              data={options}
+              value={voice || null}
               onChange={(v) => v && setVoice(v)}
               searchable
               w={300}
-              disabled={voices.isError}
-              placeholder={voices.isError ? 'TTS server unreachable' : undefined}
+              disabled={engine === KOKORO && voices.isError}
+              placeholder={
+                engine === KOKORO && voices.isError
+                  ? 'TTS server unreachable'
+                  : engineInfo?.error
+                    ? `${engine} unreachable`
+                    : undefined
+              }
             />
           )}
           <Tooltip label={playing ? 'Stop' : 'Listen to a sample'}>
@@ -173,11 +230,9 @@ export function NarratorSettings({ book }: { book: Book }) {
         </Group>
         {engineVoice && (
           <Text size="xs" c="dimmed">
-            The narrator speaks with {engineVoice.engine}
-            {engineInfo?.variant ? ` (${engineInfo.variant})` : ''}, which reads most of the book:
-            much slower than Kokoro without a GPU.
-            {engineInfo && !engineInfo.speed && ' It paces itself (the speed is not applied).'}
-            {!engineInfo && ' This engine is not configured.'}
+            {engineInfo
+              ? `${engine}${engineInfo.variant ? ` (${engineInfo.variant})` : ''} reads most of the book: without a GPU it is much slower than Kokoro.${engineInfo.speed ? '' : ' It paces itself (the speed is not applied).'}`
+              : `The engine ${engine} is not configured: chapters cannot be rendered with this voice.`}
           </Text>
         )}
         <Textarea

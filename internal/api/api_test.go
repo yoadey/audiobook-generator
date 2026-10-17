@@ -60,6 +60,13 @@ func (fakeTTS) Configured(voice string) bool {
 	return !ok || engine == "cb"
 }
 
+func (fakeTTS) EngineVoices(_ context.Context, engine string) ([]string, error) {
+	if engine != "cb" {
+		return nil, tts.ErrUnknownEngine
+	}
+	return []string{"Emily.wav", "Adrian.wav"}, nil
+}
+
 func (fakeTTS) Engines(context.Context) []tts.Engine {
 	return []tts.Engine{{Name: "cb", Kind: tts.KindChatterbox, Emotions: true, Voices: []string{"Emily.wav"}}}
 }
@@ -125,6 +132,7 @@ func newAPI(t *testing.T, s *store.Store, maxUpload int64) client {
 	runner.Handle(transfer.JobType, (&transfer.Restorer{Store: s, DataDir: dir, Log: log}).Handler())
 	pool := llm.NewPool(s, nil, log)
 	voices := casting.NewCatalog(fakeTTS{})
+	voices.Engines = fakeTTS{}
 	attributor := &attribution.Attributor{Store: s, LLM: pool, Jobs: runner, Log: log}
 	preparer := &prepare.Preparer{Store: s, LLM: pool, Jobs: runner, Log: log}
 	runner.Handle(attribution.JobType, attributor.Handler())

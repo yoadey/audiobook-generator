@@ -195,3 +195,54 @@ func TestEngineVoices(t *testing.T) {
 			map[string]any{"narratorVoice": "orpheus:tara"}, nil))
 	})
 }
+
+func TestBookEngine(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		c := newAPI(t, s, 10<<20)
+		var info api.SystemInfo
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/system", nil, &info))
+		assert.True(t, info.Tts.Configured)
+		assert.Equal(t, "af_heart", info.Tts.DefaultVoice)
+
+		data, err := epubtest.Sample()
+		require.NoError(t, err)
+		var book api.Book
+		require.Equal(t, http.StatusAccepted, c.upload("sample.epub", data, &book))
+		book = waitImported(t, c, book.Id)
+		assert.Equal(t, "kokoro", book.Engine)
+		require.NoError(t, s.UpdateBook(ctx, book.Id, map[string]any{"AnalysisStatus": store.AnalysisDone}))
+		cast := &store.Character{BookID: book.Id, Name: "Anna", Gender: store.GenderFemale, Speaks: true,
+			Tier: store.TierMain, VoiceRecipe: "af_bella"}
+		chosen := &store.Character{BookID: book.Id, Name: "Tom", Gender: store.GenderMale, Speaks: true,
+			Tier: store.TierMain, VoiceRecipe: "bm_george", VoiceManual: true}
+		require.NoError(t, s.CreateCharacter(ctx, cast))
+		require.NoError(t, s.CreateCharacter(ctx, chosen))
+
+		// Another engine for the book: the cast voices go, the casting
+		// runs again (from that engine's voices); chosen ones stay.
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/books/"+itoa(book.Id),
+			map[string]any{"narratorVoice": "cb:Emily.wav"}, &book))
+		assert.Equal(t, "cb", book.Engine)
+		assert.Contains(t, []api.CastingStatus{api.CastingStatusQueued, api.CastingStatusRunning,
+			api.CastingStatusDone, api.CastingStatusFailed}, book.CastingStatus)
+		got, err := s.GetCharacters(ctx, cast.ID, chosen.ID)
+		require.NoError(t, err)
+		for _, ch := range got {
+			if ch.ID == chosen.ID {
+				assert.Equal(t, "bm_george", ch.VoiceRecipe)
+			} else {
+				assert.NotEqual(t, "af_bella", ch.VoiceRecipe, "recast")
+			}
+		}
+
+		// The same engine again: nothing is recast.
+		require.NoError(t, s.DB().Model(&store.Character{}).Where("id = ?", cast.ID).
+			Update("voice_recipe", "cb:Adrian.wav").Error)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/books/"+itoa(book.Id),
+			map[string]any{"narratorVoice": "cb:Adrian.wav"}, &book))
+		got, err = s.GetCharacters(ctx, cast.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "cb:Adrian.wav", got[0].VoiceRecipe)
+	})
+}

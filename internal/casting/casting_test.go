@@ -542,3 +542,65 @@ func TestQuotes(t *testing.T) {
 		assert.False(t, re.MatchString("“Hi,” Rémile said."))
 	})
 }
+
+type engineVoices map[string][]string
+
+func (e engineVoices) EngineVoices(_ context.Context, engine string) ([]string, error) {
+	vs, ok := e[engine]
+	if !ok {
+		return nil, errors.New("unknown engine")
+	}
+	return vs, nil
+}
+
+func TestEngineCatalog(t *testing.T) {
+	c := NewCatalog(&fakeVoices{ids: []string{"af_heart"}})
+	c.Engines = engineVoices{"cb": {"Emily.wav", "Adrian.wav", "Taylor.wav", "f_anna.wav", "old-man-wizard.wav"}}
+	ctx := context.Background()
+	vs, err := c.VoicesFor(ctx, "cb:Emily.wav")
+	require.NoError(t, err)
+	genders := map[string]store.Gender{}
+	for _, v := range vs {
+		genders[v.ID] = v.Gender
+	}
+	assert.Equal(t, map[string]store.Gender{
+		"cb:Emily.wav": store.GenderFemale, "cb:Adrian.wav": store.GenderMale,
+		"cb:Taylor.wav": store.GenderUnknown, "cb:f_anna.wav": store.GenderFemale,
+		"cb:old-man-wizard.wav": store.GenderMale,
+	}, genders)
+	assert.Len(t, Castable(vs), 4, "a voice of unknown gender is only chosen by hand")
+	kokoro, err := c.VoicesFor(ctx, "bf_emma(0.7)+af_bella(0.3)")
+	require.NoError(t, err)
+	assert.Equal(t, "af_heart", Castable(kokoro)[0].ID)
+	_, err = c.VoicesFor(ctx, "orpheus:tara")
+	assert.Error(t, err)
+}
+
+func TestChooseEngineVoices(t *testing.T) {
+	c := NewCatalog(nil)
+	c.Engines = engineVoices{"cb": {"Emily.wav", "Alice.wav", "Cora.wav", "Adrian.wav"}}
+	all, err := c.VoicesFor(context.Background(), "cb:Emily.wav")
+	require.NoError(t, err)
+	vs := Castable(all)
+	narrator, _ := ParseRecipe("cb:Emily.wav")
+	woman := func(id int64) *store.Character {
+		return &store.Character{ID: id, Name: "w", Gender: store.GenderFemale, AgeGroup: store.AgeChild}
+	}
+	// A proposal of a blend keeps its first voice; speed stays 1 (the
+	// engine paces itself).
+	r, speed, _ := choose(vs, woman(1), prop(1.2, "cb:Alice.wav", 0.6, "cb:Cora.wav", 0.4), narrator, 1, nil)
+	assert.Equal(t, "cb:Alice.wav", r.String())
+	assert.InDelta(t, 1.0, speed, 1e-9)
+
+	// Distinct single voices while they last (never the narrator's), then
+	// the least used one.
+	var used []taken
+	counts := map[string]int{}
+	for i := range 6 {
+		r, speed, _ := choose(vs, woman(int64(i+2)), nil, narrator, 1, used)
+		require.Len(t, r, 1)
+		counts[r.String()]++
+		used = append(used, taken{"w", r, speed})
+	}
+	assert.Equal(t, map[string]int{"cb:Alice.wav": 3, "cb:Cora.wav": 3}, counts)
+}

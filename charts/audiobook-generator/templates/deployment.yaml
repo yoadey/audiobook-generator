@@ -106,8 +106,14 @@ spec:
               value: {{ .Values.log.level | quote }}
             - name: ABG_LOG_FORMAT
               value: {{ .Values.log.format | quote }}
+            {{- if include "abg.kokoro" . }}
             - name: ABG_TTS_URL
               value: {{ include "abg.ttsUrl" . | quote }}
+            {{- else }}
+            # No Kokoro: books speak with the other engines.
+            - name: ABG_TTS_KOKORO
+              value: "false"
+            {{- end }}
             - name: ABG_TTS_TIMEOUT
               value: {{ .Values.tts.timeout | quote }}
             - name: ABG_TTS_CONCURRENCY

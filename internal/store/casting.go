@@ -22,11 +22,20 @@ func (s *Store) TransitionCasting(ctx context.Context, bookID int64, to CastingS
 // the user did not choose.
 func (s *Store) ResetCasting(ctx context.Context, bookID int64) error {
 	return s.Tx(ctx, func(tx *Store) error {
-		db := tx.db
-		if err := db.Model(&Character{}).Where("book_id = ? AND tier_manual = ?", bookID, false).
+		if err := tx.db.Model(&Character{}).Where("book_id = ? AND tier_manual = ?", bookID, false).
 			Update("tier", TierMinor).Error; err != nil {
 			return err
 		}
+		return tx.ResetCastVoices(ctx, bookID)
+	})
+}
+
+// ResetCastVoices forgets the voices the casting chose for a book's
+// characters (not those the user chose), e.g. when the book changes to
+// another engine.
+func (s *Store) ResetCastVoices(ctx context.Context, bookID int64) error {
+	return s.Tx(ctx, func(tx *Store) error {
+		db := tx.db
 		// Chapters in which a character with a cast voice speaks get
 		// another voice for it.
 		var cast []int64

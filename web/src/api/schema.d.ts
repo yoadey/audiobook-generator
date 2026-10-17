@@ -883,7 +883,12 @@ export interface components {
       /** @description ID of the last applied migration */
       schemaVersion: string;
     };
+    /** @description Kokoro (when configured) */
     TTSInfo: {
+      /** @description Kokoro is part of this deployment */
+      configured: boolean;
+      /** @description Narrator of books without a voice of their own; its engine is the default one */
+      defaultVoice: string;
       url: string;
       reachable: boolean;
       /** @description Number of voices the TTS server offers (when reachable) */
@@ -907,8 +912,10 @@ export interface components {
       wordCount: number;
       chapterCount: number;
       hasCover: boolean;
-      /** @description Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)" */
+      /** @description Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)", or a voice of another engine ("chatterbox:Emily.wav") */
       narratorVoice: string;
+      /** @description The engine the book speaks with, that of its narrator ("kokoro" or another engine's name); its characters are cast from its voices */
+      engine: string;
       narratorSpeed: number;
       /** @description Chapters after the listening position that are kept rendered */
       lookahead: number;
@@ -1333,6 +1340,8 @@ export interface components {
       /** @description Takes a voice's speed */
       speed: boolean;
       voices: string[];
+      /** @description The voice that narrates when a book switches to this engine ("<engine>:<voice>") */
+      defaultVoice?: string;
       /** @description Why its voices could not be listed */
       error?: string;
     };

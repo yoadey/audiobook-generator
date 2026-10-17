@@ -194,14 +194,19 @@ backup:
 audioBitrate: 64k
 
 tts:
-  # Used when tts.kokoro.enabled is false, e.g. http://kokoro.tts:8880
+  # Kokoro elsewhere, used when tts.kokoro.enabled is false, e.g.
+  # http://kokoro.tts:8880. With neither, the app speaks with the other
+  # engines only (tts.chatterbox, tts.engines).
   externalUrl: ""
   # Timeout for a single synthesis request.
   timeout: 5m
   # Parallel synthesis requests while rendering a chapter; about
   # 1-2 per Kokoro replica.
   concurrency: 2
-  # Narrator of books without an own voice (see the voice list in the UI).
+  # Narrator of books without an own voice (see the voice list in the UI);
+  # its engine is the default one ("chatterbox:Emily.wav" for Chatterbox).
+  # Without Kokoro, a Kokoro voice here stands for the first engine's
+  # default voice.
   defaultVoice: af_heart
   kokoro:
     enabled: true
@@ -257,6 +262,9 @@ tts:
     enabled: false
     # Engine name, the prefix of its voices ("chatterbox:Emily.wav").
     name: chatterbox
+    # Voice that narrates when a book switches to this engine (empty:
+    # Emily.wav).
+    defaultVoice: ""
     # original (0.5B) acts emotions (exaggeration); turbo (350M) is faster
     # but ignores them; nano (110M) is the fastest, about real time on 4 CPU
     # cores, and ignores them too (it runs nanoImage).

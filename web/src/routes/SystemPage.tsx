@@ -71,21 +71,34 @@ export function SystemPage() {
               <Code>{data.database.schemaVersion}</Code>
             </Row>
           </InfoCard>
-          <InfoCard title="Text-to-speech">
-            <Row label="Status">
-              <Badge color={data.tts.reachable ? 'green' : 'red'} variant="light">
-                {data.tts.reachable ? 'reachable' : 'unreachable'}
-              </Badge>
-            </Row>
-            <Row label="URL">
-              <Code>{data.tts.url}</Code>
-            </Row>
-            {data.tts.voiceCount !== undefined && <Row label="Voices">{data.tts.voiceCount}</Row>}
-            {data.tts.error && (
-              <Text c="red" size="xs">
-                {data.tts.error}
+          <InfoCard title="Kokoro">
+            {data.tts.configured ? (
+              <>
+                <Row label="Status">
+                  <Badge color={data.tts.reachable ? 'green' : 'red'} variant="light">
+                    {data.tts.reachable ? 'reachable' : 'unreachable'}
+                  </Badge>
+                </Row>
+                <Row label="URL">
+                  <Code>{data.tts.url}</Code>
+                </Row>
+                {data.tts.voiceCount !== undefined && (
+                  <Row label="Voices">{data.tts.voiceCount}</Row>
+                )}
+                {data.tts.error && (
+                  <Text c="red" size="xs">
+                    {data.tts.error}
+                  </Text>
+                )}
+              </>
+            ) : (
+              <Text size="sm" c="dimmed">
+                Not part of this deployment.
               </Text>
             )}
+            <Row label="Default narrator">
+              <Code>{data.tts.defaultVoice}</Code>
+            </Row>
           </InfoCard>
           {(engines.data ?? []).map((e) => (
             <InfoCard key={e.name} title={`Speech engine ${e.name}`}>

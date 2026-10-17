@@ -1487,8 +1487,15 @@ components:
           description: ID of the last applied migration
     TTSInfo:
       type: object
-      required: [url, reachable]
+      description: Kokoro (when configured)
+      required: [url, reachable, configured, defaultVoice]
       properties:
+        configured:
+          type: boolean
+          description: Kokoro is part of this deployment
+        defaultVoice:
+          type: string
+          description: Narrator of books without a voice of their own; its engine is the default one
         url:
           type: string
         reachable:
@@ -1515,6 +1522,7 @@ components:
         - chapterCount
         - hasCover
         - narratorVoice
+        - engine
         - narratorSpeed
         - lookahead
         - previewText
@@ -1550,7 +1558,10 @@ components:
           type: boolean
         narratorVoice:
           type: string
-          description: Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)"
+          description: Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)", or a voice of another engine ("chatterbox:Emily.wav")
+        engine:
+          type: string
+          description: The engine the book speaks with, that of its narrator ("kokoro" or another engine's name); its characters are cast from its voices
         narratorSpeed:
           type: number
         lookahead:
@@ -2280,6 +2291,9 @@ components:
           type: array
           items:
             type: string
+        defaultVoice:
+          type: string
+          description: The voice that narrates when a book switches to this engine ("<engine>:<voice>")
         error:
           type: string
           description: Why its voices could not be listed

@@ -145,13 +145,13 @@ tests:
             name: ABG_TTS_URL
             value: http://tts.example:8880
 
-  - it: rejects a missing external TTS URL
+  - it: rejects a deployment without a speech engine
     template: templates/deployment.yaml
     set:
       tts.kokoro.enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: tts.externalUrl is required when tts.kokoro.enabled=false
+          errorMessage: "no speech engine: enable tts.kokoro, set tts.externalUrl, or configure tts.chatterbox or tts.engines"
 
   - it: rejects external Postgres without a host
     template: templates/deployment.yaml

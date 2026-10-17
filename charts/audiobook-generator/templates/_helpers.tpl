@@ -89,7 +89,11 @@ app.kubernetes.io/component: chatterbox
 {{- fail (printf "tts.engines: %q is the name of tts.chatterbox" .name) }}
 {{- end }}
 {{- end }}
-{{- $list = append $list (dict "name" $c.name "kind" "chatterbox" "url" (printf "http://%s:8004" (include "abg.chatterbox.fullname" .)) "variant" $c.variant "concurrency" (int $c.concurrency) "timeout" $c.timeout "gain" $c.gain) }}
+{{- $e := dict "name" $c.name "kind" "chatterbox" "url" (printf "http://%s:8004" (include "abg.chatterbox.fullname" .)) "variant" $c.variant "concurrency" (int $c.concurrency) "timeout" $c.timeout "gain" $c.gain }}
+{{- with $c.defaultVoice }}
+{{- $_ := set $e "defaultVoice" . }}
+{{- end }}
+{{- $list = append $list $e }}
 {{- end }}
 {{- if $list }}
 {{- toJson $list }}
@@ -164,6 +168,11 @@ app.kubernetes.io/component: chatterbox
 {{- end }}
 {{- end }}
 
+{{/* "true" when the app speaks with Kokoro (the chart's or an external one). */}}
+{{- define "abg.kokoro" -}}
+{{- if or .Values.tts.kokoro.enabled .Values.tts.externalUrl }}true{{ end }}
+{{- end }}
+
 {{/* TTS base URL. */}}
 {{- define "abg.ttsUrl" -}}
 {{- if .Values.tts.kokoro.enabled }}
@@ -230,8 +239,8 @@ true
 {{- fail (printf "publicUrl must be an http(s) URL, got %q" .) }}
 {{- end }}
 {{- end }}
-{{- if and (not .Values.tts.kokoro.enabled) (not .Values.tts.externalUrl) }}
-{{- fail "tts.externalUrl is required when tts.kokoro.enabled=false" }}
+{{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) (not .Values.tts.engines) }}
+{{- fail "no speech engine: enable tts.kokoro, set tts.externalUrl, or configure tts.chatterbox or tts.engines" }}
 {{- end }}
 {{- end }}
 

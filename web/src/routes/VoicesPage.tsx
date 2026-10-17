@@ -19,6 +19,7 @@ import { useState } from 'react';
 import {
   type Emotion,
   settingsQuery,
+  systemInfoQuery,
   type TTSEngine,
   ttsEnginesQuery,
   type Voice,
@@ -120,6 +121,8 @@ function EngineCard({
 /** The Kokoro voice catalogue: what casting chooses from, with previews. */
 export function VoicesPage() {
   const voices = useQuery(voicesQuery);
+  const system = useQuery(systemInfoQuery);
+  const kokoro = system.data?.tts.configured ?? true;
   const engines = useQuery(ttsEnginesQuery);
   const preview = usePreview();
   const settings = useQuery(settingsQuery);
@@ -147,9 +150,10 @@ export function VoicesPage() {
         />
       </Group>
       <Text size="sm" c="dimmed">
-        The English Kokoro base voices. Casting blends them into a voice per main character; minor
-        characters speak with single base voices. Grades are the quality ratings of the Kokoro model
-        card (A best).
+        A book speaks with the engine of its narrator (book page, Narrator), and its characters are
+        cast from that engine's voices. Kokoro's base voices are blended into a voice per main
+        character (grades are the quality ratings of its model card, A best); other engines give
+        each main character a voice of its own.
       </Text>
       <TextInput
         label="Sample text"
@@ -168,17 +172,22 @@ export function VoicesPage() {
           tts.chatterbox).
         </Text>
       )}
-      {voices.isPending && (
+      {!kokoro && (
+        <Text size="xs" c="dimmed">
+          Kokoro is not part of this deployment.
+        </Text>
+      )}
+      {kokoro && voices.isPending && (
         <Center py="xl">
           <Loader />
         </Center>
       )}
-      {voices.error && (
+      {kokoro && voices.error && (
         <Alert color="red" title="Could not load the voices">
           {voices.error.message}
         </Alert>
       )}
-      {voices.data && (
+      {kokoro && voices.data && (
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>

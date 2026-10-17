@@ -411,8 +411,11 @@ forms (the lexicon keeps its entries).
 
 Kokoro cannot act. Further engines are configured by name
 (`ABG_TTS_ENGINES`, chart `tts.engines` / `tts.chatterbox`) and their
-voices written `<engine>:<voice>`, chosen per character (or, through the
-API, as narrator). A router in `internal/tts` sends each piece to its
+voices written `<engine>:<voice>`; Kokoro itself is optional
+(`ABG_TTS_KOKORO=false`). A book speaks with the engine of its narrator
+(chosen per book; switching casts its characters again from that engine's
+voices, one voice each, no blends), and single characters can be given a
+voice of another engine. A router in `internal/tts` sends each piece to its
 voice's engine (bounded concurrency per engine) and converts its WAV to
 24 kHz mono PCM. An engine that speaks emotions itself (Chatterbox, model
 *original*) is given the quote's emotion, the narration's mood and
@@ -751,7 +754,7 @@ Every milestone ends with an installable chart.
 | **M5** | Casting + voice catalogue + voice editor + previews | every main character has a recipe |
 | **M6** | Speaker attribution + multi-voice rendering + chapter editor | **A multi-voice audiobook** |
 | **M7** | Pronunciation lexicon, podcast RSS, OIDC, metrics/ServiceMonitor, Litestream, export/import, M4B per volume | feature-complete v1.0 |
-| **M8** | Reading along: segment timings recorded while rendering, a reader (page scrolling, sticky player bar, sentence marking) that follows the voice and shares its position with the player, WebVTT transcripts per sentence in the podcast feed; more quotation styles (single, guillemets, low-high, dash dialogue), italics kept and italic/single-quoted thoughts attributed and voiced; spoken-text cleanup; custom sample texts for voice previews (instance, book, character); expression: emotions as pace and loudness, pauses by context, word timings from Kokoro (word marking in the reader, WebVTT lines by word), optional LLM chapter preparation (moods, dramatic pauses, spoken forms, pronunciation suggestions); further speech engines per character (Chatterbox with emotions, OpenAI-compatible servers), Chatterbox-TTS-Server in the chart (optional) | read and listen at once |
+| **M8** | Reading along: segment timings recorded while rendering, a reader (page scrolling, sticky player bar, sentence marking) that follows the voice and shares its position with the player, WebVTT transcripts per sentence in the podcast feed; more quotation styles (single, guillemets, low-high, dash dialogue), italics kept and italic/single-quoted thoughts attributed and voiced; spoken-text cleanup; custom sample texts for voice previews (instance, book, character); expression: emotions as pace and loudness, pauses by context, word timings from Kokoro (word marking in the reader, WebVTT lines by word), optional LLM chapter preparation (moods, dramatic pauses, spoken forms, pronunciation suggestions); further speech engines (Chatterbox with emotions, OpenAI-compatible servers) beside or instead of Kokoro, chosen per book with casting from their voices, Chatterbox-TTS-Server in the chart (optional) | read and listen at once |
 | **M9** (optional) | segment cache, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
 
 Integration into the cluster repo (`HelmRelease`, Zitadel client via

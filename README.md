@@ -125,14 +125,16 @@ URLs carry a token instead, so treat them like passwords.
   never its words: spoken forms are accepted only for notation (numbers,
   symbols, abbreviations) and must keep every other word. The chapter page
   shows what was found and can prepare it again.
-- **Other speech engines** (optional): voices of further engines, such as
-  Chatterbox, which acts emotions itself, can be given to characters
-  (voice editor: *Kokoro* or the engine) or the narrator (book page,
-  *Narrator*); *Voices* lists and previews them, *System* shows whether
-  each engine is reachable. Configure them with `tts.engines`, or let the chart run
-  Chatterbox-TTS-Server (`tts.chatterbox.enabled`; it needs a GPU for
-  more than a few characters). See [docs/tts-engines.md](docs/tts-engines.md),
-  which also evaluates Chatterbox.
+- **Speech engines**: Kokoro, Chatterbox (which acts emotions itself) and
+  other OpenAI-compatible servers, beside each other or instead of Kokoro
+  (`tts.kokoro.enabled: false` with `tts.chatterbox.enabled: true`). Each
+  book speaks with the engine of its narrator, chosen on the book page
+  (*Narrator*: engine and voice); its characters are cast from that
+  engine's voices, and single characters can still be given a voice of
+  another engine (voice editor). *Voices* lists and previews every
+  engine's voices, *System* shows whether each is reachable. Chatterbox
+  needs a GPU for book-length work. See
+  [docs/tts-engines.md](docs/tts-engines.md), which also evaluates it.
 - **Podcast**: the book page shows a feed URL (button *Podcast*) that any
   podcast app can subscribe to; rendered chapters are its episodes, each
   with a WebVTT transcript (`podcast:transcript`) that apps such as Apple

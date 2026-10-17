@@ -112,10 +112,13 @@ func (s *Server) GetSystemInfo(ctx context.Context, _ GetSystemInfoRequestObject
 			Dialect:       DatabaseInfoDialect(s.Store.Dialect()),
 			SchemaVersion: schema,
 		},
-		Tts:            TTSInfo{Url: s.TTS.BaseURL()},
+		Tts:            TTSInfo{Url: s.TTS.BaseURL(), Configured: s.kokoro(), DefaultVoice: s.DefaultVoice},
 		MaxUploadBytes: s.MaxUploadBytes,
 	}
 
+	if !info.Tts.Configured {
+		return GetSystemInfo200JSONResponse(info), nil
+	}
 	// The TTS server may be restarting or still loading its model; report
 	// that instead of failing the whole request.
 	ttsCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -129,6 +132,13 @@ func (s *Server) GetSystemInfo(ctx context.Context, _ GetSystemInfoRequestObject
 		info.Tts.VoiceCount = &n
 	}
 	return GetSystemInfo200JSONResponse(info), nil
+}
+
+// kokoro reports whether Kokoro is configured (a TTS that cannot tell has
+// it).
+func (s *Server) kokoro() bool {
+	k, ok := s.TTS.(interface{ Kokoro() bool })
+	return !ok || k.Kokoro()
 }
 
 type requestKey struct{}

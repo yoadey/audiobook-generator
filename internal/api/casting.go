@@ -16,11 +16,12 @@ const maxCastingWarnings = 50
 // voiceOf resolves characters' effective voices for one book.
 type voiceOf func(c *store.Character) casting.Voice
 
-// bookVoices returns the voice resolver of a book: the catalogue as the
-// TTS server offers it (assumed complete while the server is down).
+// bookVoices returns the voice resolver of a book: the voices of its
+// narrator's engine as the server offers them (Kokoro's catalogue is
+// assumed complete while the server is down).
 func (s *Server) bookVoices(ctx context.Context, b *store.Book) voiceOf {
-	vs, _ := s.Voices.Voices(ctx)
 	narrator, speed := casting.Narrator(b, s.DefaultVoice)
+	vs, _ := s.Voices.VoicesFor(ctx, narrator)
 	return func(c *store.Character) casting.Voice { return casting.Effective(c, vs, narrator, speed) }
 }
 

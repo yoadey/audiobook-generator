@@ -33,7 +33,7 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 		return nil, err
 	}
 	fields := map[string]any{}
-	touch := false
+	touch, recast := false, false
 	if v := req.Body.PrepareChapters; v != nil && *v != b.PrepareChapters {
 		// The preparation changes what is said: renders made with (or
 		// without) it are outdated. Touched before the change too, so a
@@ -54,6 +54,10 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 		}
 		fields["NarratorVoice"] = strings.Join(strings.Fields(voice), "")
+		// Another engine: the characters are cast from its voices.
+		old, _ := casting.Narrator(b, s.DefaultVoice)
+		next, _ := casting.Narrator(&store.Book{NarratorVoice: voice}, s.DefaultVoice)
+		recast = tts.EngineOf(old) != tts.EngineOf(next)
 	}
 	if v := req.Body.NarratorSpeed; v != nil {
 		if *v < 0.5 || *v > 2 {
@@ -87,6 +91,19 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 	b, err = s.Store.GetBook(ctx, req.BookId)
 	if err != nil {
 		return nil, err
+	}
+	if recast {
+		if err := s.Store.ResetCastVoices(ctx, b.ID); err != nil {
+			return nil, err
+		}
+		if b.AnalysisStatus == store.AnalysisDone && s.Caster != nil {
+			if err := s.Caster.Start(ctx, b, false); err != nil {
+				return nil, err
+			}
+			if b, err = s.Store.GetBook(ctx, req.BookId); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return UpdateBook200JSONResponse(s.toBook(b)), nil
 }
@@ -281,7 +298,7 @@ func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObje
 			}
 			out = append(out, TTSEngine{
 				Name: e.Name, Kind: TTSEngineKind(e.Kind), Variant: nonEmpty(e.Variant), Emotions: e.Emotions,
-				Speed: e.Speed, Voices: voices, Error: nonEmpty(e.Err),
+				Speed: e.Speed, Voices: voices, DefaultVoice: nonEmpty(e.DefaultVoice), Error: nonEmpty(e.Err),
 			})
 		}
 	}

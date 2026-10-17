@@ -85,10 +85,18 @@ func run() error {
 	llmPool := llm.NewPool(st, llm.NewMetrics(reg), log)
 	llmPool.MaxWait = cfg.LLM.MaxWait
 
-	kokoro := tts.New(cfg.TTS.URL, cfg.TTS.Timeout)
+	var kokoro *tts.Client
+	if cfg.TTS.Kokoro {
+		kokoro = tts.New(cfg.TTS.URL, cfg.TTS.Timeout)
+	}
 	speech, err := tts.NewRouter(kokoro, cfg.TTS.Engines)
 	if err != nil {
 		return fmt.Errorf("ABG_TTS_ENGINES: %w", err)
+	}
+	// Books without a voice of their own speak with the default engine.
+	defaultVoice, err := speech.ResolveDefault(cfg.TTS.DefaultVoice)
+	if err != nil {
+		return fmt.Errorf("ABG_TTS_DEFAULT_VOICE: %w", err)
 	}
 	runner := jobs.New(st, log)
 	runner.Metrics = jobs.NewMetrics(reg)
@@ -96,7 +104,8 @@ func run() error {
 	imp := &importer.Importer{Store: st, DataDir: cfg.DataDir, Log: log}
 	runner.Handle(importer.JobType, imp.Handler())
 	runner.Handle(transfer.JobType, (&transfer.Restorer{Store: st, DataDir: cfg.DataDir, Log: log}).Handler())
-	voices := casting.NewCatalog(kokoro)
+	voices := casting.NewCatalog(speech)
+	voices.Engines = speech
 	attributor := &attribution.Attributor{
 		Store: st, LLM: llmPool, Jobs: runner, PartTokens: cfg.LLM.AttributionTokens, Log: log,
 	}
@@ -109,7 +118,7 @@ func run() error {
 		Encoder:      audio.Encoder{FFmpeg: cfg.FFmpeg, Bitrate: cfg.AudioBitrate},
 		DataDir:      cfg.DataDir,
 		Concurrency:  cfg.TTS.Concurrency,
-		DefaultVoice: cfg.TTS.DefaultVoice,
+		DefaultVoice: defaultVoice,
 		Voices:       voices,
 		Attribution:  attributor,
 		Preparation:  preparer,
@@ -121,11 +130,11 @@ func run() error {
 		Store: st, LLM: llmPool, Jobs: runner, BatchTokens: cfg.LLM.AnalysisBatchTokens, Log: log,
 	}
 	runner.Handle(analysis.JobType, analyzer.Handler())
-	if _, err := casting.ParseRecipe(cfg.TTS.DefaultVoice); err != nil {
-		return fmt.Errorf("ABG_TTS_DEFAULT_VOICE %q: %w", cfg.TTS.DefaultVoice, err)
+	if _, err := casting.ParseRecipe(defaultVoice); err != nil {
+		return fmt.Errorf("ABG_TTS_DEFAULT_VOICE %q: %w", defaultVoice, err)
 	}
 	caster := &casting.Caster{
-		Store: st, LLM: llmPool, Jobs: runner, Catalog: voices, DefaultVoice: cfg.TTS.DefaultVoice,
+		Store: st, LLM: llmPool, Jobs: runner, Catalog: voices, DefaultVoice: defaultVoice,
 		MainCharacters: cfg.Casting.MainCharacters, Log: log,
 	}
 	runner.Handle(casting.JobType, caster.Handler())
@@ -139,7 +148,7 @@ func run() error {
 			log.Error("start casting", "book", bookID, "err", err)
 		}
 	}
-	scheduler := &render.Scheduler{Store: st, Jobs: runner, DefaultVoice: cfg.TTS.DefaultVoice}
+	scheduler := &render.Scheduler{Store: st, Jobs: runner, DefaultVoice: defaultVoice}
 	assembler := &assemble.Assembler{
 		Store: st, Jobs: runner, Scheduler: scheduler, FFmpeg: cfg.FFmpeg, FFprobe: cfg.FFprobe,
 		DataDir: cfg.DataDir, Log: log,
@@ -184,7 +193,7 @@ func run() error {
 				Preparer:       preparer,
 				Assembler:      assembler,
 				Voices:         voices,
-				DefaultVoice:   cfg.TTS.DefaultVoice,
+				DefaultVoice:   defaultVoice,
 				DataDir:        cfg.DataDir,
 				MaxUploadBytes: cfg.MaxUploadMB << 20,
 				FeedSecret:     []byte(cfg.FeedSecret),
