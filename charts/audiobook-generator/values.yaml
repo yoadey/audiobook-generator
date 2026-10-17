@@ -208,6 +208,11 @@ tts:
   # Without Kokoro, a Kokoro voice here stands for the first engine's
   # default voice.
   defaultVoice: af_heart
+  # How long Chatterbox speaks nothing before the app unloads its model
+  # (frees ~1.7 GiB for Nano on CPU; loading it again takes ~10 s before
+  # the next synthesis). Can be turned off in the UI (Settings); "0s":
+  # never.
+  unloadIdle: 10m
   kokoro:
     enabled: true
     image:

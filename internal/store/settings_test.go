@@ -22,5 +22,18 @@ func TestSettings(t *testing.T) {
 		v, err = s.GetSetting(ctx, store.SettingPreviewText)
 		require.NoError(t, err)
 		assert.Equal(t, "two", v)
+
+		// Idle speech models are unloaded unless turned off.
+		on, err := s.UnloadIdleModels(ctx)
+		require.NoError(t, err)
+		assert.True(t, on)
+		require.NoError(t, s.SetUnloadIdleModels(ctx, false))
+		on, err = s.UnloadIdleModels(ctx)
+		require.NoError(t, err)
+		assert.False(t, on)
+		require.NoError(t, s.SetUnloadIdleModels(ctx, true))
+		on, err = s.UnloadIdleModels(ctx)
+		require.NoError(t, err)
+		assert.True(t, on)
 	})
 }

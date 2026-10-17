@@ -2161,7 +2161,7 @@ components:
               format: int64
     AppSettings:
       type: object
-      required: [previewText, defaultPreviewText]
+      required: [previewText, defaultPreviewText, unloadIdleModels, unloadIdleMinutes]
       properties:
         previewText:
           type: string
@@ -2169,12 +2169,22 @@ components:
         defaultPreviewText:
           type: string
           description: The built-in sample text
+        unloadIdleModels:
+          type: boolean
+          description: >-
+            Whether Chatterbox engines unload their model after
+            unloadIdleMinutes without speaking (loaded again on next use)
+        unloadIdleMinutes:
+          type: integer
+          description: Idle time before a model is unloaded (deployment; 0 - never)
     AppSettingsUpdate:
       type: object
       properties:
         previewText:
           type: string
           maxLength: 500
+        unloadIdleModels:
+          type: boolean
 
     Voice:
       type: object

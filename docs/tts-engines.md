@@ -53,6 +53,14 @@ instead of it.
   engine that does not take a speed is left at its own pace.
 - Engines report no word timings: the reader marks their lines by
   sentence, the podcast transcript times them by segment.
+- A Chatterbox engine that spoke nothing for `ABG_TTS_UNLOAD_IDLE`
+  (chart `tts.unloadIdle`, default 10 minutes) has its model unloaded
+  (`POST /api/unload`; Nano on CPU frees about 1.7 of 2.9 GiB). The next
+  synthesis loads it again first (`POST /restart_server`, about 10 s),
+  as does one the server refuses for want of a model. *Settings*
+  (*Speech models*) turns this off; `0s` turns it off for the
+  deployment. The server itself and its voices stay up: listing voices
+  and uploading clips need no model.
 - Changing an engine's settings (URL, variant, model, gain) affects
   chapters rendered afterwards; render a chapter again to apply them to
   it.

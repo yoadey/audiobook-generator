@@ -55,7 +55,10 @@ type Options struct {
 	FeedSecret []byte
 	// AuthEnabled reports that users sign in (OIDC).
 	AuthEnabled bool
-	Log         *slog.Logger
+	// UnloadIdle is how long a speech model stays loaded while idle (when
+	// the setting allows unloading; 0: always).
+	UnloadIdle time.Duration
+	Log        *slog.Logger
 }
 
 // Server implements StrictServerInterface.

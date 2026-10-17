@@ -30,13 +30,16 @@ type remote struct {
 	listErr    error         // of the last attempt
 	failed     time.Time     // when it failed
 	listing    chan struct{} // closed when the running listing is done
+
+	model modelState // Chatterbox only
 }
 
 func newRemote(c EngineConfig) *remote {
 	return &remote{
-		cfg:  c,
-		http: &http.Client{Timeout: time.Duration(c.Timeout)},
-		sem:  make(chan struct{}, c.Concurrency),
+		cfg:   c,
+		http:  &http.Client{Timeout: time.Duration(c.Timeout)},
+		sem:   make(chan struct{}, c.Concurrency),
+		model: modelState{lastUsed: time.Now()},
 	}
 }
 
@@ -106,7 +109,12 @@ func (r *remote) synthesize(ctx context.Context, s Speech) ([]byte, error) {
 	var data []byte
 	var err error
 	if r.cfg.Kind == KindChatterbox {
+		var done func()
+		if done, err = r.use(ctx); err != nil {
+			return nil, err
+		}
 		data, err = r.chatterbox(ctx, s, format)
+		done()
 	} else {
 		model := r.cfg.Model
 		if model == "" {
@@ -162,6 +170,12 @@ func (r *remote) chatterbox(ctx context.Context, s Speech, format string) ([]byt
 	}
 	mode(clone)
 	data, err := r.post(ctx, "/tts", fields)
+	if notLoaded(err) {
+		if err = r.reloadModel(ctx); err != nil {
+			return nil, err
+		}
+		data, err = r.post(ctx, "/tts", fields)
+	}
 	var he *HTTPError
 	if errors.As(err, &he) && he.Status == http.StatusNotFound {
 		// A clip added or removed since the voices were listed: the other

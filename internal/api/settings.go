@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -42,7 +43,14 @@ func (s *Server) samplePreviewText(ctx context.Context, bookID *int64) (string, 
 
 func (s *Server) settings(ctx context.Context) (AppSettings, error) {
 	text, err := s.Store.GetSetting(ctx, store.SettingPreviewText)
-	return AppSettings{PreviewText: text, DefaultPreviewText: defaultPreviewText}, err
+	if err != nil {
+		return AppSettings{}, err
+	}
+	unload, err := s.Store.UnloadIdleModels(ctx)
+	return AppSettings{
+		PreviewText: text, DefaultPreviewText: defaultPreviewText,
+		UnloadIdleModels: unload, UnloadIdleMinutes: int(s.UnloadIdle / time.Minute),
+	}, err
 }
 
 // GetSettings returns the settings of this instance.
@@ -62,6 +70,11 @@ func (s *Server) UpdateSettings(ctx context.Context, req UpdateSettingsRequestOb
 			return UpdateSettings400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 		}
 		if err := s.Store.SetSetting(ctx, store.SettingPreviewText, text); err != nil {
+			return nil, err
+		}
+	}
+	if v := req.Body.UnloadIdleModels; v != nil {
+		if err := s.Store.SetUnloadIdleModels(ctx, *v); err != nil {
 			return nil, err
 		}
 	}

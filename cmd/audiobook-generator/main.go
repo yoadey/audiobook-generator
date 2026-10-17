@@ -191,6 +191,17 @@ func run() error {
 		// Stops the voice design server once idle (also one left running).
 		go designer.Idler(ctx, time.Minute)
 	}
+	if cfg.TTS.UnloadIdle > 0 {
+		// Frees the memory of idle Chatterbox models unless turned off in
+		// the settings; the next synthesis loads a model again.
+		go speech.UnloadIdle(ctx, time.Minute, cfg.TTS.UnloadIdle, func(ctx context.Context) bool {
+			on, err := st.UnloadIdleModels(ctx)
+			if err != nil {
+				log.Warn("read the setting to unload idle speech models", "err", err)
+			}
+			return on && err == nil
+		}, log)
+	}
 	runnerDone := make(chan struct{})
 	go func() {
 		defer close(runnerDone)
@@ -233,6 +244,7 @@ func run() error {
 				MaxUploadBytes: cfg.MaxUploadMB << 20,
 				FeedSecret:     []byte(cfg.FeedSecret),
 				AuthEnabled:    authn != nil,
+				UnloadIdle:     cfg.TTS.UnloadIdle,
 				Log:            log,
 			}),
 			Auth:      authn,

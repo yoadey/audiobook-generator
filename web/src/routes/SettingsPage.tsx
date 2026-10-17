@@ -13,6 +13,7 @@ import {
 import { LLMProviderCard } from '../components/LLMProviderCard';
 import { LLMProviderForm } from '../components/LLMProviderForm';
 import { PreviewTextCard } from '../components/PreviewTextCard';
+import { UnloadModelsCard } from '../components/UnloadModelsCard';
 import { notifyError, notifySuccess } from '../lib/notify';
 
 type Editing = { mode: 'create' } | { mode: 'edit'; provider: LLMProvider } | null;
@@ -127,6 +128,7 @@ export function SettingsPage() {
         Voices
       </Title>
       <PreviewTextCard />
+      <UnloadModelsCard />
     </Stack>
   );
 }
