@@ -686,6 +686,33 @@ func (e VoiceGender) Valid() bool {
 	}
 }
 
+// Defines values for VoiceDesignStatus.
+const (
+	VoiceDesignStatusDone    VoiceDesignStatus = "done"
+	VoiceDesignStatusFailed  VoiceDesignStatus = "failed"
+	VoiceDesignStatusNone    VoiceDesignStatus = "none"
+	VoiceDesignStatusQueued  VoiceDesignStatus = "queued"
+	VoiceDesignStatusRunning VoiceDesignStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the VoiceDesignStatus enum.
+func (e VoiceDesignStatus) Valid() bool {
+	switch e {
+	case VoiceDesignStatusDone:
+		return true
+	case VoiceDesignStatusFailed:
+		return true
+	case VoiceDesignStatusNone:
+		return true
+	case VoiceDesignStatusQueued:
+		return true
+	case VoiceDesignStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListCharactersParamsSort.
 const (
 	ListCharactersParamsSortChapters   ListCharactersParamsSort = "chapters"
@@ -1116,7 +1143,8 @@ type CharacterDetail struct {
 	UserEdited bool `json:"userEdited"`
 
 	// Voice The recipe the character speaks with (its own, or its pool voice)
-	Voice string `json:"voice"`
+	Voice       string      `json:"voice"`
+	VoiceDesign VoiceDesign `json:"voiceDesign"`
 
 	// VoiceManual The recipe was chosen by hand; the casting keeps it
 	VoiceManual bool `json:"voiceManual"`
@@ -1637,6 +1665,12 @@ type TTSInfo struct {
 
 	// VoiceCount Number of voices the TTS server offers (when reachable)
 	VoiceCount *int `json:"voiceCount,omitempty"`
+
+	// VoiceDesign Voices can be designed from descriptions (a voice design server and an engine that clones voices)
+	VoiceDesign bool `json:"voiceDesign"`
+
+	// VoiceDesignEngine The engine that speaks designed voices; only books of this engine can design voices
+	VoiceDesignEngine *string `json:"voiceDesignEngine,omitempty"`
 }
 
 // Tier defines model for Tier.
@@ -1664,6 +1698,32 @@ type Voice struct {
 
 // VoiceGender defines model for Voice.Gender.
 type VoiceGender string
+
+// VoiceDesign defines model for VoiceDesign.
+type VoiceDesign struct {
+	// Description The description of the last design (or the one queued)
+	Description string            `json:"description"`
+	Error       *string           `json:"error,omitempty"`
+	Status      VoiceDesignStatus `json:"status"`
+
+	// SuggestedDescription A description from the character's profile, to start from
+	SuggestedDescription string `json:"suggestedDescription"`
+}
+
+// VoiceDesignStatus defines model for VoiceDesign.Status.
+type VoiceDesignStatus string
+
+// VoiceDesignBatch defines model for VoiceDesignBatch.
+type VoiceDesignBatch struct {
+	// Queued Characters whose design was queued
+	Queued int `json:"queued"`
+}
+
+// VoiceDesignStart defines model for VoiceDesignStart.
+type VoiceDesignStart struct {
+	// Description The voice, e.g. "An elderly man, deep and gruff, speaks slowly"
+	Description string `json:"description"`
+}
 
 // VoicePreview defines model for VoicePreview.
 type VoicePreview struct {
@@ -1821,6 +1881,9 @@ type UpdateCharacterJSONRequestBody = CharacterUpdate
 // SplitCharacterJSONRequestBody defines body for SplitCharacter for application/json ContentType.
 type SplitCharacterJSONRequestBody = CharacterSplit
 
+// DesignVoiceJSONRequestBody defines body for DesignVoice for application/json ContentType.
+type DesignVoiceJSONRequestBody = VoiceDesignStart
+
 // ImportBookMultipartRequestBody defines body for ImportBook for multipart/form-data ContentType.
 type ImportBookMultipartRequestBody ImportBookMultipartBody
 
@@ -1913,6 +1976,9 @@ type ServerInterface interface {
 	// RenderBookChapters Queue the next chapters without audio for rendering
 	// (POST /books/{bookId}/render)
 	RenderBookChapters(w http.ResponseWriter, r *http.Request, bookId BookId)
+	// DesignBookVoices Design voices for the main characters whose voice was not chosen by hand
+	// (POST /books/{bookId}/voice-design)
+	DesignBookVoices(w http.ResponseWriter, r *http.Request, bookId BookId)
 	// ListVolumes List a book's volumes
 	// (GET /books/{bookId}/volumes)
 	ListVolumes(w http.ResponseWriter, r *http.Request, bookId BookId)
@@ -1961,6 +2027,9 @@ type ServerInterface interface {
 	// SplitCharacter Move aliases of a character to a new character
 	// (POST /characters/{characterId}/split)
 	SplitCharacter(w http.ResponseWriter, r *http.Request, characterId CharacterId)
+	// DesignVoice Design a voice for the character from a description
+	// (POST /characters/{characterId}/voice-design)
+	DesignVoice(w http.ResponseWriter, r *http.Request, characterId CharacterId)
 	// ImportBook Restore an exported book as a new book (the restore runs as a job)
 	// (POST /import)
 	ImportBook(w http.ResponseWriter, r *http.Request)
@@ -2776,6 +2845,32 @@ func (siw *ServerInterfaceWrapper) RenderBookChapters(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// DesignBookVoices operation middleware
+func (siw *ServerInterfaceWrapper) DesignBookVoices(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "bookId" -------------
+	var bookId BookId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bookId", r.PathValue("bookId"), &bookId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bookId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DesignBookVoices(w, r, bookId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListVolumes operation middleware
 func (siw *ServerInterfaceWrapper) ListVolumes(w http.ResponseWriter, r *http.Request) {
 
@@ -3256,6 +3351,32 @@ func (siw *ServerInterfaceWrapper) SplitCharacter(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SplitCharacter(w, r, characterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DesignVoice operation middleware
+func (siw *ServerInterfaceWrapper) DesignVoice(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "characterId" -------------
+	var characterId CharacterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "characterId", r.PathValue("characterId"), &characterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "characterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DesignVoice(w, r, characterId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3849,6 +3970,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/characters/{characterId}", wrapper.DeleteCharacter)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/characters/{characterId}", wrapper.GetCharacter)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/characters/{characterId}", wrapper.UpdateCharacter)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/characters/{characterId}/voice-design", wrapper.DesignVoice)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/books/{bookId}/voice-design", wrapper.DesignBookVoices)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/characters/{characterId}/quotes", wrapper.ListCharacterQuotes)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/characters/{characterId}/split", wrapper.SplitCharacter)
 
@@ -5254,6 +5377,73 @@ func (response RenderBookChaptersdefaultJSONResponse) VisitRenderBookChaptersRes
 	return err
 }
 
+type DesignBookVoicesRequestObject struct {
+	BookId BookId `json:"bookId"`
+}
+
+type DesignBookVoicesResponseObject interface {
+	VisitDesignBookVoicesResponse(w http.ResponseWriter) error
+}
+
+type DesignBookVoices202JSONResponse VoiceDesignBatch
+
+func (response DesignBookVoices202JSONResponse) VisitDesignBookVoicesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DesignBookVoices404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DesignBookVoices404JSONResponse) VisitDesignBookVoicesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DesignBookVoices409JSONResponse Error
+
+func (response DesignBookVoices409JSONResponse) VisitDesignBookVoicesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DesignBookVoicesdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response DesignBookVoicesdefaultJSONResponse) VisitDesignBookVoicesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListVolumesRequestObject struct {
 	BookId BookId `json:"bookId"`
 }
@@ -6271,6 +6461,88 @@ type SplitCharacterdefaultJSONResponse struct {
 }
 
 func (response SplitCharacterdefaultJSONResponse) VisitSplitCharacterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DesignVoiceRequestObject struct {
+	CharacterId CharacterId `json:"characterId"`
+	Body        *DesignVoiceJSONRequestBody
+}
+
+type DesignVoiceResponseObject interface {
+	VisitDesignVoiceResponse(w http.ResponseWriter) error
+}
+
+type DesignVoice202JSONResponse VoiceDesign
+
+func (response DesignVoice202JSONResponse) VisitDesignVoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DesignVoice400JSONResponse struct{ ErrorJSONResponse }
+
+func (response DesignVoice400JSONResponse) VisitDesignVoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DesignVoice404JSONResponse Error
+
+func (response DesignVoice404JSONResponse) VisitDesignVoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DesignVoice409JSONResponse Error
+
+func (response DesignVoice409JSONResponse) VisitDesignVoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DesignVoicedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response DesignVoicedefaultJSONResponse) VisitDesignVoiceResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -7434,6 +7706,9 @@ type StrictServerInterface interface {
 	// RenderBookChapters Queue the next chapters without audio for rendering
 	// (POST /books/{bookId}/render)
 	RenderBookChapters(ctx context.Context, request RenderBookChaptersRequestObject) (RenderBookChaptersResponseObject, error)
+	// DesignBookVoices Design voices for the main characters whose voice was not chosen by hand
+	// (POST /books/{bookId}/voice-design)
+	DesignBookVoices(ctx context.Context, request DesignBookVoicesRequestObject) (DesignBookVoicesResponseObject, error)
 	// ListVolumes List a book's volumes
 	// (GET /books/{bookId}/volumes)
 	ListVolumes(ctx context.Context, request ListVolumesRequestObject) (ListVolumesResponseObject, error)
@@ -7482,6 +7757,9 @@ type StrictServerInterface interface {
 	// SplitCharacter Move aliases of a character to a new character
 	// (POST /characters/{characterId}/split)
 	SplitCharacter(ctx context.Context, request SplitCharacterRequestObject) (SplitCharacterResponseObject, error)
+	// DesignVoice Design a voice for the character from a description
+	// (POST /characters/{characterId}/voice-design)
+	DesignVoice(ctx context.Context, request DesignVoiceRequestObject) (DesignVoiceResponseObject, error)
 	// ImportBook Restore an exported book as a new book (the restore runs as a job)
 	// (POST /import)
 	ImportBook(ctx context.Context, request ImportBookRequestObject) (ImportBookResponseObject, error)
@@ -8242,6 +8520,32 @@ func (sh *strictHandler) RenderBookChapters(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// DesignBookVoices operation middleware
+func (sh *strictHandler) DesignBookVoices(w http.ResponseWriter, r *http.Request, bookId BookId) {
+	var request DesignBookVoicesRequestObject
+
+	request.BookId = bookId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DesignBookVoices(ctx, request.(DesignBookVoicesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DesignBookVoices")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DesignBookVoicesResponseObject); ok {
+		if err := validResponse.VisitDesignBookVoicesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListVolumes operation middleware
 func (sh *strictHandler) ListVolumes(w http.ResponseWriter, r *http.Request, bookId BookId) {
 	var request ListVolumesRequestObject
@@ -8711,6 +9015,39 @@ func (sh *strictHandler) SplitCharacter(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SplitCharacterResponseObject); ok {
 		if err := validResponse.VisitSplitCharacterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DesignVoice operation middleware
+func (sh *strictHandler) DesignVoice(w http.ResponseWriter, r *http.Request, characterId CharacterId) {
+	var request DesignVoiceRequestObject
+
+	request.CharacterId = characterId
+
+	var body DesignVoiceJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DesignVoice(ctx, request.(DesignVoiceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DesignVoice")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DesignVoiceResponseObject); ok {
+		if err := validResponse.VisitDesignVoiceResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

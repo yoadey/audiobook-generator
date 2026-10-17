@@ -86,6 +86,12 @@ const erin = {
   voiceManual: false,
   voiceNote: 'warm and British',
   previewText: '',
+  voiceDesign: {
+    status: 'none',
+    description: '',
+    suggestedDescription: 'The voice of an adult woman. Speaks warm, chatty. An innkeeper.',
+    error: '',
+  },
 };
 
 const voices = [
@@ -653,6 +659,7 @@ describe('App', () => {
           url: 'http://kokoro:8880',
           reachable: false,
           configured: true,
+          voiceDesign: false,
           defaultVoice: 'af_heart',
           error: 'connection refused',
         },
@@ -671,7 +678,13 @@ describe('App', () => {
         commit: 'abc123',
         maxUploadBytes: 536870912,
         database: { dialect: 'sqlite', schemaVersion: 'x' },
-        tts: { url: '', reachable: false, configured: false, defaultVoice: 'chatterbox:Emily.wav' },
+        tts: {
+          url: '',
+          reachable: false,
+          configured: false,
+          voiceDesign: false,
+          defaultVoice: 'chatterbox:Emily.wav',
+        },
       },
       '/api/tts/engines': [
         {
@@ -1303,5 +1316,73 @@ describe('App', () => {
     stubApi({});
     renderAt('/library');
     expect(await screen.findByText('Could not load books')).toBeInTheDocument();
+  });
+  it('designs a voice for a character of a book of the cloning engine', async () => {
+    const system = {
+      version: '0.1.0',
+      commit: 'abc123',
+      maxUploadBytes: 536870912,
+      database: { dialect: 'sqlite', schemaVersion: 'x' },
+      tts: {
+        url: '',
+        reachable: false,
+        configured: false,
+        voiceDesign: true,
+        voiceDesignEngine: 'chatterbox',
+        defaultVoice: 'chatterbox:Emily.wav',
+      },
+    };
+    const fetch = stubApi({
+      '/api/system': system,
+      '/api/books/1': { ...book, narratorVoice: 'chatterbox:Emily.wav', engine: 'chatterbox' },
+      '/api/voices': voices,
+      'GET /api/characters/7': { ...erin, voice: 'chatterbox:Abigail.wav', chapters: [] },
+      'GET /api/characters/7/quotes': [],
+      'POST /api/characters/7/voice-design': { ...erin.voiceDesign, status: 'queued' },
+    });
+    renderAt('/books/1/characters/7');
+    const card = await screen.findByTestId('voice-design');
+    const text = within(card).getByRole('textbox', { name: 'Voice description' });
+    expect(text).toHaveValue(erin.voiceDesign.suggestedDescription);
+    fireEvent.change(text, { target: { value: '  A deep, gravelly voice. ' } });
+    fireEvent.click(within(card).getByRole('button', { name: 'Design voice' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'POST')).toBe(
+        true,
+      ),
+    );
+    const post = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'POST')!;
+    expect(await (post[0] as Request).json()).toEqual({ description: 'A deep, gravelly voice.' });
+  });
+
+  it('designs no voices for a book of another engine', async () => {
+    stubApi({
+      '/api/system': {
+        version: '0.1.0',
+        commit: 'abc123',
+        maxUploadBytes: 536870912,
+        database: { dialect: 'sqlite', schemaVersion: 'x' },
+        tts: {
+          url: 'http://kokoro:8880',
+          reachable: true,
+          configured: true,
+          voiceDesign: true,
+          voiceDesignEngine: 'chatterbox',
+          defaultVoice: 'af_heart',
+        },
+      },
+      '/api/books/1': { ...book, engine: 'kokoro' },
+      '/api/voices': voices,
+      'GET /api/characters/7': { ...erin, chapters: [] },
+      'GET /api/characters/7/quotes': [],
+    });
+    renderAt('/books/1/characters/7');
+    const card = await screen.findByTestId('voice-design');
+    expect(
+      within(card).getByText(
+        'This book speaks with kokoro: switch it to chatterbox to design voices.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Design voice' })).toBeDisabled();
   });
 });

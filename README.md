@@ -135,6 +135,12 @@ URLs carry a token instead, so treat them like passwords.
   engine's voices, *System* shows whether each is reachable. Chatterbox
   needs a GPU for book-length work. See
   [docs/tts-engines.md](docs/tts-engines.md), which also evaluates it.
+- **Voice design** (optional, `voiceDesign.enabled`): describe a voice in
+  words (or take the character's profile) and a Qwen3-TTS VoiceDesign
+  server speaks a sample in it, which Chatterbox clones as the
+  character's voice. It runs on CPU (minutes per voice) and only while
+  designing: the app scales its Deployment up for a design and back to
+  zero when idle. See [docs/tts-engines.md](docs/tts-engines.md).
 - **Podcast**: the book page shows a feed URL (button *Podcast*) that any
   podcast app can subscribe to; rendered chapters are its episodes, each
   with a WebVTT transcript (`podcast:transcript`) that apps such as Apple

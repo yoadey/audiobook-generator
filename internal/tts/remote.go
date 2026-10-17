@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"slices"
 	"strings"
@@ -406,4 +407,62 @@ func voiceNames(data []byte) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// upload stores a reference clip on a Chatterbox-TTS-Server, which then
+// offers it as a voice to clone ("<name>.wav"). The server keeps an
+// existing file of the same name, so names must be new.
+func (r *remote) upload(ctx context.Context, name string, wav []byte) error {
+	if r.cfg.Kind != KindChatterbox {
+		return fmt.Errorf("%s: only Chatterbox takes reference clips", r.cfg.Name)
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("files", name)
+	if err != nil {
+		return err
+	}
+	if _, err := fw.Write(wav); err != nil {
+		return err
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(r.cfg.URL, "/")+"/upload_reference", &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := r.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s: %w", r.cfg.Name, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return &HTTPError{Status: resp.StatusCode, Body: r.cfg.Name + ": " + strings.TrimSpace(string(data))}
+	}
+	var out struct {
+		Uploaded []string `json:"uploaded_files"`
+		Errors   []struct {
+			Error string `json:"error"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return fmt.Errorf("%s: upload: %w", r.cfg.Name, err)
+	}
+	if !slices.Contains(out.Uploaded, name) {
+		msg := "not stored"
+		if len(out.Errors) > 0 {
+			msg = out.Errors[0].Error
+		}
+		return fmt.Errorf("%s: upload %s: %s", r.cfg.Name, name, msg)
+	}
+	// List the voices again before the next request.
+	r.mu.Lock()
+	if !r.fetched.IsZero() {
+		r.fetched = time.Now().Add(-voicesTTL)
+	}
+	r.mu.Unlock()
+	return nil
 }

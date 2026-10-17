@@ -60,6 +60,22 @@ jobs:
           labels: ${{ steps.nano-meta.outputs.labels }}
           cache-from: type=gha,scope=nano
           cache-to: type=gha,mode=max,scope=nano
+      # The voice design server, the chart's image for voiceDesign.
+      - id: voice-design-meta
+        uses: docker/metadata-action@v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}-voice-design
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - uses: docker/build-push-action@v7.4.0
+        with:
+          context: images/voice-design
+          push: true
+          tags: ${{ steps.voice-design-meta.outputs.tags }}
+          labels: ${{ steps.voice-design-meta.outputs.labels }}
+          cache-from: type=gha,scope=voice-design
+          cache-to: type=gha,mode=max,scope=voice-design
       - uses: azure/setup-helm@v5.0.1
         with:
           version: ${{ env.HELM_VERSION }}

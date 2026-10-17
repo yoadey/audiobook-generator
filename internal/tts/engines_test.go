@@ -363,3 +363,43 @@ func TestRouterWithoutKokoro(t *testing.T) {
 	_, err = r.ResolveDefault("orpheus:tara")
 	assert.Error(t, err, "a default voice of an unconfigured engine is a mistake")
 }
+
+func TestUploadReference(t *testing.T) {
+	var stored []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/upload_reference":
+			require.NoError(t, r.ParseMultipartForm(1<<20))
+			fh := r.MultipartForm.File["files"][0]
+			if fh.Filename == "bad.wav" {
+				_, _ = w.Write([]byte(`{"uploaded_files":[],"errors":[{"filename":"bad.wav","error":"too long"}]}`))
+				return
+			}
+			stored = append(stored, fh.Filename)
+			_, _ = w.Write([]byte(`{"uploaded_files":["` + fh.Filename + `"],"errors":[]}`))
+		case "/get_predefined_voices":
+			_, _ = w.Write([]byte(`[]`))
+		case "/get_reference_files":
+			raw, _ := json.Marshal(stored)
+			_, _ = w.Write(raw)
+		}
+	}))
+	defer srv.Close()
+	r, err := NewRouter(nil, []EngineConfig{
+		{Name: "cb", Kind: KindChatterbox, URL: srv.URL}, {Name: "o", Kind: KindOpenAI, URL: "http://o"},
+	})
+	require.NoError(t, err)
+	ctx := context.Background()
+	assert.True(t, r.Clones("cb"))
+	assert.False(t, r.Clones("o"))
+	vs, err := r.EngineVoices(ctx, "cb")
+	require.NoError(t, err)
+	assert.Empty(t, vs)
+	require.NoError(t, r.UploadReference(ctx, "cb", "f_anna.wav", wav(SampleRate, 1, []int16{1})))
+	vs, err = r.EngineVoices(ctx, "cb")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"f_anna.wav"}, vs, "listed again after an upload")
+	assert.ErrorContains(t, r.UploadReference(ctx, "cb", "bad.wav", nil), "too long")
+	assert.Error(t, r.UploadReference(ctx, "o", "x.wav", nil), "only Chatterbox")
+	assert.Error(t, r.UploadReference(ctx, "cb", "a b.wav", nil))
+}

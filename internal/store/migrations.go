@@ -599,6 +599,31 @@ var migrations = []*gormigrate.Migration{
 			return nil
 		},
 	},
+	{
+		ID: "202610250001_voice_design",
+		Migrate: func(tx *gorm.DB) error {
+			type Character struct {
+				DesignStatus      string `gorm:"not null;default:''"`
+				DesignDescription string `gorm:"not null;default:''"`
+				DesignError       string `gorm:"not null;default:''"`
+			}
+			for _, col := range []string{"DesignStatus", "DesignDescription", "DesignError"} {
+				if err := tx.Migrator().AddColumn(&Character{}, col); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Rollback: func(tx *gorm.DB) error {
+			type Character struct{ DesignStatus, DesignDescription, DesignError string }
+			for _, col := range []string{"DesignError", "DesignDescription", "DesignStatus"} {
+				if err := tx.Migrator().DropColumn(&Character{}, col); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

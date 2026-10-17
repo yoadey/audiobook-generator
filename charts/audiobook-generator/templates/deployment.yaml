@@ -37,7 +37,8 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "abg.serviceAccountName" . }}
-      automountServiceAccountToken: false
+      # The token only to scale the voice design server.
+      automountServiceAccountToken: {{ include "abg.voiceDesign.onDemand" . | eq "true" }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -123,6 +124,23 @@ spec:
             {{- with include "abg.ttsEngines" . }}
             - name: ABG_TTS_ENGINES
               value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.voiceDesign.enabled }}
+            {{- $vd := .Values.voiceDesign }}
+            - name: ABG_VOICE_DESIGN_URL
+              value: {{ printf "http://%s:8000" (include "abg.voiceDesign.fullname" .) | quote }}
+            - name: ABG_VOICE_DESIGN_ENGINE
+              value: {{ include "abg.voiceDesign.engine" . | quote }}
+            {{- if $vd.onDemand }}
+            - name: ABG_VOICE_DESIGN_DEPLOYMENT
+              value: {{ include "abg.voiceDesign.fullname" . | quote }}
+            {{- end }}
+            - name: ABG_VOICE_DESIGN_IDLE
+              value: {{ $vd.idle | quote }}
+            - name: ABG_VOICE_DESIGN_TIMEOUT
+              value: {{ $vd.timeout | quote }}
+            - name: ABG_VOICE_DESIGN_READY_TIMEOUT
+              value: {{ $vd.readyTimeout | quote }}
             {{- end }}
             - name: ABG_AUDIO_BITRATE
               value: {{ .Values.audioBitrate | quote }}

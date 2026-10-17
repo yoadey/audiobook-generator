@@ -123,6 +123,91 @@ retried after 30 s; a voice is never guessed to be predefined or cloned
 before it was listed once). Renovate does not bump the image (its tags
 are commit hashes): bump `tts.chatterbox.image.tag` by hand.
 
+## Voice design: voices from a description
+
+Chatterbox clones voices from clips; it cannot invent one from a prompt.
+Voice design fills that gap: a small server
+([Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign),
+Apache-2.0) speaks a short narration in a voice described in words, and
+that clip is uploaded to Chatterbox as a reference clip, which then
+clones it for the whole book. The words of the book are never part of
+this: the sample text is fixed.
+
+- On a character's page, *Design a voice* takes a description (age,
+  gender, timbre, accent, manner; up to 500 characters), prefilled from
+  the character's profile (*From the profile*). *Design voices* on the
+  casting card queues one for every main character whose voice was not
+  chosen by hand.
+- A designed voice becomes the character's voice as one chosen by hand
+  (`chatterbox:f_b<book>-c<character>-<hash>.wav`); the casting keeps it.
+  Designing again makes a new clip; earlier clips stay on Chatterbox's
+  volume and are offered like any other reference clip (their gender
+  tag lets casting use them for other books too).
+- Only books that speak with the design engine (Chatterbox) can design
+  voices; switch a Kokoro book to Chatterbox first.
+- Each design is a persistent job (queue `design`, one at a time, three
+  attempts). A description the server refuses fails at once; the error
+  is shown on the character.
+
+### On demand, on CPU
+
+The model runs on CPU: expect one to a few minutes per voice (a ~15 s
+clip) and 10–16 GB of memory at `float32` (`dtype: bfloat16` halves the
+memory, slower on CPUs without AMX). It is meant to run rarely, so by
+default (`voiceDesign.onDemand: true`) its Deployment has zero replicas:
+
+1. A design job scales the Deployment to one (`deployments/scale`) and
+   waits until the pod is ready and `/health` answers (the model is
+   loaded; the first start downloads it, about 4 GB, to its volume).
+   Waiting longer than `readyTimeout` fails the attempt.
+2. While designs are pending, the pod keeps running.
+3. Once no design is pending and none ran for `idle` (10 minutes), the
+   app scales it back to zero. A pod left running when the app restarts
+   is stopped the same way.
+
+For this the app's ServiceAccount token is mounted and a Role allows
+`get`/`patch`/`update` on `deployments/scale` and `get` on
+`deployments`, both for exactly this one Deployment.
+
+```yaml
+voiceDesign:
+  enabled: true          # needs tts.chatterbox.enabled (or an engine of kind chatterbox, voiceDesign.engine)
+  # resources.requests.memory 10Gi, limits.memory 16Gi by default
+```
+
+**Flux / GitOps:** the chart renders `replicas: 0` and Helm keeps the
+live count on upgrades, but a drift-detecting controller would scale the
+pod back down (or up) behind the app's back. With Flux, let drift
+detection ignore the field:
+
+```yaml
+spec:
+  driftDetection:
+    mode: enabled
+    ignore:
+      - paths: ["/spec/replicas"]
+        target:
+          kind: Deployment
+          name: <release>-voice-design
+```
+
+(No setting is needed while drift detection is disabled, Flux's
+default.) With `onDemand: false` the server always runs (one replica)
+and the app never touches the Kubernetes API.
+
+Outside the chart, set `ABG_VOICE_DESIGN_URL` (the server),
+`ABG_VOICE_DESIGN_ENGINE` (default `chatterbox`) and, for scaling,
+`ABG_VOICE_DESIGN_DEPLOYMENT` (a Deployment of the app's namespace) plus
+`ABG_VOICE_DESIGN_IDLE`, `_TIMEOUT` and `_READY_TIMEOUT`.
+
+The image (`images/voice-design`, released with the app as
+`ghcr.io/yoadey/audiobook-generator-voice-design`) is a FastAPI wrapper
+around the `qwen-tts` package: `POST /design` with
+`{"text", "description", "seed"}` answers a WAV (at most 29 s, peak
+normalized, 16-bit), `GET /health` answers 503 until the model is
+loaded. `voiceDesign.modelRevision` pins the model's commit. For local
+runs, `make fake-tts` answers `/design` with a tone.
+
 ## Chatterbox: evaluation (October 2026)
 
 Chatterbox (Resemble AI, MIT) is the most practical open model with an

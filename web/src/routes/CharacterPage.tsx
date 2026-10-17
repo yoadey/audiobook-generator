@@ -34,6 +34,7 @@ import {
   updateCharacter,
 } from '../api/client';
 import { AnchorLink } from '../components/links';
+import { VoiceDesignCard } from '../components/VoiceDesignCard';
 import { VoiceEditor } from '../components/VoiceEditor';
 import { useCastingWatch } from '../lib/casting';
 import { formatNumber } from '../lib/format';
@@ -367,6 +368,7 @@ export function CharacterPage() {
         castingActive={casting?.status === 'queued' || casting?.status === 'running'}
         onSaved={() => void invalidate()}
       />
+      <VoiceDesignCard key={`design-${c.voiceDesign.status}-${c.voice}`} character={c} />
 
       <Card withBorder>
         <Text fw={600} mb="xs">

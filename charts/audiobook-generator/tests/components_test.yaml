@@ -76,6 +76,69 @@ tests:
       - matchRegexRaw:
           pattern: "TTS:      no Kokoro, Chatterbox \\(nano\\)"
 
+  - it: runs the voice design server on demand with a narrow role
+    template: templates/voice-design.yaml
+    set:
+      tts.chatterbox.enabled: true
+      voiceDesign.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 5
+      - documentIndex: 1
+        equal:
+          path: spec.replicas
+          value: 0
+      - documentIndex: 1
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/yoadey/audiobook-generator-voice-design:0.1.0
+      - documentIndex: 3
+        equal:
+          path: rules[0]
+          value:
+            apiGroups: [apps]
+            resources: [deployments/scale]
+            resourceNames: [abg-audiobook-generator-voice-design]
+            verbs: [get, patch, update]
+
+  - it: gives the app its token only to scale the voice design server
+    template: templates/deployment.yaml
+    set:
+      tts.chatterbox.enabled: true
+      voiceDesign.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_VOICE_DESIGN_DEPLOYMENT
+            value: abg-audiobook-generator-voice-design
+
+  - it: keeps the voice design server running when not on demand
+    template: templates/voice-design.yaml
+    set:
+      tts.chatterbox.enabled: true
+      voiceDesign.enabled: true
+      voiceDesign.onDemand: false
+      voiceDesign.persistence.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 2
+      - documentIndex: 0
+        equal:
+          path: spec.replicas
+          value: 1
+
+  - it: needs a Chatterbox engine for voice design
+    template: templates/deployment.yaml
+    set:
+      voiceDesign.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: 'voiceDesign.engine "chatterbox" must be a Chatterbox engine (tts.chatterbox or tts.engines)'
+
   - it: omits Chatterbox by default
     template: templates/chatterbox.yaml
     asserts:

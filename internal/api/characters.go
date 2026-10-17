@@ -249,6 +249,7 @@ func (s *Server) characterDetail(ctx context.Context, id int64) (CharacterDetail
 		Tier: base.Tier, TierManual: base.TierManual, Voice: base.Voice, VoiceSpeed: base.VoiceSpeed,
 		VoiceSource: CharacterDetailVoiceSource(base.VoiceSource), VoiceManual: base.VoiceManual,
 		VoiceNote: base.VoiceNote, PreviewText: base.PreviewText, Chapters: make([]ChapterRef, 0, len(chs)),
+		VoiceDesign: toVoiceDesign(c),
 	}
 	for _, ch := range chs {
 		out.Chapters = append(out.Chapters, ChapterRef{Id: ch.ID, Idx: ch.Idx, Title: ch.Title})

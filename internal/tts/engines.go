@@ -284,6 +284,25 @@ func (r *Router) EngineVoices(ctx context.Context, engine string) ([]string, err
 	return e.voices(ctx, false)
 }
 
+// UploadReference stores a reference clip on an engine that clones voices
+// (Chatterbox); it is then the voice "<engine>:<name>".
+func (r *Router) UploadReference(ctx context.Context, engine, name string, wav []byte) error {
+	e := r.engines[engine]
+	if e == nil {
+		return fmt.Errorf("%w: %q", ErrUnknownEngine, engine)
+	}
+	if !EngineVoiceRe.MatchString(name) {
+		return fmt.Errorf("voice name %q: letters, digits, dots, dashes and underscores", name)
+	}
+	return e.upload(ctx, name, wav)
+}
+
+// Clones reports whether an engine takes reference clips to clone.
+func (r *Router) Clones(engine string) bool {
+	e := r.engines[engine]
+	return e != nil && e.cfg.Kind == KindChatterbox
+}
+
 // Mixable reports whether a voice's engine mixes voices (Kokoro only).
 func (r *Router) Mixable(voice string) bool {
 	_, _, ok := SplitVoice(voice)
