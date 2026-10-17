@@ -196,8 +196,9 @@ The image (`images/voice-design`, released with the app as
 `ghcr.io/yoadey/audiobook-generator-voice-design`) is a FastAPI wrapper
 around the `qwen-tts` package: `POST /design` with
 `{"text", "description", "seed"}` answers a WAV (at most 29 s, peak
-normalized, 16-bit), `GET /health` answers 503 until the model is
-loaded. `voiceDesign.modelRevision` pins the model's commit (the whole
+normalized, 16-bit; generation stops at 29 s of speech, so a run that
+does not end cannot grow in time and memory), `GET /health` answers 503
+until the model is loaded. `voiceDesign.modelRevision` pins the model's commit (the whole
 repository is downloaded at that revision and loaded from disk). For local
 runs, `make fake-tts` answers `/design` with a tone.
 
