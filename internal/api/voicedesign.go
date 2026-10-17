@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -100,4 +101,48 @@ func (s *Server) DesignBookVoices(ctx context.Context, req DesignBookVoicesReque
 		}
 	}
 	return DesignBookVoices202JSONResponse(VoiceDesignBatch{Queued: n}), nil
+}
+
+// retryDesign queues a failed design again before its job is (so a worker
+// never finds the job with the design still failed); it returns why the
+// design cannot be retried.
+func (s *Server) retryDesign(ctx context.Context, j *store.Job) (string, error) {
+	if s.Designer == nil {
+		return "voice design is not configured", nil
+	}
+	id, err := strconv.ParseInt(j.Payload, 10, 64)
+	if err != nil {
+		return "", nil // the job fails again by itself
+	}
+	c, err := s.Store.GetCharacter(ctx, id)
+	if isNotFound(err) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	b, err := s.Store.GetBook(ctx, c.BookID)
+	if err != nil {
+		return "", err
+	}
+	if msg := s.designBlocked(b); msg != "" {
+		return msg, nil
+	}
+	_, err = s.Store.TransitionDesign(ctx, id, store.DesignQueued, map[string]any{"design_error": ""},
+		store.DesignFailed, store.DesignNone)
+	return "", err
+}
+
+// undoRetryDesign takes back retryDesign when the job could not be retried.
+func (s *Server) undoRetryDesign(ctx context.Context, j *store.Job) {
+	id, err := strconv.ParseInt(j.Payload, 10, 64)
+	if err != nil {
+		return
+	}
+	if n, err := s.Store.PendingJobs(ctx, voicedesign.JobType, j.Payload); err != nil || n > 0 {
+		return
+	}
+	if _, err := s.Store.TransitionDesign(ctx, id, store.DesignFailed, map[string]any{"design_error": "canceled"},
+		store.DesignQueued); err != nil {
+		s.Log.Error("undo voice design retry", "character", id, "err", err)
+	}
 }

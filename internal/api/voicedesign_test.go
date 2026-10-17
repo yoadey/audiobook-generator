@@ -90,6 +90,8 @@ func TestVoiceDesign(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, store.DesignQueued, got.DesignStatus)
 		assert.Empty(t, got.DesignError)
+		assert.Equal(t, http.StatusConflict, plain.json(http.MethodPost, "/api/jobs/"+itoa(jobs[0].ID)+"/retry", nil, nil),
+			"no designer to run it")
 
 		// A book of another engine designs none (its voices are another engine's).
 		var e api.Error
@@ -113,6 +115,14 @@ func TestVoiceDesign(t *testing.T) {
 			map[string]any{"voice": "cb:Adrian.wav"}, &detail))
 		assert.Equal(t, api.VoiceDesignStatusNone, detail.VoiceDesign.Status)
 		assert.Equal(t, "cb:Adrian.wav", detail.Voice)
+
+		// Designed again: canceling the stale first job keeps the new design.
+		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, path,
+			map[string]any{"description": "A bright voice."}, &vd))
+		require.Equal(t, http.StatusOK, c.json(http.MethodPost, "/api/jobs/"+itoa(jobs[0].ID)+"/cancel", nil, nil))
+		got, err = s.GetCharacter(ctx, anna.ID)
+		require.NoError(t, err)
+		assert.Equal(t, store.DesignQueued, got.DesignStatus)
 	})
 }
 

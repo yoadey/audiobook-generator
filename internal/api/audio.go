@@ -380,7 +380,18 @@ func (s *Server) RetryJob(ctx context.Context, req RetryJobRequestObject) (Retry
 			return RetryJob409JSONResponse{Message: "the chapter is already queued for rendering"}, nil
 		}
 	}
+	if j.Type == voicedesign.JobType {
+		if msg, err := s.retryDesign(ctx, j); err != nil || msg != "" {
+			if err != nil {
+				return nil, err
+			}
+			return RetryJob409JSONResponse{Message: msg}, nil
+		}
+	}
 	if err := s.Store.RetryFailedJob(ctx, j.ID); errors.Is(err, store.ErrInvalid) {
+		if j.Type == voicedesign.JobType {
+			s.undoRetryDesign(ctx, j)
+		}
 		return RetryJob409JSONResponse{Message: "only failed or canceled jobs can be retried"}, nil
 	} else if err != nil {
 		return nil, err
@@ -402,14 +413,6 @@ func (s *Server) RetryJob(ctx context.Context, req RetryJobRequestObject) (Retry
 		if _, err := s.Store.TransitionAttribution(ctx, *j.ChapterID, store.AttributionQueued,
 			map[string]any{"attribution_error": "", "attribution_part": 0}, store.AttributionNone); err != nil {
 			return nil, err
-		}
-	}
-	if j.Type == voicedesign.JobType {
-		if id, err := strconv.ParseInt(j.Payload, 10, 64); err == nil {
-			if _, err := s.Store.TransitionDesign(ctx, id, store.DesignQueued, map[string]any{"design_error": ""},
-				store.DesignFailed, store.DesignNone); err != nil {
-				return nil, err
-			}
 		}
 	}
 	if w, ok := s.Jobs.(interface{ Wake(queue string) }); ok {
@@ -454,10 +457,15 @@ func (s *Server) CancelJob(ctx context.Context, req CancelJobRequestObject) (Can
 		}
 	}
 	if j.Type == voicedesign.JobType {
+		// Unless a later design of the character is still pending.
 		if id, err := strconv.ParseInt(j.Payload, 10, 64); err == nil {
-			if _, err := s.Store.TransitionDesign(ctx, id, store.DesignFailed, map[string]any{"design_error": "canceled"},
-				store.DesignQueued, store.DesignRunning); err != nil {
+			if n, err := s.Store.PendingJobs(ctx, voicedesign.JobType, j.Payload); err != nil {
 				return nil, err
+			} else if n == 0 {
+				if _, err := s.Store.TransitionDesign(ctx, id, store.DesignFailed,
+					map[string]any{"design_error": "canceled"}, store.DesignQueued, store.DesignRunning); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

@@ -41,6 +41,15 @@ func (s *Store) AssignDesignedVoice(ctx context.Context, characterID int64, voic
 	return ok, err
 }
 
+// PendingJobs counts the queued and running jobs of a type with a payload.
+func (s *Store) PendingJobs(ctx context.Context, jobType, payload string) (int64, error) {
+	var n int64
+	err := s.db.WithContext(ctx).Model(&Job{}).
+		Where("type = ? AND payload = ? AND status IN ?", jobType, payload, []JobStatus{JobQueued, JobRunning}).
+		Count(&n).Error
+	return n, err
+}
+
 // PendingJobsOfType counts the queued and running jobs of a type.
 func (s *Store) PendingJobsOfType(ctx context.Context, jobType string) (int64, error) {
 	var n int64
