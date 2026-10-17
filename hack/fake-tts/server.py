@@ -209,6 +209,12 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(DESIGN_SECONDS)
             self._send(200, wav(tone(3)), "audio/wav")
             return
+        if self.path == "/api/unload":
+            self._send(200, json.dumps({"status": "unloaded"}).encode(), "application/json")
+            return
+        if self.path == "/restart_server":
+            self._send(200, json.dumps({"message": "loaded", "restart_needed": False}).encode(), "application/json")
+            return
         if self.path == "/tts":
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
             voice = req.get("predefined_voice_id") if req.get("voice_mode") == "predefined" else req.get("reference_audio_filename")

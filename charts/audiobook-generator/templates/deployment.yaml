@@ -122,6 +122,8 @@ spec:
               value: {{ .Values.tts.concurrency | int | quote }}
             - name: ABG_TTS_DEFAULT_VOICE
               value: {{ .Values.tts.defaultVoice | quote }}
+            - name: ABG_TTS_UNLOAD_IDLE
+              value: {{ .Values.tts.unloadIdle | quote }}
             {{- with include "abg.ttsEngines" . }}
             - name: ABG_TTS_ENGINES
               value: {{ . | quote }}

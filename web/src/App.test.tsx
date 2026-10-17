@@ -1116,10 +1116,17 @@ describe('App', () => {
   it('saves the sample text of voice previews', async () => {
     const fetch = stubApi({
       '/api/llm/providers': [],
-      'GET /api/settings': { previewText: '', defaultPreviewText: 'It was a bright cold day.' },
+      'GET /api/settings': {
+        previewText: '',
+        defaultPreviewText: 'It was a bright cold day.',
+        unloadIdleModels: true,
+        unloadIdleSeconds: 600,
+      },
       'PATCH /api/settings': {
         previewText: 'Call me Ishmael.',
         defaultPreviewText: 'It was a bright cold day.',
+        unloadIdleModels: true,
+        unloadIdleSeconds: 600,
       },
     });
     renderAt('/settings');
@@ -1137,6 +1144,37 @@ describe('App', () => {
     expect(
       await screen.findByRole('button', { name: 'Use the built-in text' }),
     ).toBeInTheDocument();
+  });
+
+  it('turns off unloading idle speech models', async () => {
+    const fetch = stubApi({
+      '/api/llm/providers': [],
+      'GET /api/settings': {
+        previewText: '',
+        defaultPreviewText: 'It was a bright cold day.',
+        unloadIdleModels: true,
+        unloadIdleSeconds: 600,
+      },
+      'PATCH /api/settings': {
+        previewText: '',
+        defaultPreviewText: 'It was a bright cold day.',
+        unloadIdleModels: false,
+        unloadIdleSeconds: 600,
+      },
+    });
+    renderAt('/settings');
+    const toggle = await screen.findByRole('switch', { name: /Unload idle models/ });
+    expect(toggle).toBeChecked();
+    expect(screen.getByText(/after 10 minutes without speaking/)).toBeInTheDocument();
+    fireEvent.click(toggle);
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PATCH')).toBe(
+        true,
+      ),
+    );
+    const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
+    expect(await (patch[0] as Request).json()).toEqual({ unloadIdleModels: false });
+    await vi.waitFor(() => expect(toggle).not.toBeChecked());
   });
 
   it('lists the voice catalogue', async () => {

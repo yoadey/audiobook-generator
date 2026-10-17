@@ -52,6 +52,11 @@ func TestPreviewTexts(t *testing.T) {
 		var st api.AppSettings
 		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/settings", nil, &st))
 		assert.Empty(t, st.PreviewText)
+		assert.True(t, st.UnloadIdleModels, "idle speech models are unloaded by default")
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/settings",
+			map[string]any{"unloadIdleModels": false}, &st))
+		assert.False(t, st.UnloadIdleModels)
+		assert.Empty(t, st.PreviewText, "other settings stay")
 		builtin := st.DefaultPreviewText
 		require.NotEmpty(t, builtin)
 		assert.Equal(t, builtin, c.says(map[string]any{"voice": "af_heart"}))

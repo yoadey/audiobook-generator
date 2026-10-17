@@ -155,6 +155,9 @@ type TTS struct {
 	// Engines are speech servers besides Kokoro (a JSON list, see
 	// tts.EngineConfig), whose voices are written "<name>:<voice>".
 	Engines tts.Engines `env:"ENGINES"`
+	// UnloadIdle is how long a Chatterbox engine speaks nothing before its
+	// model is unloaded (when the setting allows it; 0: never).
+	UnloadIdle time.Duration `env:"UNLOAD_IDLE" envDefault:"10m"`
 }
 
 // Load reads the configuration from the environment and validates it.
@@ -217,6 +220,9 @@ func (c Config) Validate() error {
 	}
 	if c.FeedSecret != "" && len(c.FeedSecret) < 16 {
 		errs = append(errs, errors.New("ABG_FEED_SECRET must be at least 16 characters"))
+	}
+	if c.TTS.UnloadIdle < 0 {
+		errs = append(errs, fmt.Errorf("ABG_TTS_UNLOAD_IDLE must not be negative, got %s", c.TTS.UnloadIdle))
 	}
 	if c.TTS.Concurrency < 1 {
 		errs = append(errs, fmt.Errorf("ABG_TTS_CONCURRENCY must be at least 1, got %d", c.TTS.Concurrency))

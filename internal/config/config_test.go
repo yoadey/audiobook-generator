@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +18,7 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, DialectSQLite, cfg.DB.Type)
 	assert.Equal(t, filepath.Join("/srv/data", "audiobook-generator.db"), cfg.DB.SQLitePath)
 	assert.Equal(t, "http://localhost:8880", cfg.TTS.URL)
+	assert.Equal(t, 10*time.Minute, cfg.TTS.UnloadIdle)
 }
 
 func TestLoadPostgres(t *testing.T) {
@@ -53,6 +55,7 @@ func TestValidate(t *testing.T) {
 		"bad engine":            {"ABG_TTS_ENGINES": `[{"name":"x","kind":"piper","url":"http://x"}]`},
 		"bad engines json":      {"ABG_TTS_ENGINES": `[{`},
 		"no engine at all":      {"ABG_TTS_KOKORO": "false"},
+		"negative unload idle":  {"ABG_TTS_UNLOAD_IDLE": "-1m"},
 	}
 	for name, envs := range tests {
 		t.Run(name, func(t *testing.T) {

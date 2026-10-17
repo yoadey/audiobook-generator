@@ -40,6 +40,11 @@ tests:
           content:
             name: ABG_TTS_DEFAULT_VOICE
             value: af_heart
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_UNLOAD_IDLE
+            value: 10m
       - equal:
           path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
           value: true

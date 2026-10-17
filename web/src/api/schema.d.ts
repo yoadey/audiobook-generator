@@ -1278,9 +1278,14 @@ export interface components {
       previewText: string;
       /** @description The built-in sample text */
       defaultPreviewText: string;
+      /** @description Whether Chatterbox engines unload their model after unloadIdleSeconds without speaking (loaded again on next use) */
+      unloadIdleModels: boolean;
+      /** @description Idle time before a model is unloaded (deployment; 0 - never) */
+      unloadIdleSeconds: number;
     };
     AppSettingsUpdate: {
       previewText?: string;
+      unloadIdleModels?: boolean;
     };
     Voice: {
       id: string;
