@@ -9,6 +9,10 @@ metadata:
     app.kubernetes.io/component: kokoro
 spec:
   replicas: {{ $k.replicas }}
+  {{- with $k.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "abg.kokoro.selectorLabels" . | nindent 6 }}
