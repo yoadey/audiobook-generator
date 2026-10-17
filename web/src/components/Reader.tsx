@@ -64,6 +64,8 @@ export function Reader({
   const [marked, setMarked] = useState<number | undefined>(startSegment);
   // Scroll events until then come from a scroll this component started.
   const ownScroll = useRef(false);
+  // When the reader's last own scroll started.
+  const ownStart = useRef(0);
   const ownTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const readTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const placed = useRef<number | null>(null);
@@ -132,6 +134,7 @@ export function Reader({
     if (!el) return false;
     const top = el.getBoundingClientRect().top + window.scrollY - window.innerHeight / 3;
     ownScroll.current = true;
+    ownStart.current = Date.now();
     clearTimeout(ownTimer.current);
     ownTimer.current = setTimeout(() => (ownScroll.current = false), smooth ? 1200 : 150);
     window.scrollTo?.({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
@@ -146,6 +149,7 @@ export function Reader({
     const target = startSegment ?? active;
     if (target === undefined || !scrollTo(target, false)) {
       ownScroll.current = true;
+      ownStart.current = Date.now();
       window.scrollTo?.({ top: 0 });
       ownTimer.current = setTimeout(() => (ownScroll.current = false), 150);
     }
@@ -160,17 +164,22 @@ export function Reader({
   // The user scrolls: while playing, stop following; while paused, the
   // first segment in view becomes the position once scrolling rests. A
   // scroll counts as the user's after their own input (wheel, touch,
-  // keys, a press on the scrollbar), also during a scroll of ours.
+  // scroll keys, a press on the scrollbar) made after our scroll began,
+  // also while ours is still running. Clicks and space (play) are no
+  // scrolling: the scroll they cause is ours.
   useEffect(() => {
     let input = 0;
     const touched = () => (input = Date.now());
     const keyed = (e: KeyboardEvent) => {
-      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key))
-        touched();
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) touched();
+    };
+    // A press on the page's scrollbar targets the root element.
+    const pressed = (e: MouseEvent) => {
+      if (e.target === document.documentElement) touched();
     };
     const done = () => (ownScroll.current = false);
     const onScroll = () => {
-      if (Date.now() - input < 1000) {
+      if (input > ownStart.current && Date.now() - input < 1000) {
         ownScroll.current = false;
         clearTimeout(ownTimer.current);
       }
@@ -191,13 +200,15 @@ export function Reader({
         }
       }, READ_DELAY_MS);
     };
-    const inputs = ['wheel', 'touchstart', 'touchmove', 'mousedown'] as const;
+    const inputs = ['wheel', 'touchmove'] as const;
     for (const ev of inputs) window.addEventListener(ev, touched, { passive: true });
+    window.addEventListener('mousedown', pressed);
     window.addEventListener('keydown', keyed);
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('scrollend', done);
     return () => {
       for (const ev of inputs) window.removeEventListener(ev, touched);
+      window.removeEventListener('mousedown', pressed);
       window.removeEventListener('keydown', keyed);
       window.removeEventListener('scroll', onScroll);
       window.removeEventListener('scrollend', done);

@@ -33,6 +33,16 @@ func TestSpoken(t *testing.T) {
 		"A ~decorated~ word, _really_ | there":                                   "A decorated word, really there",
 		"<System> Level up":                                                      "System Level up",
 		"Plain text stays.":                                                      "Plain text stays.",
+		"GET OUT!":                                                               "Get out!",
+		"WHO ARE YOU?":                                                           "Who are you?",
+		"I’M NOT GOING":                                                          "I’m not going",
+		"THE CIA DID IT!":                                                        "The CIA did it!",
+		"See Chapter IV for details":                                             "See Chapter 4 for details",
+		"Act I Scene II":                                                         "Act 1 Scene 2",
+		"Chapter\u00a0XII":                                                       "Chapter 12",
+		"‘I won’t,’ she said. ‘em":                                               "I won’t, she said. em",
+		"Ryoka’s run, rock’n’roll":                                               "Ryoka’s run, rock’n’roll",
+		"[Skill: [Ryoka](/ɹjˈOkə/)’s Run]":                                       "Skill: [Ryoka](/ɹjˈOkə/)’s Run",
 	} {
 		assert.Equal(t, want, spoken(in), in)
 	}

@@ -159,6 +159,27 @@ func TestThoughts(t *testing.T) {
 		strip(th3("I hate this place, she thought, and left.", Span{0, 17})))
 	assert.Equal(t, []Part{th(1, "Not again!"), n("He sighed.")},
 		strip(th3("Not again! He sighed.", Span{0, 10})))
+	// The tag must follow the run as "[,] subject tag"; a name works too,
+	// "told" only with a reflexive pronoun.
+	assert.Equal(t, []Part{th(1, "What a fool"), n("Erin thought.")},
+		strip(th3("What a fool Erin thought.", Span{0, 11})))
+	assert.Equal(t, []Part{th(1, "Stay calm"), n("he told himself.")},
+		strip(th3("Stay calm he told himself.", Span{0, 9})))
+	assert.Equal(t, []Part{n("Read The Old Man and the Sea he told her.")},
+		strip(th3("Read The Old Man and the Sea he told her.", Span{5, 28})))
+	assert.Equal(t, []Part{n("The Grand Hotel was where she knew him.")},
+		strip(th3("The Grand Hotel was where she knew him.", Span{4, 15})))
+	assert.Equal(t, []Part{n("She saw The Last Supper and thought of home.")},
+		strip(th3("She saw The Last Supper and thought of home.", Span{8, 23})))
+	// Lower case after a dash, a colon or a thought tag.
+	assert.Equal(t, []Part{n("She thought:"), th(1, "this cannot be right.")},
+		strip(th3("She thought: this cannot be right.", Span{13, 34})))
+	assert.Equal(t, []Part{n("And then he thought,"), th(1, "why not?")},
+		strip(th3("And then he thought, why not?", Span{21, 29})))
+	assert.Equal(t, []Part{n("It was, as they say, a very bad day.")},
+		strip(th3("It was, as they say, a very bad day.", Span{21, 36})))
+	assert.Equal(t, []Part{n("He thought,"), th(1, "‘what now?’")},
+		New(CurlyDouble).Paragraph("He thought, ‘what now?’"))
 	long := strings.Repeat("word ", 45) + "end."
 	assert.Equal(t, Narration, th3(long, Span{0, len([]rune(long))})[0].Kind, "a whole italic paragraph")
 

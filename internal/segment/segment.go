@@ -305,40 +305,121 @@ func (s *Segmenter) thoughts(runes []rune, pieces []piece, emph []Span) []piece 
 // italic paragraphs) stay narration.
 const maxThoughtWords = 40
 
-// thoughtTags follow a thought: "*I hate this place*, she thought".
-var thoughtTags = []string{
-	"thought", "thinks", "think", "wondered", "wonders", "mused", "realized", "realised", "decided",
-	"knew", "hoped", "wished", "reminded", "told", "figured", "reflected", "considered", "prayed",
-}
+// thoughtTags name a thought: "*I hate this place*, she thought". The
+// reflexive tags only with a reflexive pronoun ("she told herself").
+var (
+	thoughtTags = map[string]bool{
+		"thought": true, "thinks": true, "think": true, "wondered": true, "wonders": true, "mused": true,
+		"muses": true, "realized": true, "realised": true, "hoped": true, "wished": true, "reflected": true,
+		"considered": true, "prayed": true,
+	}
+	reflexiveTags = map[string]bool{"told": true, "tells": true, "reminded": true, "reminds": true, "asked": true}
+	reflexives    = map[string]bool{
+		"himself": true, "herself": true, "themselves": true, "myself": true, "yourself": true, "ourselves": true,
+		"itself": true,
+	}
+	tagSubjects = map[string]bool{"he": true, "she": true, "i": true, "they": true, "we": true, "you": true, "it": true}
+)
 
 // isThought: an italic run is a thought when it reads like one: it starts
-// a sentence or clause (a capital), has two to maxThoughtWords words, and
-// ends a clause itself or is followed by a tag like "she thought". Stress
-// on words ("she had *never in her life* seen") and titles ("*Queen Mary
-// II*") are not.
+// a sentence or clause (a capital, or any letter after a dash, a colon or
+// a thought tag), has two to maxThoughtWords words, and ends a clause
+// itself or is followed by a tag like "she thought". Stress on words ("she
+// had *never in her life* seen") and titles ("*Queen Mary II*") are not.
 func isThought(runes []rune, e Span) bool {
 	r := runes[e.Start:e.End]
 	n := words(r)
-	if n < 2 || n > maxThoughtWords || !startsCapital(r) {
+	if n < 2 || n > maxThoughtWords || !startsCapital(r) && !opensClause(runes, e.Start) {
 		return false
 	}
-	if endsClause(r) {
+	return endsClause(r) || taggedAfter(runes, e.End)
+}
+
+// taggedAfter: the text after a run starts with a thought tag: "[,] she
+// thought", "Erin wondered", "he told himself".
+func taggedAfter(runes []rune, end int) bool {
+	rest := []rune(strings.TrimLeft(string(runes[end:min(len(runes), end+60)]), ",;:—– ”’\"'»›"))
+	w := tagWords(rest, 4)
+	if len(w) < 2 {
+		return false
+	}
+	// The subject: a pronoun or a name of one or two capitalized words.
+	k := 1
+	switch {
+	case tagSubjects[strings.ToLower(w[0])]:
+	case isName(w[0]) && len(w) > 2 && isName(w[1]) && !isTag(w[1], ""):
+		k = 2
+	case isName(w[0]):
+	default:
+		return false
+	}
+	next := ""
+	if k+1 < len(w) {
+		next = w[k+1]
+	}
+	return isTag(w[k], next)
+}
+
+// taggedBefore: a thought tag right before start ("she thought, *what
+// now*"), so the thought may start in lower case.
+func taggedBefore(runes []rune, start int) bool {
+	before := strings.TrimRight(string(runes[max(0, start-40):start]), " ,:—–“‘\"'«‹")
+	w := strings.Fields(before)
+	if len(w) < 2 {
+		return false
+	}
+	last := strings.ToLower(strings.TrimFunc(w[len(w)-1], func(c rune) bool { return !unicode.IsLetter(c) }))
+	if reflexives[last] && len(w) >= 3 {
+		return isTag(w[len(w)-2], last)
+	}
+	return isTag(w[len(w)-1], "")
+}
+
+// opensClause: the text before start ends with a dash or colon, or with a
+// thought tag, where a thought may start in lower case.
+func opensClause(runes []rune, start int) bool {
+	t := []rune(strings.TrimRight(string(runes[max(0, start-40):start]), " “‘\"'«‹"))
+	if len(t) > 0 && strings.ContainsRune("—–:", t[len(t)-1]) {
 		return true
 	}
-	// A tag among the next few words.
-	next := strings.Fields(string(runes[e.End:min(len(runes), e.End+40)]))
-	for k, w := range next {
-		if k >= 4 {
-			break
-		}
-		w = strings.ToLower(strings.TrimFunc(w, func(c rune) bool { return !unicode.IsLetter(c) }))
-		for _, t := range thoughtTags {
-			if w == t {
-				return true
-			}
+	return taggedBefore(runes, start)
+}
+
+// isTag: w names a thought (next: the word after it, for "told herself").
+func isTag(w, next string) bool {
+	w = strings.ToLower(strings.TrimFunc(w, func(c rune) bool { return !unicode.IsLetter(c) }))
+	next = strings.ToLower(strings.TrimFunc(next, func(c rune) bool { return !unicode.IsLetter(c) }))
+	return thoughtTags[w] || reflexiveTags[w] && reflexives[next]
+}
+
+// isName: a capitalized word of letters (punctuation after it allowed).
+func isName(w string) bool {
+	r := []rune(strings.TrimRight(w, ",.;:!?"))
+	if len(r) == 0 || !unicode.IsUpper(r[0]) {
+		return false
+	}
+	for _, c := range r {
+		if !unicode.IsLetter(c) && c != '-' && c != '\'' && c != '’' {
+			return false
 		}
 	}
-	return false
+	return true
+}
+
+// tagWords: up to n words at the start of r, stopping after a word that
+// ends with punctuation (the tag ends a clause there).
+func tagWords(r []rune, n int) []string {
+	var out []string
+	for _, w := range strings.Fields(string(r)) {
+		if len(out) == n {
+			break
+		}
+		out = append(out, w)
+		if strings.ContainsAny(w[len(w)-1:], ",.;:!?—–") {
+			break
+		}
+	}
+	return out
 }
 
 // startsCapital: the first letter (after marks) is a capital.
@@ -394,7 +475,7 @@ func (s *Segmenter) singleQuoted(runes []rune, from, to int) []Span {
 	var out []Span
 	for i := from; i < to; i++ {
 		if runes[i] != open || !opensAfter(runes, i) || isElision(runes, i) ||
-			i+1 >= to || !unicode.IsUpper(runes[i+1]) {
+			i+1 >= to || !unicode.IsUpper(runes[i+1]) && !(unicode.IsLetter(runes[i+1]) && opensClause(runes, i)) {
 			continue
 		}
 		for j := i + 1; j < to; j++ {
