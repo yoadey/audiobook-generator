@@ -163,6 +163,8 @@ var ErrUnknownEngine = errors.New("tts: the voice's engine is not configured")
 type Engine struct {
 	Name string
 	Kind string
+	// Variant of a Chatterbox engine ("" otherwise).
+	Variant string
 	// Emotions: it speaks emotions itself (no pace and loudness for them).
 	Emotions bool
 	// Speed: it takes a voice's speed.
@@ -268,7 +270,7 @@ func (r *Router) Engines(ctx context.Context) []Engine {
 	out := make([]Engine, 0, len(r.names))
 	for _, n := range r.names {
 		e := r.engines[n]
-		info := Engine{Name: n, Kind: e.cfg.Kind, Emotions: e.expressive(), Speed: *e.cfg.Speed}
+		info := Engine{Name: n, Kind: e.cfg.Kind, Variant: e.cfg.Variant, Emotions: e.expressive(), Speed: *e.cfg.Speed}
 		vs, err := e.voices(ctx, false)
 		if err != nil {
 			info.Err = err.Error()

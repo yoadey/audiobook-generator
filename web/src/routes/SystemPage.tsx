@@ -14,7 +14,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
-import { systemInfoQuery } from '../api/client';
+import { systemInfoQuery, ttsEnginesQuery } from '../api/client';
 
 function InfoCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -42,6 +42,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 
 export function SystemPage() {
   const { data, error, isPending } = useQuery(systemInfoQuery);
+  const engines = useQuery(ttsEnginesQuery);
 
   return (
     <Stack>
@@ -86,6 +87,26 @@ export function SystemPage() {
               </Text>
             )}
           </InfoCard>
+          {(engines.data ?? []).map((e) => (
+            <InfoCard key={e.name} title={`Speech engine ${e.name}`}>
+              <Row label="Status">
+                <Badge color={e.error ? 'red' : 'green'} variant="light">
+                  {e.error ? 'unreachable' : 'reachable'}
+                </Badge>
+              </Row>
+              <Row label="Kind">
+                {e.kind}
+                {e.variant ? ` (${e.variant})` : ''}
+              </Row>
+              <Row label="Voices">{e.voices.length}</Row>
+              <Row label="Emotions">{e.emotions ? 'spoken by the engine' : 'as loudness'}</Row>
+              {e.error && (
+                <Text c="red" size="xs">
+                  {e.error}
+                </Text>
+              )}
+            </InfoCard>
+          ))}
         </SimpleGrid>
       )}
     </Stack>

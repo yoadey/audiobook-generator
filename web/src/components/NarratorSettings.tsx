@@ -17,7 +17,15 @@ import { IconPlayerPlay, IconPlayerStop } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 
-import { type Book, previewVoice, settingsQuery, updateBook, voicesQuery } from '../api/client';
+import {
+  type Book,
+  previewVoice,
+  settingsQuery,
+  ttsEnginesQuery,
+  updateBook,
+  voicesQuery,
+} from '../api/client';
+import { splitEngineVoice } from '../lib/recipe';
 import { notifyError, notifySuccess } from '../lib/notify';
 
 const accents: Record<string, string> = { 'en-US': 'American', 'en-GB': 'British' };
@@ -45,7 +53,19 @@ export function NarratorSettings({ book }: { book: Book }) {
         label: `${v.id} · ${v.gender}${v.grade ? ` · grade ${v.grade}` : ''}${v.traits ? ` · ${v.traits}` : ''}`,
       })),
   }));
-  const isMix = !english.some((v) => v.id === voice);
+  // Voices of other engines ("chatterbox:Emily.wav"), one group each.
+  const engines = useQuery(ttsEnginesQuery);
+  for (const e of engines.data ?? []) {
+    groups.push({
+      group: `${e.name}${e.variant ? ` (${e.variant})` : ''}`,
+      items: e.voices.map((v) => ({ value: `${e.name}:${v}`, label: `${e.name}:${v}` })),
+    });
+  }
+  const engineVoice = splitEngineVoice(voice);
+  const engineInfo = engines.data?.find((e) => e.name === engineVoice?.engine);
+  const isMix =
+    !english.some((v) => v.id === voice) &&
+    !(engineVoice && engineInfo?.voices.includes(engineVoice.voice));
 
   const save = useMutation({
     mutationFn: () =>
@@ -93,7 +113,7 @@ export function NarratorSettings({ book }: { book: Book }) {
           {isMix ? (
             <TextInput
               label="Voice (mix)"
-              description="e.g. bf_emma(2)+af_bella(1)"
+              description="e.g. bf_emma(2)+af_bella(1) or chatterbox:Emily.wav"
               value={voice}
               onChange={(e) => setVoice(e.currentTarget.value)}
               w={300}
@@ -151,6 +171,15 @@ export function NarratorSettings({ book }: { book: Book }) {
             w={160}
           />
         </Group>
+        {engineVoice && (
+          <Text size="xs" c="dimmed">
+            The narrator speaks with {engineVoice.engine}
+            {engineInfo?.variant ? ` (${engineInfo.variant})` : ''}, which reads most of the book:
+            much slower than Kokoro without a GPU.
+            {engineInfo && !engineInfo.speed && ' It paces itself (the speed is not applied).'}
+            {!engineInfo && ' This engine is not configured.'}
+          </Text>
+        )}
         <Textarea
           label="Sample text"
           description="What voice previews in this book say (with its pronunciations); empty for the text in Settings."

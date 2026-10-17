@@ -2267,6 +2267,9 @@ components:
         kind:
           type: string
           enum: [openai, chatterbox]
+        variant:
+          type: string
+          description: The model a Chatterbox engine runs (original, turbo or nano)
         emotions:
           type: boolean
           description: Speaks emotions and moods itself (Kokoro voices get pace and loudness instead)

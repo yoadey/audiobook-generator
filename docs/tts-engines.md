@@ -11,11 +11,12 @@ Kokoro keeps the narration (most of a book).
 - An engine is configured by name; its voices are written
   `<name>:<voice>`, e.g. `chatterbox:Emily.wav`. Voices without a prefix
   are Kokoro's. Engine voices stand alone; they are not mixed with others.
-- The voice editor of a character offers *Kokoro* or each engine. It lists
-  the engine's voices, previews them, with an emotion if the engine speaks
-  emotions itself. A narrator voice of an engine can be set through the
-  API (`PATCH /api/books/{id}`), though narrating a whole book with a slow
-  engine is rarely sensible.
+- *Voices* lists each engine with its voices and previews them (with an
+  emotion if the engine speaks emotions itself); *System* shows whether
+  each engine is reachable.
+- The voice editor of a character offers *Kokoro* or each engine. The
+  narrator's voice (book page, *Narrator*) offers the engines' voices too,
+  though narrating a whole book with a slow engine is rarely sensible.
 - A voice whose engine is not configured is refused when saved; lines of
   such a voice (left from an earlier configuration) fail to render with a
   clear message.

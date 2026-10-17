@@ -150,7 +150,7 @@ func TestRouterChatterbox(t *testing.T) {
 
 	es := r.Engines(ctx)
 	require.Len(t, es, 1)
-	assert.Equal(t, Engine{Name: "chatterbox", Kind: KindChatterbox, Emotions: true,
+	assert.Equal(t, Engine{Name: "chatterbox", Kind: KindChatterbox, Variant: VariantOriginal, Emotions: true,
 		Voices: []string{"Emily.wav", "anna.wav", "extra.wav"}}, es[0])
 
 	pcm, err := r.Synthesize(ctx, Speech{Text: "Hello.", Voice: "chatterbox:Emily.wav", Speed: 1.2, Emotion: "angry"})

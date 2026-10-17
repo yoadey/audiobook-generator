@@ -127,8 +127,9 @@ URLs carry a token instead, so treat them like passwords.
   shows what was found and can prepare it again.
 - **Other speech engines** (optional): voices of further engines, such as
   Chatterbox, which acts emotions itself, can be given to characters
-  (voice editor: *Kokoro* or the engine) while Kokoro keeps the
-  narration. Configure them with `tts.engines`, or let the chart run
+  (voice editor: *Kokoro* or the engine) or the narrator (book page,
+  *Narrator*); *Voices* lists and previews them, *System* shows whether
+  each engine is reachable. Configure them with `tts.engines`, or let the chart run
   Chatterbox-TTS-Server (`tts.chatterbox.enabled`; it needs a GPU for
   more than a few characters). See [docs/tts-engines.md](docs/tts-engines.md),
   which also evaluates Chatterbox.

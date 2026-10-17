@@ -1606,8 +1606,11 @@ type TTSEngine struct {
 	Name  string        `json:"name"`
 
 	// Speed Takes a voice's speed
-	Speed  bool     `json:"speed"`
-	Voices []string `json:"voices"`
+	Speed bool `json:"speed"`
+
+	// Variant The model a Chatterbox engine runs (original, turbo or nano)
+	Variant *string  `json:"variant,omitempty"`
+	Voices  []string `json:"voices"`
 }
 
 // TTSEngineKind defines model for TTSEngine.Kind.

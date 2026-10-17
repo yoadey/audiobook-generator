@@ -1,10 +1,12 @@
 import {
   Alert,
   Badge,
+  Card,
   Center,
   Group,
   Loader,
   SegmentedControl,
+  Select,
   Stack,
   Table,
   Text,
@@ -14,15 +16,111 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { settingsQuery, type Voice, voicesQuery } from '../api/client';
+import {
+  type Emotion,
+  settingsQuery,
+  type TTSEngine,
+  ttsEnginesQuery,
+  type Voice,
+  voicesQuery,
+} from '../api/client';
 import { VoicePreviewButton } from '../components/VoicePreviewButton';
 import { usePreview } from '../lib/preview';
 
 type Filter = 'all' | Voice['gender'];
 
+const emotions: Emotion[] = [
+  'neutral',
+  'happy',
+  'sad',
+  'angry',
+  'afraid',
+  'surprised',
+  'whispering',
+  'shouting',
+  'sarcastic',
+];
+
+/** The voices of an engine besides Kokoro, with previews. */
+function EngineCard({
+  engine: e,
+  text,
+  preview,
+}: {
+  engine: TTSEngine;
+  text: string;
+  preview: ReturnType<typeof usePreview>;
+}) {
+  const [emotion, setEmotion] = useState<Emotion>('neutral');
+  return (
+    <Card withBorder>
+      <Stack gap="xs">
+        <Group justify="space-between">
+          <Group gap="xs">
+            <Text fw={600}>{e.name}</Text>
+            <Badge variant="light">
+              {e.kind}
+              {e.variant ? ` · ${e.variant}` : ''}
+            </Badge>
+            <Badge variant="light" color={e.error ? 'red' : 'green'}>
+              {e.error ? 'unreachable' : `${e.voices.length} voices`}
+            </Badge>
+          </Group>
+          {e.emotions && (
+            <Select
+              size="xs"
+              w={150}
+              data={emotions}
+              value={emotion}
+              onChange={(v) => v && setEmotion(v as Emotion)}
+              allowDeselect={false}
+              aria-label={`Preview emotion of ${e.name}`}
+            />
+          )}
+        </Group>
+        <Text size="sm" c="dimmed">
+          {e.emotions
+            ? 'Speaks emotions and moods itself.'
+            : 'Emotions are given by loudness (this model has no emotion control).'}{' '}
+          {e.speed ? '' : 'Paces itself. '}
+          Choose its voices as <Text span ff="monospace">{`${e.name}:<voice>`}</Text> for a
+          character (voice editor) or the narrator (book page, Narrator). Voices cloned from your
+          own clips appear here once uploaded to the engine (see docs/tts-engines.md).
+        </Text>
+        {e.error && (
+          <Text size="xs" c="red">
+            {e.error}
+          </Text>
+        )}
+        {e.voices.length > 0 && (
+          <Group gap="xs">
+            {e.voices.map((v) => (
+              <Group key={v} gap={2} wrap="nowrap">
+                <VoicePreviewButton
+                  id={`${e.name}:${v}`}
+                  voice={`${e.name}:${v}`}
+                  speed={1}
+                  text={text.trim() || undefined}
+                  preview={preview}
+                  label={`Listen to ${v}`}
+                  emotion={e.emotions ? emotion : undefined}
+                />
+                <Text ff="monospace" size="sm">
+                  {v}
+                </Text>
+              </Group>
+            ))}
+          </Group>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
 /** The Kokoro voice catalogue: what casting chooses from, with previews. */
 export function VoicesPage() {
   const voices = useQuery(voicesQuery);
+  const engines = useQuery(ttsEnginesQuery);
   const preview = usePreview();
   const settings = useQuery(settingsQuery);
   const [filter, setFilter] = useState<Filter>('all');
@@ -61,6 +159,15 @@ export function VoicesPage() {
         maxLength={500}
         maw={720}
       />
+      {(engines.data ?? []).map((e) => (
+        <EngineCard key={e.name} engine={e} text={text} preview={preview} />
+      ))}
+      {engines.data?.length === 0 && (
+        <Text size="xs" c="dimmed">
+          No speech engines besides Kokoro are configured (chart values tts.engines or
+          tts.chatterbox).
+        </Text>
+      )}
       {voices.isPending && (
         <Center py="xl">
           <Loader />

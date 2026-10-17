@@ -1326,6 +1326,8 @@ export interface components {
       name: string;
       /** @enum {string} */
       kind: 'openai' | 'chatterbox';
+      /** @description The model a Chatterbox engine runs (original, turbo or nano) */
+      variant?: string;
       /** @description Speaks emotions and moods itself (Kokoro voices get pace and loudness instead) */
       emotions: boolean;
       /** @description Takes a voice's speed */

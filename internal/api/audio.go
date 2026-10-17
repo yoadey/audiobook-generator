@@ -280,8 +280,8 @@ func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObje
 				voices = []string{}
 			}
 			out = append(out, TTSEngine{
-				Name: e.Name, Kind: TTSEngineKind(e.Kind), Emotions: e.Emotions, Speed: e.Speed, Voices: voices,
-				Error: nonEmpty(e.Err),
+				Name: e.Name, Kind: TTSEngineKind(e.Kind), Variant: nonEmpty(e.Variant), Emotions: e.Emotions,
+				Speed: e.Speed, Voices: voices, Error: nonEmpty(e.Err),
 			})
 		}
 	}
