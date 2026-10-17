@@ -241,6 +241,9 @@ func (c *Caster) Run(ctx context.Context, bookID int64, progress func(float64)) 
 		// round: the book may have switched engines meanwhile).
 		narratorVoice, _ := Narrator(b, c.DefaultVoice)
 		voices, err := c.Catalog.VoicesFor(ctx, narratorVoice)
+		if errors.Is(err, tts.ErrUnknownEngine) {
+			return jobs.Permanent(fmt.Errorf("the narrator's engine is not configured: %w", err))
+		}
 		if err != nil {
 			return err // the server is needed to know what it offers
 		}
@@ -604,6 +607,11 @@ func (c *Caster) Reconcile(ctx context.Context) (int, error) {
 			if !slices.ContainsFunc(chars, func(ch store.Character) bool {
 				return ch.VoiceRecipe != "" && !ch.VoiceManual && tts.EngineOf(ch.VoiceRecipe) != tts.EngineOf(voice)
 			}) {
+				continue
+			}
+			// Only when the narrator's engine can be cast from (not one
+			// this deployment lacks): that casting would fail every start.
+			if vs, err := c.Catalog.VoicesFor(ctx, voice); err != nil || len(Castable(vs)) == 0 {
 				continue
 			}
 			if err := c.Start(ctx, b, false); err != nil {

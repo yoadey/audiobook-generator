@@ -659,5 +659,14 @@ func TestEngineSwitchWhileCasting(t *testing.T) {
 		n, err = c.Reconcile(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, 0, n, "already queued")
+
+		// A narrator of an engine the deployment lacks is not recast at
+		// every start (the casting could only fail).
+		finishJobs(t, s)
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"NarratorVoice": "gone:x.wav",
+			"CastingStatus": store.CastingDone}))
+		n, err = c.Reconcile(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 0, n)
 	})
 }

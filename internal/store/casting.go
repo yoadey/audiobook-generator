@@ -51,10 +51,16 @@ func (s *Store) ClearCastVoices(ctx context.Context, ids ...int64) error {
 		return nil
 	}
 	return s.Tx(ctx, func(tx *Store) error {
-		if err := tx.TouchCharacterVoices(ctx, ids...); err != nil {
+		// Only those still cast (not chosen by the user meanwhile).
+		var cast []int64
+		if err := tx.db.Model(&Character{}).Where("id IN ? AND voice_manual = ? AND voice_recipe <> ''", ids, false).
+			Pluck("id", &cast).Error; err != nil || len(cast) == 0 {
 			return err
 		}
-		return tx.db.Model(&Character{}).Where("id IN ? AND voice_manual = ?", ids, false).
+		if err := tx.TouchCharacterVoices(ctx, cast...); err != nil {
+			return err
+		}
+		return tx.db.Model(&Character{}).Where("id IN ?", cast).
 			Updates(map[string]any{"voice_recipe": "", "voice_speed": 1, "voice_note": ""}).Error
 	})
 }
