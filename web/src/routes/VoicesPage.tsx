@@ -188,52 +188,54 @@ export function VoicesPage() {
         </Alert>
       )}
       {kokoro && voices.data && (
-        <Table striped highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th w={40} />
-              <Table.Th>Voice</Table.Th>
-              <Table.Th>Gender</Table.Th>
-              <Table.Th>Accent</Table.Th>
-              <Table.Th>Grade</Table.Th>
-              <Table.Th>Character</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {list.map((v) => (
-              <Table.Tr key={v.id}>
-                <Table.Td>
-                  <VoicePreviewButton
-                    id={v.id}
-                    voice={v.available ? v.id : ''}
-                    speed={1}
-                    text={text.trim() || undefined}
-                    preview={preview}
-                    label={`Listen to ${v.id}`}
-                  />
-                </Table.Td>
-                <Table.Td>
-                  <Group gap={6}>
-                    <Text ff="monospace" size="sm">
-                      {v.id}
-                    </Text>
-                    {!v.available && (
-                      <Badge size="xs" color="gray" variant="outline">
-                        not on the server
-                      </Badge>
-                    )}
-                  </Group>
-                </Table.Td>
-                <Table.Td>{v.gender}</Table.Td>
-                <Table.Td>{v.language === 'en-GB' ? 'British' : 'American'}</Table.Td>
-                <Table.Td>{v.grade ?? '–'}</Table.Td>
-                <Table.Td>
-                  <Text size="sm">{v.traits || '–'}</Text>
-                </Table.Td>
+        <Table.ScrollContainer minWidth={500} type="native">
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th w={40} />
+                <Table.Th>Voice</Table.Th>
+                <Table.Th>Gender</Table.Th>
+                <Table.Th>Accent</Table.Th>
+                <Table.Th>Grade</Table.Th>
+                <Table.Th>Character</Table.Th>
               </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
+            </Table.Thead>
+            <Table.Tbody>
+              {list.map((v) => (
+                <Table.Tr key={v.id}>
+                  <Table.Td>
+                    <VoicePreviewButton
+                      id={v.id}
+                      voice={v.available ? v.id : ''}
+                      speed={1}
+                      text={text.trim() || undefined}
+                      preview={preview}
+                      label={`Listen to ${v.id}`}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap={6}>
+                      <Text ff="monospace" size="sm">
+                        {v.id}
+                      </Text>
+                      {!v.available && (
+                        <Badge size="xs" color="gray" variant="outline">
+                          not on the server
+                        </Badge>
+                      )}
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>{v.gender}</Table.Td>
+                  <Table.Td>{v.language === 'en-GB' ? 'British' : 'American'}</Table.Td>
+                  <Table.Td>{v.grade ?? '–'}</Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{v.traits || '–'}</Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
     </Stack>
   );

@@ -211,58 +211,60 @@ export function LexiconPage() {
             Found while preparing chapters. They apply once accepted; a dismissed one is not
             suggested again.
           </Text>
-          <Table>
-            <Table.Tbody>
-              {suggested.map((e) => (
-                <Table.Tr key={e.id}>
-                  <Table.Td>{e.term}</Table.Td>
-                  <Table.Td>
-                    <Text size="sm">{e.replacement}</Text>
-                    {e.note && (
-                      <Text size="xs" c="dimmed">
-                        {e.note}
-                      </Text>
-                    )}
-                  </Table.Td>
-                  <Table.Td>
-                    <Group gap={4} justify="flex-end" wrap="nowrap">
-                      <VoicePreviewButton
-                        id={`suggestion-${e.id}`}
-                        voice={voice}
-                        speed={speed}
-                        text={spoken(e)}
-                        preview={preview}
-                        label={`Listen to ${e.term} as suggested`}
-                        lexicon={false}
-                      />
-                      <Tooltip label="Accept">
-                        <ActionIcon
-                          variant="subtle"
-                          color="green"
-                          aria-label={`Accept ${e.term}`}
-                          loading={decide.isPending && decide.variables?.id === e.id}
-                          onClick={() => decide.mutate({ id: e.id, status: 'active' })}
-                        >
-                          <IconCheck size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="Dismiss">
-                        <ActionIcon
-                          variant="subtle"
-                          color="gray"
-                          aria-label={`Dismiss ${e.term}`}
-                          disabled={decide.isPending && decide.variables?.id === e.id}
-                          onClick={() => decide.mutate({ id: e.id, status: 'dismissed' })}
-                        >
-                          <IconX size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                    </Group>
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
+          <Table.ScrollContainer minWidth={300} type="native">
+            <Table>
+              <Table.Tbody>
+                {suggested.map((e) => (
+                  <Table.Tr key={e.id}>
+                    <Table.Td>{e.term}</Table.Td>
+                    <Table.Td>
+                      <Text size="sm">{e.replacement}</Text>
+                      {e.note && (
+                        <Text size="xs" c="dimmed">
+                          {e.note}
+                        </Text>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap={4} justify="flex-end" wrap="nowrap">
+                        <VoicePreviewButton
+                          id={`suggestion-${e.id}`}
+                          voice={voice}
+                          speed={speed}
+                          text={spoken(e)}
+                          preview={preview}
+                          label={`Listen to ${e.term} as suggested`}
+                          lexicon={false}
+                        />
+                        <Tooltip label="Accept">
+                          <ActionIcon
+                            variant="subtle"
+                            color="green"
+                            aria-label={`Accept ${e.term}`}
+                            loading={decide.isPending && decide.variables?.id === e.id}
+                            onClick={() => decide.mutate({ id: e.id, status: 'active' })}
+                          >
+                            <IconCheck size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Dismiss">
+                          <ActionIcon
+                            variant="subtle"
+                            color="gray"
+                            aria-label={`Dismiss ${e.term}`}
+                            disabled={decide.isPending && decide.variables?.id === e.id}
+                            onClick={() => decide.mutate({ id: e.id, status: 'dismissed' })}
+                          >
+                            <IconX size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
         </Stack>
       )}
 
@@ -285,103 +287,105 @@ export function LexiconPage() {
             onChange={(e) => setSearch(e.currentTarget.value)}
             maw={300}
           />
-          <Table striped>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Word or name</Table.Th>
-                <Table.Th>Spoken as</Table.Th>
-                <Table.Th w={130} />
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {shown.map((e) =>
-                editing === e.id ? (
-                  <Table.Tr key={e.id}>
-                    <Table.Td colSpan={3}>
-                      <EntryForm
-                        initial={e}
-                        previewId={`draft-${e.id}`}
-                        voice={voice}
-                        speed={speed}
-                        preview={preview}
-                        submitLabel="Save"
-                        pending={update.isPending}
-                        onSubmit={(body) => update.mutate({ id: e.id, body })}
-                        onCancel={() => setEditing(null)}
-                      />
-                    </Table.Td>
-                  </Table.Tr>
-                ) : (
-                  <Table.Tr key={e.id}>
-                    <Table.Td>{e.term}</Table.Td>
-                    <Table.Td>
-                      <Group gap="xs">
-                        <Text size="sm" ff={e.phonemes ? 'monospace' : undefined}>
-                          {e.replacement}
-                        </Text>
-                        {e.phonemes && (
-                          <Badge size="xs" variant="light">
-                            IPA
-                          </Badge>
-                        )}
-                        {e.status === 'dismissed' && (
-                          <Tooltip label="A dismissed suggestion: not applied">
-                            <Badge size="xs" variant="light" color="gray">
-                              dismissed
-                            </Badge>
-                          </Tooltip>
-                        )}
-                      </Group>
-                    </Table.Td>
-                    <Table.Td>
-                      <Group gap={4} justify="flex-end" wrap="nowrap">
-                        <VoicePreviewButton
-                          id={`entry-${e.id}`}
+          <Table.ScrollContainer minWidth={300} type="native">
+            <Table striped>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Word or name</Table.Th>
+                  <Table.Th>Spoken as</Table.Th>
+                  <Table.Th w={130} />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {shown.map((e) =>
+                  editing === e.id ? (
+                    <Table.Tr key={e.id}>
+                      <Table.Td colSpan={3}>
+                        <EntryForm
+                          initial={e}
+                          previewId={`draft-${e.id}`}
                           voice={voice}
                           speed={speed}
-                          text={e.term}
                           preview={preview}
-                          label={`Listen to ${e.term}`}
+                          submitLabel="Save"
+                          pending={update.isPending}
+                          onSubmit={(body) => update.mutate({ id: e.id, body })}
+                          onCancel={() => setEditing(null)}
                         />
-                        {e.status === 'dismissed' && (
-                          <Tooltip label="Accept">
+                      </Table.Td>
+                    </Table.Tr>
+                  ) : (
+                    <Table.Tr key={e.id}>
+                      <Table.Td>{e.term}</Table.Td>
+                      <Table.Td>
+                        <Group gap="xs">
+                          <Text size="sm" ff={e.phonemes ? 'monospace' : undefined}>
+                            {e.replacement}
+                          </Text>
+                          {e.phonemes && (
+                            <Badge size="xs" variant="light">
+                              IPA
+                            </Badge>
+                          )}
+                          {e.status === 'dismissed' && (
+                            <Tooltip label="A dismissed suggestion: not applied">
+                              <Badge size="xs" variant="light" color="gray">
+                                dismissed
+                              </Badge>
+                            </Tooltip>
+                          )}
+                        </Group>
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap={4} justify="flex-end" wrap="nowrap">
+                          <VoicePreviewButton
+                            id={`entry-${e.id}`}
+                            voice={voice}
+                            speed={speed}
+                            text={e.term}
+                            preview={preview}
+                            label={`Listen to ${e.term}`}
+                          />
+                          {e.status === 'dismissed' && (
+                            <Tooltip label="Accept">
+                              <ActionIcon
+                                variant="subtle"
+                                color="green"
+                                aria-label={`Accept ${e.term}`}
+                                onClick={() => decide.mutate({ id: e.id, status: 'active' })}
+                              >
+                                <IconCheck size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                          <Tooltip label="Edit">
                             <ActionIcon
                               variant="subtle"
-                              color="green"
-                              aria-label={`Accept ${e.term}`}
-                              onClick={() => decide.mutate({ id: e.id, status: 'active' })}
+                              aria-label={`Edit ${e.term}`}
+                              onClick={() => setEditing(e.id)}
                             >
-                              <IconCheck size={16} />
+                              <IconPencil size={16} />
                             </ActionIcon>
                           </Tooltip>
-                        )}
-                        <Tooltip label="Edit">
-                          <ActionIcon
-                            variant="subtle"
-                            aria-label={`Edit ${e.term}`}
-                            onClick={() => setEditing(e.id)}
-                          >
-                            <IconPencil size={16} />
-                          </ActionIcon>
-                        </Tooltip>
-                        <Tooltip label="Delete">
-                          <ActionIcon
-                            variant="subtle"
-                            color="red"
-                            aria-label={`Delete ${e.term}`}
-                            loading={remove.isPending && remove.variables === e.id}
-                            onClick={() => remove.mutate(e.id)}
-                          >
-                            <IconTrash size={16} />
-                          </ActionIcon>
-                        </Tooltip>
-                      </Group>
-                    </Table.Td>
-                  </Table.Tr>
-                ),
-              )}
-            </Table.Tbody>
-          </Table>
+                          <Tooltip label="Delete">
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              aria-label={`Delete ${e.term}`}
+                              loading={remove.isPending && remove.variables === e.id}
+                              onClick={() => remove.mutate(e.id)}
+                            >
+                              <IconTrash size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Group>
+                      </Table.Td>
+                    </Table.Tr>
+                  ),
+                )}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
         </>
       )}
     </Stack>

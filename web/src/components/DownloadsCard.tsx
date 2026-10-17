@@ -79,58 +79,60 @@ export function DownloadsCard({ book }: { book: Book }) {
           One M4B audiobook file with chapter markers per volume. Chapters that are not rendered yet
           are rendered first, after the ones you are listening to.
         </Text>
-        <Table>
-          <Table.Tbody>
-            {ds.map((d) => {
-              const busy = d.status === 'queued' || d.status === 'assembling';
-              return (
-                <Table.Tr key={d.volumeId}>
-                  <Table.Td>
-                    <Text size="sm">{d.title}</Text>
-                    <Text size="xs" c="dimmed">
-                      {formatNumber(d.chapterCount)} chapters
-                      {d.hasFile &&
-                        d.durationMs !== undefined &&
-                        ` · ${formatDuration(d.durationMs)}`}
-                      {d.hasFile && d.sizeBytes !== undefined && ` · ${formatSize(d.sizeBytes)}`}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <State d={d} />
-                  </Table.Td>
-                  <Table.Td>
-                    <Group gap="xs" justify="flex-end" wrap="nowrap">
-                      {(!d.hasFile || d.outdated || d.status === 'failed') && (
-                        <Button
-                          size="xs"
-                          variant="default"
-                          leftSection={<IconPackage size={14} />}
-                          disabled={busy}
-                          loading={build.isPending && build.variables === d.volumeId}
-                          onClick={() => build.mutate(d.volumeId)}
-                        >
-                          {d.hasFile ? 'Rebuild' : 'Build'}
-                        </Button>
-                      )}
-                      {d.hasFile && (
-                        <Button
-                          size="xs"
-                          component="a"
-                          href={downloadFileUrl(book.id, d.volumeId)}
-                          download
-                          leftSection={<IconDownload size={14} />}
-                          aria-label={`Download ${d.title}`}
-                        >
-                          Download
-                        </Button>
-                      )}
-                    </Group>
-                  </Table.Td>
-                </Table.Tr>
-              );
-            })}
-          </Table.Tbody>
-        </Table>
+        <Table.ScrollContainer minWidth={300} type="native">
+          <Table>
+            <Table.Tbody>
+              {ds.map((d) => {
+                const busy = d.status === 'queued' || d.status === 'assembling';
+                return (
+                  <Table.Tr key={d.volumeId}>
+                    <Table.Td>
+                      <Text size="sm">{d.title}</Text>
+                      <Text size="xs" c="dimmed">
+                        {formatNumber(d.chapterCount)} chapters
+                        {d.hasFile &&
+                          d.durationMs !== undefined &&
+                          ` · ${formatDuration(d.durationMs)}`}
+                        {d.hasFile && d.sizeBytes !== undefined && ` · ${formatSize(d.sizeBytes)}`}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <State d={d} />
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap="xs" justify="flex-end" wrap="nowrap">
+                        {(!d.hasFile || d.outdated || d.status === 'failed') && (
+                          <Button
+                            size="xs"
+                            variant="default"
+                            leftSection={<IconPackage size={14} />}
+                            disabled={busy}
+                            loading={build.isPending && build.variables === d.volumeId}
+                            onClick={() => build.mutate(d.volumeId)}
+                          >
+                            {d.hasFile ? 'Rebuild' : 'Build'}
+                          </Button>
+                        )}
+                        {d.hasFile && (
+                          <Button
+                            size="xs"
+                            component="a"
+                            href={downloadFileUrl(book.id, d.volumeId)}
+                            download
+                            leftSection={<IconDownload size={14} />}
+                            aria-label={`Download ${d.title}`}
+                          >
+                            Download
+                          </Button>
+                        )}
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       </Stack>
     </Card>
   );

@@ -1,6 +1,7 @@
 import { ActionIcon, Box, Group, Menu, Switch, Text } from '@mantine/core';
 import { IconDots, IconGitMerge, IconWaveSine } from '@tabler/icons-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMediaQuery } from '@mantine/hooks';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRef } from 'react';
 
@@ -13,6 +14,11 @@ import { notifyError } from '../lib/notify';
 
 const ROW_HEIGHT = 44;
 const columns = '56px minmax(0, 1fr) 90px 70px 80px 100px 80px 44px';
+// Phones: title, audio, narrate and actions only, so the page never gets
+// wider than the screen (a wider page also pushes dialogs off it).
+const compactColumns = 'minmax(0, 1fr) 96px 40px 32px';
+const headers = ['#', 'Title', 'Words', 'Quotes', 'Speakers', 'Audio', 'Narrate', ''];
+const compactHeaders = ['Title', 'Audio', '', ''];
 
 const speakerLabels: Record<Chapter['attributionStatus'], [string, string]> = {
   none: ['–', 'dimmed'],
@@ -52,6 +58,12 @@ function useChapterMutations(bookId: number) {
 export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: Chapter[] }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const { toggle, merge, render } = useChapterMutations(bookId);
+  const compact = useMediaQuery('(max-width: 40em)') ?? false;
+  const grid = {
+    display: 'grid',
+    gridTemplateColumns: compact ? compactColumns : columns,
+    gap: compact ? 'var(--mantine-spacing-xs)' : 'var(--mantine-spacing-sm)',
+  };
   // TanStack Virtual returns new functions every render, which the React
   // Compiler cannot memoize; that is expected for this component.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -69,15 +81,16 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
       <Box
         px="xs"
         py={6}
-        style={{
-          display: 'grid',
-          gridTemplateColumns: columns,
-          gap: 'var(--mantine-spacing-sm)',
-          borderBottom: '1px solid var(--mantine-color-default-border)',
-        }}
+        style={{ ...grid, borderBottom: '1px solid var(--mantine-color-default-border)' }}
       >
-        {['#', 'Title', 'Words', 'Quotes', 'Speakers', 'Audio', 'Narrate', ''].map((h, i) => (
-          <Text key={i} size="xs" fw={600} c="dimmed" ta={i >= 2 && i <= 3 ? 'right' : 'left'}>
+        {(compact ? compactHeaders : headers).map((h, i) => (
+          <Text
+            key={i}
+            size="xs"
+            fw={600}
+            c="dimmed"
+            ta={!compact && i >= 2 && i <= 3 ? 'right' : 'left'}
+          >
             {h}
           </Text>
         ))}
@@ -103,17 +116,17 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
                   width: '100%',
                   height: ROW_HEIGHT,
                   transform: `translateY(${row.start}px)`,
-                  display: 'grid',
-                  gridTemplateColumns: columns,
-                  gap: 'var(--mantine-spacing-sm)',
+                  ...grid,
                   alignItems: 'center',
                   borderBottom: '1px solid var(--mantine-color-default-border)',
                   opacity: c.excluded ? 0.55 : 1,
                 }}
               >
-                <Text size="sm" c="dimmed">
-                  {c.idx + 1}
-                </Text>
+                {!compact && (
+                  <Text size="sm" c="dimmed">
+                    {c.idx + 1}
+                  </Text>
+                )}
                 <AnchorLink
                   to="/books/$bookId/chapters/$chapterId"
                   params={{ bookId: String(bookId), chapterId: String(c.id) }}
@@ -122,21 +135,25 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
                 >
                   {c.title}
                 </AnchorLink>
-                <Text size="sm" ta="right">
-                  {formatNumber(c.wordCount)}
-                </Text>
-                <Text size="sm" ta="right">
-                  {formatNumber(c.quoteCount)}
-                </Text>
-                <Text
-                  size="sm"
-                  c={(speakerLabels[c.attributionStatus] ?? speakerLabels.none)[1]}
-                  title={c.attributionError ?? `Speakers: ${c.attributionStatus}`}
-                >
-                  {c.quoteCount > 0
-                    ? (speakerLabels[c.attributionStatus] ?? speakerLabels.none)[0]
-                    : ''}
-                </Text>
+                {!compact && (
+                  <>
+                    <Text size="sm" ta="right">
+                      {formatNumber(c.wordCount)}
+                    </Text>
+                    <Text size="sm" ta="right">
+                      {formatNumber(c.quoteCount)}
+                    </Text>
+                    <Text
+                      size="sm"
+                      c={(speakerLabels[c.attributionStatus] ?? speakerLabels.none)[1]}
+                      title={c.attributionError ?? `Speakers: ${c.attributionStatus}`}
+                    >
+                      {c.quoteCount > 0
+                        ? (speakerLabels[c.attributionStatus] ?? speakerLabels.none)[0]
+                        : ''}
+                    </Text>
+                  </>
+                )}
                 <Group>
                   <AudioBadge chapter={c} />
                 </Group>
