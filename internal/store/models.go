@@ -507,9 +507,26 @@ type Character struct {
 	// PreviewText is what the voice previews say ("" = quotes of the
 	// character).
 	PreviewText string `gorm:"not null;default:''"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// A voice designed from a description: the job's state, the
+	// description it was (or is being) designed from, and why it failed.
+	DesignStatus      DesignStatus `gorm:"not null;default:''"`
+	DesignDescription string       `gorm:"not null;default:''"`
+	DesignError       string       `gorm:"not null;default:''"`
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
+
+// DesignStatus is the state of a character's voice design.
+type DesignStatus string
+
+// Voice design states ("" none).
+const (
+	DesignNone    DesignStatus = ""
+	DesignQueued  DesignStatus = "queued"
+	DesignRunning DesignStatus = "running"
+	DesignDone    DesignStatus = "done"
+	DesignFailed  DesignStatus = "failed"
+)
 
 // CharacterAlias is another name of a character. Norm is the normalized
 // form used for matching (not unique: "the captain" may be ambiguous).

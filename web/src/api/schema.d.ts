@@ -823,6 +823,47 @@ export interface paths {
     patch: operations['updateCharacter'];
     trace?: never;
   };
+  '/characters/{characterId}/voice-design': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Design a voice for the character from a description
+     * @description A voice design server speaks a sample in the described voice; the clip is uploaded to the engine that clones voices and becomes the character's voice (as one chosen by hand). Slow on CPU: the job starts the server if needed and takes minutes.
+     */
+    post: operations['designVoice'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/voice-design': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Design voices for the main characters whose voice was not chosen by hand */
+    post: operations['designBookVoices'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/characters/{characterId}/quotes': {
     parameters: {
       query?: never;
@@ -885,6 +926,10 @@ export interface components {
     };
     /** @description Kokoro (when configured) */
     TTSInfo: {
+      /** @description Voices can be designed from descriptions (a voice design server and an engine that clones voices) */
+      voiceDesign: boolean;
+      /** @description The engine that speaks designed voices; only books of this engine can design voices */
+      voiceDesignEngine?: string;
       /** @description Kokoro is part of this deployment */
       configured: boolean;
       /** @description Narrator of books without a voice of their own; its engine is the default one */
@@ -1617,6 +1662,24 @@ export interface components {
     };
     CharacterDetail: components['schemas']['Character'] & {
       chapters: components['schemas']['ChapterRef'][];
+      voiceDesign: components['schemas']['VoiceDesign'];
+    };
+    VoiceDesign: {
+      /** @enum {string} */
+      status: 'none' | 'queued' | 'running' | 'done' | 'failed';
+      /** @description The description of the last design (or the one queued) */
+      description: string;
+      /** @description A description from the character's profile, to start from */
+      suggestedDescription: string;
+      error?: string;
+    };
+    VoiceDesignStart: {
+      /** @description The voice, e.g. "An elderly man, deep and gruff, speaks slowly" */
+      description: string;
+    };
+    VoiceDesignBatch: {
+      /** @description Characters whose design was queued */
+      queued: number;
     };
     CharacterUpdate: {
       name?: string;
@@ -3129,6 +3192,61 @@ export interface operations {
         };
       };
       400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  designVoice: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        characterId: components['parameters']['CharacterId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['VoiceDesignStart'];
+      };
+    };
+    responses: {
+      /** @description Queued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['VoiceDesign'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  designBookVoices: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: components['parameters']['BookId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Designs queued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['VoiceDesignBatch'];
+        };
+      };
       404: components['responses']['Error'];
       409: components['responses']['Error'];
       default: components['responses']['Error'];

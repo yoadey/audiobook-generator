@@ -58,6 +58,28 @@ type Config struct {
 	LLM LLM      `envPrefix:"LLM_"`
 	// Casting is the voice casting.
 	Casting Casting `envPrefix:"CASTING_"`
+	// VoiceDesign designs voices from descriptions (when URL is set).
+	VoiceDesign VoiceDesign `envPrefix:"VOICE_DESIGN_"`
+}
+
+// VoiceDesign configures the voice design server, whose clips are cloned
+// by an engine (Chatterbox).
+type VoiceDesign struct {
+	// URL of the server; empty disables voice design.
+	URL string `env:"URL"`
+	// Engine that clones the designed clips (a Chatterbox engine of
+	// ABG_TTS_ENGINES).
+	Engine string `env:"ENGINE" envDefault:"chatterbox"`
+	// Deployment, when set, is the server's Deployment in the app's
+	// namespace: scaled up for designs and down when idle.
+	Deployment string `env:"DEPLOYMENT"`
+	// Idle is how long the server keeps running after the last design.
+	Idle time.Duration `env:"IDLE" envDefault:"10m"`
+	// Timeout of one design (minutes on CPU).
+	Timeout time.Duration `env:"TIMEOUT" envDefault:"30m"`
+	// ReadyTimeout is how long a design waits for the server to start
+	// (its first start downloads the model).
+	ReadyTimeout time.Duration `env:"READY_TIMEOUT" envDefault:"30m"`
 }
 
 // LLM configures the LLM layer. Providers can also be managed in the UI.
@@ -198,6 +220,14 @@ func (c Config) Validate() error {
 	}
 	if c.TTS.Concurrency < 1 {
 		errs = append(errs, fmt.Errorf("ABG_TTS_CONCURRENCY must be at least 1, got %d", c.TTS.Concurrency))
+	}
+	if c.VoiceDesign.URL != "" {
+		if u, err := url.Parse(c.VoiceDesign.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("ABG_VOICE_DESIGN_URL must be an http(s) URL, got %q", c.VoiceDesign.URL))
+		}
+		if c.VoiceDesign.Idle < 0 || c.VoiceDesign.Timeout <= 0 || c.VoiceDesign.ReadyTimeout <= 0 {
+			errs = append(errs, errors.New("ABG_VOICE_DESIGN_IDLE, _TIMEOUT and _READY_TIMEOUT must be positive"))
+		}
 	}
 	for i := range c.TTS.Engines {
 		if err := c.TTS.Engines[i].Validate(); err != nil {

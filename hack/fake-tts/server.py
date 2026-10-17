@@ -7,10 +7,15 @@ word timestamps). Speech is a quiet 220 Hz tone whose length grows with the
 text (20 ms per character), as 24 kHz 16-bit mono PCM; any other
 response_format gets a WAV file.
 
-Chatterbox-TTS-Server: GET /get_predefined_voices, GET /get_reference_files
-and POST /tts (a WAV tone, slower with more exaggeration), so the app can
-be run with ABG_TTS_ENGINES='[{"name":"chatterbox","kind":"chatterbox",
+Chatterbox-TTS-Server: GET /get_predefined_voices, GET /get_reference_files,
+POST /upload_reference (kept in memory) and POST /tts (a WAV tone, slower
+with more exaggeration), so the app can be run with
+ABG_TTS_ENGINES='[{"name":"chatterbox","kind":"chatterbox",
 "url":"http://localhost:8880"}]'.
+
+Voice design (images/voice-design): POST /design answers a 3 s WAV tone
+(after FAKE_DESIGN_SECONDS of thinking, default 1), so the app can be run
+with ABG_VOICE_DESIGN_URL=http://localhost:8880 and no deployment to scale.
 
 LLM (OpenAI-compatible): GET /v1/models and POST /v1/chat/completions, which
 answers the app's provider test prompt correctly, the character analysis
@@ -28,6 +33,9 @@ import math
 import os
 import re
 import struct
+import time
+from email.parser import BytesParser
+from email.policy import HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RATE = 24000
@@ -35,6 +43,7 @@ VOICES = ["af_heart", "af_bella", "am_michael", "bf_emma", "bm_george"]
 CHATTERBOX_VOICES = [{"display_name": "Emily", "filename": "Emily.wav"}, {"display_name": "Adrian", "filename": "Adrian.wav"}]
 CHATTERBOX_REFERENCES = ["anna.wav"]
 LLM_KEY = os.environ.get("FAKE_LLM_KEY", "")
+DESIGN_SECONDS = float(os.environ.get("FAKE_DESIGN_SECONDS", "1"))
 MODELS = ["fake-small", "fake-large"]
 
 
@@ -180,6 +189,25 @@ class Handler(BaseHTTPRequestHandler):
                           "total_tokens": 50 + len(content) // 4},
             }
             self._send(200, json.dumps(body).encode(), "application/json")
+            return
+        if self.path == "/upload_reference":
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            head = f"Content-Type: {self.headers.get('Content-Type', '')}\r\n\r\n".encode()
+            uploaded = []
+            for part in BytesParser(policy=HTTP).parsebytes(head + raw).iter_parts():
+                name = part.get_filename()
+                if name and name not in CHATTERBOX_REFERENCES:
+                    CHATTERBOX_REFERENCES.append(name)
+                    uploaded.append(name)
+            self._send(200, json.dumps({"uploaded_files": uploaded, "errors": []}).encode(), "application/json")
+            return
+        if self.path == "/design":
+            req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            if not req.get("text") or not req.get("description"):
+                self._send(400, json.dumps({"detail": "text and description are required"}).encode(), "application/json")
+                return
+            time.sleep(DESIGN_SECONDS)
+            self._send(200, wav(tone(3)), "audio/wav")
             return
         if self.path == "/tts":
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))

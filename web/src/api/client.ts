@@ -316,6 +316,9 @@ export const characterQuery = (characterId: number) =>
     queryKey: ['characters', characterId],
     queryFn: () =>
       unwrap(api.GET('/characters/{characterId}', { params: { path: { characterId } } })),
+    // While its voice is being designed (minutes).
+    refetchInterval: (q) =>
+      ['queued', 'running'].includes(q.state.data?.voiceDesign.status ?? '') ? 5000 : false,
   });
 
 /** The audio of a chapter; with version, that render (kept while a newer one replaces it). */
@@ -497,6 +500,17 @@ export const startCasting = (bookId: number, restart = false) =>
 
 export const pauseAnalysis = (bookId: number) =>
   unwrap(api.POST('/books/{bookId}/analysis/pause', { params: { path: { bookId } } }));
+
+export const designVoice = (characterId: number, description: string) =>
+  unwrap(
+    api.POST('/characters/{characterId}/voice-design', {
+      params: { path: { characterId } },
+      body: { description },
+    }),
+  );
+
+export const designBookVoices = (bookId: number) =>
+  unwrap(api.POST('/books/{bookId}/voice-design', { params: { path: { bookId } } }));
 
 export const updateCharacter = (characterId: number, body: CharacterUpdate) =>
   unwrap(api.PATCH('/characters/{characterId}', { params: { path: { characterId } }, body }));

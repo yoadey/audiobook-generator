@@ -205,6 +205,10 @@ func (r *restorer) table(table string, rows RowReader) error {
 			} else {
 				c.PreviewText = string(t)
 			}
+			// No design job comes along.
+			if c.DesignStatus == DesignQueued || c.DesignStatus == DesignRunning {
+				c.DesignStatus = DesignNone
+			}
 			return nil
 		})
 	case TableChapters:

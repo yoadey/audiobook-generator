@@ -20,6 +20,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
+	"github.com/yoadey/audiobook-generator/internal/voicedesign"
 )
 
 const defaultPreviewText = "It was a bright cold day in April, and the clocks were striking thirteen."
@@ -379,7 +380,18 @@ func (s *Server) RetryJob(ctx context.Context, req RetryJobRequestObject) (Retry
 			return RetryJob409JSONResponse{Message: "the chapter is already queued for rendering"}, nil
 		}
 	}
+	if j.Type == voicedesign.JobType {
+		if msg, err := s.retryDesign(ctx, j); err != nil || msg != "" {
+			if err != nil {
+				return nil, err
+			}
+			return RetryJob409JSONResponse{Message: msg}, nil
+		}
+	}
 	if err := s.Store.RetryFailedJob(ctx, j.ID); errors.Is(err, store.ErrInvalid) {
+		if j.Type == voicedesign.JobType {
+			s.undoRetryDesign(ctx, j)
+		}
 		return RetryJob409JSONResponse{Message: "only failed or canceled jobs can be retried"}, nil
 	} else if err != nil {
 		return nil, err
@@ -442,6 +454,19 @@ func (s *Server) CancelJob(ctx context.Context, req CancelJobRequestObject) (Can
 		}
 		if err := s.Store.SetAudioStatus(ctx, status, "", *j.ChapterID); err != nil {
 			return nil, err
+		}
+	}
+	if j.Type == voicedesign.JobType {
+		// Unless a later design of the character is still pending.
+		if id, err := strconv.ParseInt(j.Payload, 10, 64); err == nil {
+			if n, err := s.Store.PendingJobs(ctx, voicedesign.JobType, j.Payload); err != nil {
+				return nil, err
+			} else if n == 0 {
+				if _, err := s.Store.TransitionDesign(ctx, id, store.DesignFailed,
+					map[string]any{"design_error": "canceled"}, store.DesignQueued, store.DesignRunning); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	if j.Type == assemble.JobType && j.BookID != nil {

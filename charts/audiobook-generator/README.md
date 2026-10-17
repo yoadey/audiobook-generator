@@ -19,6 +19,7 @@ helm install audiobooks oci://ghcr.io/yoadey/charts/audiobook-generator
 | Secret with the Postgres password | external Postgres with `password` and no `existingSecret` |
 | Secret `<release>-app` with generated keys (feed tokens, session cookie; kept across upgrades and on uninstall) | `feed.enabled` / `auth.oidc.enabled` without an `existingSecret` |
 | Litestream sidecar + restore init container + ConfigMap | `backup.litestream.enabled` (SQLite only) |
+| Deployment (scaled by the app on demand) + Service + PVC `voice-design`, Role/RoleBinding letting the app scale it | `voiceDesign.enabled` (see `docs/tts-engines.md`) |
 | Ingress / ServiceMonitor / NetworkPolicy | when enabled |
 
 The generated keys are looked up from the cluster on upgrades. Tools that

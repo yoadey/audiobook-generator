@@ -37,6 +37,8 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "abg.serviceAccountName" . }}
+      # No token in every container: only the app's gets one (to scale the
+      # voice design server on demand).
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -124,6 +126,23 @@ spec:
             - name: ABG_TTS_ENGINES
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.voiceDesign.enabled }}
+            {{- $vd := .Values.voiceDesign }}
+            - name: ABG_VOICE_DESIGN_URL
+              value: {{ printf "http://%s:8000" (include "abg.voiceDesign.fullname" .) | quote }}
+            - name: ABG_VOICE_DESIGN_ENGINE
+              value: {{ include "abg.voiceDesign.engine" . | quote }}
+            {{- if $vd.onDemand }}
+            - name: ABG_VOICE_DESIGN_DEPLOYMENT
+              value: {{ include "abg.voiceDesign.fullname" . | quote }}
+            {{- end }}
+            - name: ABG_VOICE_DESIGN_IDLE
+              value: {{ $vd.idle | quote }}
+            - name: ABG_VOICE_DESIGN_TIMEOUT
+              value: {{ $vd.timeout | quote }}
+            - name: ABG_VOICE_DESIGN_READY_TIMEOUT
+              value: {{ $vd.readyTimeout | quote }}
+            {{- end }}
             - name: ABG_AUDIO_BITRATE
               value: {{ .Values.audioBitrate | quote }}
             {{- with .Values.publicUrl }}
@@ -180,7 +199,31 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            {{- if eq (include "abg.voiceDesign.onDemand" .) "true" }}
+            - name: kube-api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            {{- end }}
       volumes:
+        {{- if eq (include "abg.voiceDesign.onDemand" .) "true" }}
+        # As Kubernetes mounts it, but for the app container only.
+        - name: kube-api-access
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3607
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        fieldPath: metadata.namespace
+        {{- end }}
         {{- if .Values.backup.litestream.enabled }}
         - name: litestream
           configMap:

@@ -318,6 +318,73 @@ tts:
       limits:
         memory: 12Gi
 
+# Voice design: a character's voice made from a description ("an elderly
+# man, deep and gruff, speaks slowly") with Qwen3-TTS VoiceDesign on CPU;
+# the clip is uploaded to Chatterbox, which clones it. Slow (minutes per
+# voice) and memory-hungry, so the pod runs only while voices are designed
+# (onDemand: the app scales its Deployment up and, once idle, down).
+voiceDesign:
+  enabled: false
+  # Engine that clones the clips (empty: tts.chatterbox.name); a Chatterbox
+  # engine.
+  engine: ""
+  # Run the pod only while designing: the app scales it up for a design
+  # and to zero when idle (a Role lets the app's own ServiceAccount scale
+  # exactly this Deployment). The chart sets no replica count then, so
+  # upgrades never reset it.
+  onDemand: true
+  # How long the pod keeps running after the last design.
+  idle: 10m
+  # One design (CPU: one to a few minutes, more on slow nodes).
+  timeout: 30m
+  # How long a design waits for the pod to start (the first start
+  # downloads the model, ~4 GB).
+  readyTimeout: 30m
+  image:
+    repository: ghcr.io/yoadey/audiobook-generator-voice-design
+    # Defaults to the chart's appVersion (released with the app).
+    tag: ""
+    pullPolicy: IfNotPresent
+  model: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
+  # A commit of the model repository to pin (empty: its main branch).
+  modelRevision: ""
+  # float32, or bfloat16 (half the memory; slower on CPUs without AMX).
+  dtype: float32
+  # Torch threads (0: all cores of the node).
+  threads: 0
+  # Model cache (Hugging Face).
+  persistence:
+    enabled: true
+    existingClaim: ""
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    size: 15Gi
+  # Optional Hugging Face token (a Secret with key HF_TOKEN).
+  hfTokenSecret: ""
+  podAnnotations: {}
+  priorityClassName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  extraEnv: []
+  resources:
+    requests:
+      cpu: "2"
+      memory: 10Gi
+    limits:
+      memory: 16Gi
+
 casting:
   # How many speaking characters (the most important ones) get a voice
   # recipe of their own; everyone else speaks with a pool voice by gender

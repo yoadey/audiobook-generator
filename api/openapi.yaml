@@ -1320,6 +1320,61 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /characters/{characterId}/voice-design:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    post:
+      operationId: designVoice
+      summary: Design a voice for the character from a description
+      description: >-
+        A voice design server speaks a sample in the described voice; the
+        clip is uploaded to the engine that clones voices and becomes the
+        character's voice (as one chosen by hand). Slow on CPU: the job
+        starts the server if needed and takes minutes.
+      tags: [casting]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceDesignStart"
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceDesign"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /books/{bookId}/voice-design:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    post:
+      operationId: designBookVoices
+      summary: Design voices for the main characters whose voice was not chosen by hand
+      tags: [casting]
+      responses:
+        "202":
+          description: Designs queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceDesignBatch"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /characters/{characterId}/quotes:
     parameters:
       - $ref: "#/components/parameters/CharacterId"
@@ -1488,8 +1543,14 @@ components:
     TTSInfo:
       type: object
       description: Kokoro (when configured)
-      required: [url, reachable, configured, defaultVoice]
+      required: [url, reachable, configured, defaultVoice, voiceDesign]
       properties:
+        voiceDesign:
+          type: boolean
+          description: Voices can be designed from descriptions (a voice design server and an engine that clones voices)
+        voiceDesignEngine:
+          type: string
+          description: The engine that speaks designed voices; only books of this engine can design voices
         configured:
           type: boolean
           description: Kokoro is part of this deployment
@@ -2777,12 +2838,44 @@ components:
       allOf:
         - $ref: "#/components/schemas/Character"
         - type: object
-          required: [chapters]
+          required: [chapters, voiceDesign]
           properties:
             chapters:
               type: array
               items:
                 $ref: "#/components/schemas/ChapterRef"
+            voiceDesign:
+              $ref: "#/components/schemas/VoiceDesign"
+    VoiceDesign:
+      type: object
+      required: [status, description, suggestedDescription]
+      properties:
+        status:
+          type: string
+          enum: [none, queued, running, done, failed]
+        description:
+          type: string
+          description: The description of the last design (or the one queued)
+        suggestedDescription:
+          type: string
+          description: A description from the character's profile, to start from
+        error:
+          type: string
+    VoiceDesignStart:
+      type: object
+      required: [description]
+      properties:
+        description:
+          type: string
+          maxLength: 500
+          description: The voice, e.g. "An elderly man, deep and gruff, speaks slowly"
+    VoiceDesignBatch:
+      type: object
+      required: [queued]
+      properties:
+        queued:
+          type: integer
+          description: Characters whose design was queued
     CharacterUpdate:
       type: object
       properties:

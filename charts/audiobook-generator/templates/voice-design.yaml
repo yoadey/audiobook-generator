@@ -1,0 +1,214 @@
+{{- if .Values.voiceDesign.enabled }}
+{{- $v := .Values.voiceDesign }}
+{{- if and $v.persistence.enabled (not $v.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "abg.voiceDesign.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: voice-design
+spec:
+  accessModes:
+    {{- toYaml $v.persistence.accessModes | nindent 4 }}
+  {{- with $v.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $v.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "abg.voiceDesign.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: voice-design
+spec:
+  {{- if eq (include "abg.voiceDesign.onDemand" .) "true" }}
+  # No replicas: the app scales it, and an upgrade must not reset the live
+  # count (Helm would patch a rendered value back). Kubernetes starts one
+  # at install; the app stops it once idle.
+  {{- else }}
+  replicas: 1
+  {{- end }}
+  # One volume: never two pods at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "abg.voiceDesign.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with $v.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "abg.metaLabels" . | nindent 8 }}
+        {{- include "abg.voiceDesign.selectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $v.podSecurityContext | nindent 8 }}
+      containers:
+        - name: voice-design
+          image: {{ printf "%s:%s" $v.image.repository ($v.image.tag | default .Chart.AppVersion) }}
+          imagePullPolicy: {{ $v.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $v.securityContext | nindent 12 }}
+          env:
+            - name: MODEL
+              value: {{ $v.model | quote }}
+            - name: MODEL_REVISION
+              value: {{ $v.modelRevision | quote }}
+            - name: DTYPE
+              value: {{ $v.dtype | quote }}
+            - name: THREADS
+              value: {{ $v.threads | int | quote }}
+            {{- with $v.hfTokenSecret }}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: HF_TOKEN
+            {{- end }}
+            {{- with $v.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          # /health answers 503 until the model is loaded (downloaded on
+          # the first start) and stays answered while a design runs.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 180
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+      volumes:
+        - name: models
+          {{- if $v.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $v.persistence.existingClaim | default (include "abg.voiceDesign.fullname" .) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with $v.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "abg.voiceDesign.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: voice-design
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "abg.voiceDesign.selectorLabels" . | nindent 4 }}
+{{- if $v.onDemand }}
+---
+# The app may scale exactly this Deployment, nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "abg.voiceDesign.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: voice-design
+rules:
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    resourceNames: [{{ include "abg.voiceDesign.fullname" . }}]
+    verbs: [patch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ include "abg.voiceDesign.fullname" . }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "abg.voiceDesign.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: voice-design
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "abg.voiceDesign.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "abg.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "abg.voiceDesign.fullname" . }}
+  labels:
+    {{- include "abg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: voice-design
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "abg.voiceDesign.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "abg.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+{{- end }}
+{{- end }}

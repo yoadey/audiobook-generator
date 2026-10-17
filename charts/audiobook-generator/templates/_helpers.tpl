@@ -100,6 +100,27 @@ app.kubernetes.io/component: chatterbox
 {{- end }}
 {{- end }}
 
+{{- define "abg.voiceDesign.fullname" -}}
+{{- printf "%s-voice-design" (include "abg.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/* Selector labels of the voice design server. */}}
+{{- define "abg.voiceDesign.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "abg.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: voice-design
+{{- end }}
+
+{{/* The engine that clones designed voices. */}}
+{{- define "abg.voiceDesign.engine" -}}
+{{- .Values.voiceDesign.engine | default .Values.tts.chatterbox.name }}
+{{- end }}
+
+{{/* "true" when the app scales the voice design server (needs its token). */}}
+{{- define "abg.voiceDesign.onDemand" -}}
+{{- if and .Values.voiceDesign.enabled .Values.voiceDesign.onDemand }}true{{ end }}
+{{- end }}
+
 {{- define "abg.cnpg.clusterName" -}}
 {{- printf "%s-db" (include "abg.fullname" .) | trunc 50 | trimSuffix "-" }}
 {{- end }}
@@ -241,6 +262,21 @@ true
 {{- end }}
 {{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) (not .Values.tts.engines) }}
 {{- fail "no speech engine: enable tts.kokoro, set tts.externalUrl, or configure tts.chatterbox or tts.engines" }}
+{{- end }}
+{{- if .Values.voiceDesign.enabled }}
+{{- $engine := include "abg.voiceDesign.engine" . }}
+{{- $ok := and .Values.tts.chatterbox.enabled (eq $engine .Values.tts.chatterbox.name) }}
+{{- range .Values.tts.engines }}
+{{- if and (eq .name $engine) (eq .kind "chatterbox") }}
+{{- $ok = true }}
+{{- end }}
+{{- end }}
+{{- if not $ok }}
+{{- fail (printf "voiceDesign.engine %q must be a Chatterbox engine (tts.chatterbox or tts.engines)" $engine) }}
+{{- end }}
+{{- if and (include "abg.voiceDesign.onDemand" .) (not .Values.serviceAccount.create) (not .Values.serviceAccount.name) }}
+{{- fail "voiceDesign.onDemand grants the app's ServiceAccount the right to scale: set serviceAccount.create or serviceAccount.name (not the namespace's default one)" }}
+{{- end }}
 {{- end }}
 {{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) }}
 {{- $default := false }}

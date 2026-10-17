@@ -30,6 +30,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/httpserver"
 	"github.com/yoadey/audiobook-generator/internal/importer"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
+	"github.com/yoadey/audiobook-generator/internal/kube"
 	"github.com/yoadey/audiobook-generator/internal/llm"
 	"github.com/yoadey/audiobook-generator/internal/metrics"
 	"github.com/yoadey/audiobook-generator/internal/prepare"
@@ -37,6 +38,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/transfer"
 	"github.com/yoadey/audiobook-generator/internal/tts"
+	"github.com/yoadey/audiobook-generator/internal/voicedesign"
 	"github.com/yoadey/audiobook-generator/internal/webui"
 )
 
@@ -148,6 +150,27 @@ func run() error {
 			log.Error("start casting", "book", bookID, "err", err)
 		}
 	}
+	var designer *voicedesign.Designer
+	if vd := cfg.VoiceDesign; vd.URL != "" {
+		if !speech.Clones(vd.Engine) {
+			return fmt.Errorf("ABG_VOICE_DESIGN_ENGINE %q must be a Chatterbox engine of ABG_TTS_ENGINES", vd.Engine)
+		}
+		designer = &voicedesign.Designer{
+			Store: st, Jobs: runner, Server: voicedesign.NewClient(vd.URL, vd.Timeout), Upload: speech,
+			Engine: vd.Engine, Idle: vd.Idle, ReadyTimeout: vd.ReadyTimeout, Log: log,
+		}
+		if vd.Deployment != "" {
+			scaler, err := kube.InCluster(vd.Deployment)
+			if err != nil {
+				return fmt.Errorf("ABG_VOICE_DESIGN_DEPLOYMENT: %w", err)
+			}
+			designer.Scaler = scaler
+		}
+		runner.Handle(voicedesign.JobType, designer.Handler())
+	}
+	if err := st.SettleDesigns(ctx, voicedesign.JobType, designer != nil); err != nil {
+		return fmt.Errorf("settle voice designs: %w", err)
+	}
 	scheduler := &render.Scheduler{Store: st, Jobs: runner, DefaultVoice: defaultVoice}
 	assembler := &assemble.Assembler{
 		Store: st, Jobs: runner, Scheduler: scheduler, FFmpeg: cfg.FFmpeg, FFprobe: cfg.FFprobe,
@@ -163,6 +186,10 @@ func run() error {
 		log.Error("recast voices of other engines", "err", err)
 	} else if n > 0 {
 		log.Info("recasting books whose engine changed", "books", n)
+	}
+	if designer != nil {
+		// Stops the voice design server once idle (also one left running).
+		go designer.Idler(ctx, time.Minute)
 	}
 	runnerDone := make(chan struct{})
 	go func() {
@@ -198,6 +225,7 @@ func run() error {
 				Caster:         caster,
 				Attributor:     attributor,
 				Preparer:       preparer,
+				Designer:       designer,
 				Assembler:      assembler,
 				Voices:         voices,
 				DefaultVoice:   defaultVoice,

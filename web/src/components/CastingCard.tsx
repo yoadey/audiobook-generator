@@ -1,6 +1,6 @@
-import { Alert, Badge, Button, Card, Group, List, Stack, Text } from '@mantine/core';
+import { Alert, Badge, Button, Card, Group, List, Stack, Text, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
-import { IconMicrophone, IconRefresh } from '@tabler/icons-react';
+import { IconMicrophone, IconRefresh, IconWand } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
@@ -11,10 +11,12 @@ import {
   castingActive,
   castingQuery,
   type CastingWarning,
+  designBookVoices,
   startCasting,
+  systemInfoQuery,
 } from '../api/client';
 import { formatNumber } from '../lib/format';
-import { notifyError } from '../lib/notify';
+import { notifyError, notifySuccess } from '../lib/notify';
 import { AnchorLink, ButtonLink } from './links';
 
 const statusColor: Record<Casting['status'], string> = {
@@ -88,6 +90,22 @@ export function CastingCard({ book }: { book: Book }) {
   useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: ['books', book.id, 'casting'] });
   }, [analysisStatus, book.id, queryClient]);
+  const system = useQuery(systemInfoQuery);
+  const design = useMutation({
+    mutationFn: () => designBookVoices(book.id),
+    onSuccess: (r) => {
+      notifySuccess(
+        r.queued > 0
+          ? `Designing ${r.queued} voice${r.queued === 1 ? '' : 's'}: minutes each, the server starts first`
+          : 'Every main character has a voice chosen by hand or being designed',
+      );
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['characters'] }),
+        queryClient.invalidateQueries({ queryKey: ['books', book.id, 'casting'] }),
+      ]);
+    },
+    onError: (e) => notifyError('Could not design the voices', e),
+  });
   const start = useMutation({
     mutationFn: (restart: boolean) => startCasting(book.id, restart),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['books', book.id] }),
@@ -201,6 +219,31 @@ export function CastingCard({ book }: { book: Book }) {
             >
               Recast all
             </Button>
+          )}
+          {system.data?.tts.voiceDesignEngine === book.engine && c.mainCount > 0 && (
+            <Tooltip label="A voice of its own from each main character's profile (not those chosen by hand)">
+              <Button
+                variant="subtle"
+                leftSection={<IconWand size={16} />}
+                loading={design.isPending}
+                onClick={() =>
+                  modals.openConfirmModal({
+                    title: 'Design voices for the main characters?',
+                    children: (
+                      <Text size="sm">
+                        Each main character whose voice was not chosen by hand gets a voice designed
+                        from its profile. This takes minutes per voice on CPU; edit a description
+                        first on the character's page if you like.
+                      </Text>
+                    ),
+                    labels: { confirm: 'Design voices', cancel: 'Cancel' },
+                    onConfirm: () => design.mutate(),
+                  })
+                }
+              >
+                Design voices
+              </Button>
+            </Tooltip>
           )}
         </Group>
       </Stack>

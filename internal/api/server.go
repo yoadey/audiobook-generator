@@ -18,6 +18,7 @@ import (
 	"github.com/yoadey/audiobook-generator/internal/render"
 	"github.com/yoadey/audiobook-generator/internal/store"
 	"github.com/yoadey/audiobook-generator/internal/tts"
+	"github.com/yoadey/audiobook-generator/internal/voicedesign"
 )
 
 // TTS is the speech server.
@@ -34,15 +35,17 @@ type Enqueuer interface {
 
 // Options wires the API's dependencies.
 type Options struct {
-	Store          *store.Store
-	TTS            TTS
-	Jobs           Enqueuer
-	Scheduler      *render.Scheduler
-	LLM            *llm.Pool
-	Analyzer       *analysis.Analyzer
-	Caster         *casting.Caster
-	Attributor     *attribution.Attributor
-	Preparer       *prepare.Preparer
+	Store      *store.Store
+	TTS        TTS
+	Jobs       Enqueuer
+	Scheduler  *render.Scheduler
+	LLM        *llm.Pool
+	Analyzer   *analysis.Analyzer
+	Caster     *casting.Caster
+	Attributor *attribution.Attributor
+	Preparer   *prepare.Preparer
+	// Designer designs voices from descriptions (nil: not configured).
+	Designer       *voicedesign.Designer
 	Assembler      *assemble.Assembler
 	Voices         *casting.Catalog
 	DefaultVoice   string
@@ -112,8 +115,12 @@ func (s *Server) GetSystemInfo(ctx context.Context, _ GetSystemInfoRequestObject
 			Dialect:       DatabaseInfoDialect(s.Store.Dialect()),
 			SchemaVersion: schema,
 		},
-		Tts:            TTSInfo{Url: s.TTS.BaseURL(), Configured: s.kokoro(), DefaultVoice: s.DefaultVoice},
+		Tts: TTSInfo{Url: s.TTS.BaseURL(), Configured: s.kokoro(), DefaultVoice: s.DefaultVoice,
+			VoiceDesign: s.Designer != nil},
 		MaxUploadBytes: s.MaxUploadBytes,
+	}
+	if s.Designer != nil {
+		info.Tts.VoiceDesignEngine = &s.Designer.Engine
 	}
 
 	if !info.Tts.Configured {
