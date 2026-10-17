@@ -509,6 +509,9 @@
               "type": "integer",
               "minimum": 0
             },
+            "strategy": {
+              "type": "object"
+            },
             "podAnnotations": {
               "$ref": "#/definitions/object"
             },

@@ -15,6 +15,10 @@ tests:
         equal:
           path: spec.template.spec.containers[0].startupProbe.httpGet.path
           value: /health
+      - documentIndex: 0
+        equal:
+          path: spec.strategy.type
+          value: Recreate
       - documentIndex: 1
         equal:
           path: spec.ports[0].port

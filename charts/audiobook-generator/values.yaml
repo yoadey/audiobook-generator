@@ -210,6 +210,11 @@ tts:
       tag: v0.9.0
       pullPolicy: IfNotPresent
     replicas: 1
+    # Recreate: an update stops the old pod before the new one starts, so a
+    # cluster without room for a second Kokoro (it asks for whole CPUs) does
+    # not deadlock the rollout. Kokoro is unavailable for a moment meanwhile.
+    strategy:
+      type: Recreate
     podAnnotations: {}
     priorityClassName: ""
     nodeSelector: {}
