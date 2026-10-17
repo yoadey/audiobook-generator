@@ -169,9 +169,10 @@ func (r *remote) chatterbox(ctx context.Context, s Speech, format string) ([]byt
 		}
 	}
 	mode(clone)
+	loads := r.loadCount()
 	data, err := r.post(ctx, "/tts", fields)
 	if notLoaded(err) {
-		if err = r.reloadModel(ctx); err != nil {
+		if err = r.reloadModel(ctx, loads); err != nil {
 			return nil, err
 		}
 		data, err = r.post(ctx, "/tts", fields)

@@ -49,7 +49,7 @@ func (s *Server) settings(ctx context.Context) (AppSettings, error) {
 	unload, err := s.Store.UnloadIdleModels(ctx)
 	return AppSettings{
 		PreviewText: text, DefaultPreviewText: defaultPreviewText,
-		UnloadIdleModels: unload, UnloadIdleMinutes: int(s.UnloadIdle / time.Minute),
+		UnloadIdleModels: unload, UnloadIdleSeconds: int(s.UnloadIdle / time.Second),
 	}, err
 }
 

@@ -64,6 +64,8 @@ func (m *modelServer) handler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (m *modelServer) fail(path string) { m.mu.Lock(); m.failNext = path; m.mu.Unlock() }
+
 func (m *modelServer) set(loaded bool) { m.mu.Lock(); m.loaded = loaded; m.mu.Unlock() }
 
 func (m *modelServer) isLoaded() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.loaded }
@@ -128,18 +130,39 @@ func TestUnloadIdleModel(t *testing.T) {
 	_, err = e.unloadIfIdle(ctx, 0)
 	require.NoError(t, err)
 	m.took()
-	m.failNext = "/restart_server"
+	m.fail("/restart_server")
 	require.Error(t, speak())
 	require.NoError(t, speak())
 	assert.Equal(t, []string{"/restart_server", "/restart_server", "/tts"}, m.took())
 
 	// A failed unload keeps the model counted as loaded.
-	m.failNext = "/api/unload"
+	m.fail("/api/unload")
 	done, err = e.unloadIfIdle(ctx, 0)
 	require.Error(t, err)
 	assert.False(t, done)
 	require.NoError(t, speak())
 	assert.Equal(t, []string{"/api/unload", "/tts"}, m.took())
+}
+
+func TestLate503DoesNotReloadAgain(t *testing.T) {
+	m := &modelServer{loaded: true}
+	_, e := newModelRouter(t, m)
+	ctx := context.Background()
+	loads := e.loadCount()
+	// Another request's 503 already led to a load since this one was sent.
+	require.NoError(t, e.reloadModel(ctx, loads))
+	assert.Equal(t, []string{"/restart_server"}, m.took())
+	require.NoError(t, e.reloadModel(ctx, loads))
+	assert.Empty(t, m.took(), "a 503 from before the last load")
+}
+
+func TestLoadSurvivesCancel(t *testing.T) {
+	m := &modelServer{loaded: true}
+	_, e := newModelRouter(t, m)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.NoError(t, e.reloadModel(ctx, e.loadCount()))
+	assert.Equal(t, 1, e.loadCount(), "the server loads anyway, so the app counts it")
 }
 
 func TestUnloadWaitsForSpeech(t *testing.T) {

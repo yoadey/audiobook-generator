@@ -783,11 +783,11 @@ type AppSettings struct {
 	// PreviewText Sample text of voice previews (empty - defaultPreviewText)
 	PreviewText string `json:"previewText"`
 
-	// UnloadIdleMinutes Idle time before a model is unloaded (deployment; 0 - never)
-	UnloadIdleMinutes int `json:"unloadIdleMinutes"`
-
-	// UnloadIdleModels Whether Chatterbox engines unload their model after unloadIdleMinutes without speaking (loaded again on next use)
+	// UnloadIdleModels Whether Chatterbox engines unload their model after unloadIdleSeconds without speaking (loaded again on next use)
 	UnloadIdleModels bool `json:"unloadIdleModels"`
+
+	// UnloadIdleSeconds Idle time before a model is unloaded (deployment; 0 - never)
+	UnloadIdleSeconds int `json:"unloadIdleSeconds"`
 }
 
 // AppSettingsUpdate defines model for AppSettingsUpdate.

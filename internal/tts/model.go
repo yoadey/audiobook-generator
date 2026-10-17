@@ -23,6 +23,7 @@ type modelState struct {
 	users    int       // syntheses running
 	lastUsed time.Time // when the last one ended (or the app started)
 	unloaded bool
+	loads    int // loads done, to tell a 503 from before the last one
 }
 
 // use marks the model in use until the returned func is called, loading
@@ -60,13 +61,23 @@ func (r *remote) loadModel(ctx context.Context) error {
 	if !unloaded {
 		return nil
 	}
-	if _, err := r.post(ctx, "/restart_server", map[string]any{}); err != nil {
+	// Not canceled with the synthesis: the server loads the model anyway,
+	// and the app must not think it unloaded.
+	if _, err := r.post(context.WithoutCancel(ctx), "/restart_server", map[string]any{}); err != nil {
 		return fmt.Errorf("%s: load the model: %w", r.cfg.Name, err)
 	}
 	m.mu.Lock()
 	m.unloaded = false
+	m.loads++
 	m.mu.Unlock()
 	return nil
+}
+
+// loadCount returns how many loads are done.
+func (r *remote) loadCount() int {
+	r.model.mu.Lock()
+	defer r.model.mu.Unlock()
+	return r.model.loads
 }
 
 // notLoaded reports Chatterbox-TTS-Server's answer to /tts without a
@@ -77,10 +88,14 @@ func notLoaded(err error) bool {
 		strings.Contains(he.Body, "not currently loaded")
 }
 
-// reloadModel loads the model after the server reported it unloaded.
-func (r *remote) reloadModel(ctx context.Context) error {
+// reloadModel loads the model after the server reported it unloaded to a
+// request sent when loads were done; a load since then answers it (another
+// would swap the model under the requests it serves).
+func (r *remote) reloadModel(ctx context.Context, loads int) error {
 	r.model.mu.Lock()
-	r.model.unloaded = true
+	if r.model.loads == loads {
+		r.model.unloaded = true
+	}
 	r.model.mu.Unlock()
 	return r.loadModel(ctx)
 }

@@ -1120,13 +1120,13 @@ describe('App', () => {
         previewText: '',
         defaultPreviewText: 'It was a bright cold day.',
         unloadIdleModels: true,
-        unloadIdleMinutes: 10,
+        unloadIdleSeconds: 600,
       },
       'PATCH /api/settings': {
         previewText: 'Call me Ishmael.',
         defaultPreviewText: 'It was a bright cold day.',
         unloadIdleModels: true,
-        unloadIdleMinutes: 10,
+        unloadIdleSeconds: 600,
       },
     });
     renderAt('/settings');
@@ -1153,13 +1153,13 @@ describe('App', () => {
         previewText: '',
         defaultPreviewText: 'It was a bright cold day.',
         unloadIdleModels: true,
-        unloadIdleMinutes: 10,
+        unloadIdleSeconds: 600,
       },
       'PATCH /api/settings': {
         previewText: '',
         defaultPreviewText: 'It was a bright cold day.',
         unloadIdleModels: false,
-        unloadIdleMinutes: 10,
+        unloadIdleSeconds: 600,
       },
     });
     renderAt('/settings');
