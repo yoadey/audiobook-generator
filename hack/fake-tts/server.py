@@ -7,6 +7,11 @@ word timestamps). Speech is a quiet 220 Hz tone whose length grows with the
 text (20 ms per character), as 24 kHz 16-bit mono PCM; any other
 response_format gets a WAV file.
 
+Chatterbox-TTS-Server: GET /get_predefined_voices, GET /get_reference_files
+and POST /tts (a WAV tone, slower with more exaggeration), so the app can
+be run with ABG_TTS_ENGINES='[{"name":"chatterbox","kind":"chatterbox",
+"url":"http://localhost:8880"}]'.
+
 LLM (OpenAI-compatible): GET /v1/models and POST /v1/chat/completions, which
 answers the app's provider test prompt correctly, the character analysis
 with everyone who "said" something, merge checks with "different", voice
@@ -27,6 +32,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RATE = 24000
 VOICES = ["af_heart", "af_bella", "am_michael", "bf_emma", "bm_george"]
+CHATTERBOX_VOICES = [{"display_name": "Emily", "filename": "Emily.wav"}, {"display_name": "Adrian", "filename": "Adrian.wav"}]
+CHATTERBOX_REFERENCES = ["anna.wav"]
 LLM_KEY = os.environ.get("FAKE_LLM_KEY", "")
 MODELS = ["fake-small", "fake-large"]
 
@@ -144,6 +151,10 @@ class Handler(BaseHTTPRequestHandler):
             if self._authorized():
                 body = json.dumps({"object": "list", "data": [{"id": m, "object": "model"} for m in MODELS]})
                 self._send(200, body.encode(), "application/json")
+        elif self.path == "/get_predefined_voices":
+            self._send(200, json.dumps(CHATTERBOX_VOICES).encode(), "application/json")
+        elif self.path == "/get_reference_files":
+            self._send(200, json.dumps(CHATTERBOX_REFERENCES).encode(), "application/json")
         elif self.path == "/health":
             self._send(200, b'{"status":"healthy"}', "application/json")
         elif self.path.startswith("/v1/audio/voices"):
@@ -169,6 +180,16 @@ class Handler(BaseHTTPRequestHandler):
                           "total_tokens": 50 + len(content) // 4},
             }
             self._send(200, json.dumps(body).encode(), "application/json")
+            return
+        if self.path == "/tts":
+            req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            voice = req.get("predefined_voice_id") if req.get("voice_mode") == "predefined" else req.get("reference_audio_filename")
+            known = [v["filename"] for v in CHATTERBOX_VOICES] + CHATTERBOX_REFERENCES
+            if voice not in known or not req.get("text"):
+                self._send(404, json.dumps({"detail": "voice not found"}).encode(), "application/json")
+                return
+            per_char = 0.02 * (0.5 + float(req.get("exaggeration", 0.5)))
+            self._send(200, wav(tone(per_char * len(req["text"]))), "audio/wav")
             return
         if self.path not in ("/v1/audio/speech", "/dev/captioned_speech"):
             self._send(404, b"not found", "text/plain")

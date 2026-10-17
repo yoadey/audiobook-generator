@@ -629,6 +629,24 @@ func (e SegmentKind) Valid() bool {
 	}
 }
 
+// Defines values for TTSEngineKind.
+const (
+	TTSEngineKindChatterbox TTSEngineKind = "chatterbox"
+	TTSEngineKindOpenai     TTSEngineKind = "openai"
+)
+
+// Valid indicates whether the value is a known member of the TTSEngineKind enum.
+func (e TTSEngineKind) Valid() bool {
+	switch e {
+	case TTSEngineKindChatterbox:
+		return true
+	case TTSEngineKindOpenai:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Tier.
 const (
 	TierMain  Tier = "main"
@@ -1577,6 +1595,24 @@ type SystemInfo struct {
 	Version string `json:"version"`
 }
 
+// TTSEngine A speech engine besides Kokoro; its voices are written "<name>:<voice>"
+type TTSEngine struct {
+	// Emotions Speaks emotions and moods itself (Kokoro voices get pace and loudness instead)
+	Emotions bool `json:"emotions"`
+
+	// Error Why its voices could not be listed
+	Error *string       `json:"error,omitempty"`
+	Kind  TTSEngineKind `json:"kind"`
+	Name  string        `json:"name"`
+
+	// Speed Takes a voice's speed
+	Speed  bool     `json:"speed"`
+	Voices []string `json:"voices"`
+}
+
+// TTSEngineKind defines model for TTSEngine.Kind.
+type TTSEngineKind string
+
 // TTSInfo defines model for TTSInfo.
 type TTSInfo struct {
 	Error     *string `json:"error,omitempty"`
@@ -1616,10 +1652,11 @@ type VoiceGender string
 // VoicePreview defines model for VoicePreview.
 type VoicePreview struct {
 	// BookId Apply this book's pronunciation lexicon to the text
-	BookId *int64   `json:"bookId,omitempty"`
-	Speed  *float32 `json:"speed,omitempty"`
-	Text   *string  `json:"text,omitempty"`
-	Voice  string   `json:"voice"`
+	BookId  *int64   `json:"bookId,omitempty"`
+	Emotion *Emotion `json:"emotion,omitempty"`
+	Speed   *float32 `json:"speed,omitempty"`
+	Text    *string  `json:"text,omitempty"`
+	Voice   string   `json:"voice"`
 }
 
 // Volume defines model for Volume.
@@ -1956,6 +1993,9 @@ type ServerInterface interface {
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(w http.ResponseWriter, r *http.Request)
+	// ListTTSEngines The speech engines configured besides Kokoro, with their voices
+	// (GET /tts/engines)
+	ListTTSEngines(w http.ResponseWriter, r *http.Request)
 	// ListVoices The voice catalogue, reconciled with the voices the TTS server offers
 	// (GET /voices)
 	ListVoices(w http.ResponseWriter, r *http.Request)
@@ -3575,6 +3615,20 @@ func (siw *ServerInterfaceWrapper) GetSystemInfo(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ListTTSEngines operation middleware
+func (siw *ServerInterfaceWrapper) ListTTSEngines(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListTTSEngines(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListVoices operation middleware
 func (siw *ServerInterfaceWrapper) ListVoices(w http.ResponseWriter, r *http.Request) {
 
@@ -3755,6 +3809,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/books/{bookId}/downloads/{volumeId}/file", wrapper.GetDownloadFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/voices", wrapper.ListVoices)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tts/engines", wrapper.ListTTSEngines)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/voices/preview", wrapper.PreviewVoice)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/jobs/{jobId}/retry", wrapper.RetryJob)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/jobs/{jobId}/cancel", wrapper.CancelJob)
@@ -7129,6 +7184,44 @@ func (response GetSystemInfodefaultJSONResponse) VisitGetSystemInfoResponse(w ht
 	return err
 }
 
+type ListTTSEnginesRequestObject struct {
+}
+
+type ListTTSEnginesResponseObject interface {
+	VisitListTTSEnginesResponse(w http.ResponseWriter) error
+}
+
+type ListTTSEngines200JSONResponse []TTSEngine
+
+func (response ListTTSEngines200JSONResponse) VisitListTTSEnginesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTTSEnginesdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListTTSEnginesdefaultJSONResponse) VisitListTTSEnginesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListVoicesRequestObject struct {
 }
 
@@ -7421,6 +7514,9 @@ type StrictServerInterface interface {
 	// GetSystemInfo Version, database and TTS status
 	// (GET /system)
 	GetSystemInfo(ctx context.Context, request GetSystemInfoRequestObject) (GetSystemInfoResponseObject, error)
+	// ListTTSEngines The speech engines configured besides Kokoro, with their voices
+	// (GET /tts/engines)
+	ListTTSEngines(ctx context.Context, request ListTTSEnginesRequestObject) (ListTTSEnginesResponseObject, error)
 	// ListVoices The voice catalogue, reconciled with the voices the TTS server offers
 	// (GET /voices)
 	ListVoices(ctx context.Context, request ListVoicesRequestObject) (ListVoicesResponseObject, error)
@@ -9041,6 +9137,30 @@ func (sh *strictHandler) GetSystemInfo(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetSystemInfoResponseObject); ok {
 		if err := validResponse.VisitGetSystemInfoResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListTTSEngines operation middleware
+func (sh *strictHandler) ListTTSEngines(w http.ResponseWriter, r *http.Request) {
+	var request ListTTSEnginesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListTTSEngines(ctx, request.(ListTTSEnginesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListTTSEngines")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListTTSEnginesResponseObject); ok {
+		if err := validResponse.VisitListTTSEnginesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

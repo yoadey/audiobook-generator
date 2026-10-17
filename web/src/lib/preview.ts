@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { previewVoice } from '../api/client';
+import { type Emotion, previewVoice } from '../api/client';
 import { notifyError } from './notify';
 
 /** Text of a preview, or a function that finds it (e.g. a quote of the character). */
@@ -41,10 +41,18 @@ export function usePreview(bookId?: number) {
 
   /**
    * Plays voice at speed; id names the preview for `playing`/`loading`.
-   * lexicon false skips the book's lexicon (text already spells it out).
+   * lexicon false skips the book's lexicon (text already spells it out);
+   * emotion is for engines that speak emotions themselves.
    */
   const play = useCallback(
-    async (id: string, voice: string, speed: number, text?: PreviewText, lexicon = true) => {
+    async (
+      id: string,
+      voice: string,
+      speed: number,
+      text?: PreviewText,
+      lexicon = true,
+      emotion?: Emotion,
+    ) => {
       stop();
       const ctrl = new AbortController();
       request.current = ctrl;
@@ -57,6 +65,7 @@ export function usePreview(bookId?: number) {
           sample,
           ctrl.signal,
           lexicon ? bookId : undefined,
+          emotion,
         );
         if (ctrl.signal.aborted) {
           URL.revokeObjectURL(u);

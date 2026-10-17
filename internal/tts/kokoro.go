@@ -78,6 +78,12 @@ type Speech struct {
 	Speed float64
 	// Format is "pcm" (raw samples, for assembly) or "mp3" (previews).
 	Format string
+	// How to speak, for engines that speak emotions themselves (Kokoro is
+	// given pace and loudness instead): a quote's emotion ("" neutral),
+	// the narration's mood, and whether it is a thought.
+	Emotion string
+	Mood    string
+	Thought bool
 }
 
 // MaxResponseBytes bounds a single synthesis response (~4 min of PCM).

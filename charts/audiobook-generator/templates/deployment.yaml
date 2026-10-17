@@ -114,6 +114,10 @@ spec:
               value: {{ .Values.tts.concurrency | int | quote }}
             - name: ABG_TTS_DEFAULT_VOICE
               value: {{ .Values.tts.defaultVoice | quote }}
+            {{- with include "abg.ttsEngines" . }}
+            - name: ABG_TTS_ENGINES
+              value: {{ . | quote }}
+            {{- end }}
             - name: ABG_AUDIO_BITRATE
               value: {{ .Values.audioBitrate | quote }}
             {{- with .Values.publicUrl }}

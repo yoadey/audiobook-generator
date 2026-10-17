@@ -774,6 +774,23 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /tts/engines:
+    get:
+      operationId: listTTSEngines
+      summary: The speech engines configured besides Kokoro, with their voices
+      tags: [audio]
+      responses:
+        "200":
+          description: Engines
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TTSEngine"
+        default:
+          $ref: "#/components/responses/Error"
+
   /voices/preview:
     post:
       operationId: previewVoice
@@ -2236,6 +2253,33 @@ components:
         text:
           type: string
           maxLength: 500
+        emotion:
+          $ref: "#/components/schemas/Emotion"
+          description: Spoken with this emotion (as a quote would be)
+
+    TTSEngine:
+      type: object
+      description: A speech engine besides Kokoro; its voices are written "<name>:<voice>"
+      required: [name, kind, emotions, speed, voices]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [openai, chatterbox]
+        emotions:
+          type: boolean
+          description: Speaks emotions and moods itself (Kokoro voices get pace and loudness instead)
+        speed:
+          type: boolean
+          description: Takes a voice's speed
+        voices:
+          type: array
+          items:
+            type: string
+        error:
+          type: string
+          description: Why its voices could not be listed
 
     LLMLimits:
       type: object

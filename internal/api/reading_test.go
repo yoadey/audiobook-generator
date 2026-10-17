@@ -166,3 +166,32 @@ func TestReadingAlong(t *testing.T) {
 		assert.Nil(t, listened.SegmentId)
 	})
 }
+
+func TestEngineVoices(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		c := newAPI(t, s, 10<<20)
+		var engines []api.TTSEngine
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/tts/engines", nil, &engines))
+		require.Len(t, engines, 1)
+		assert.Equal(t, api.TTSEngine{Name: "cb", Kind: api.TTSEngineKindChatterbox, Emotions: true,
+			Voices: []string{"Emily.wav"}}, engines[0])
+
+		assert.Equal(t, "Run!", c.says(map[string]any{"voice": "cb:Emily.wav", "text": "Run!", "emotion": "shouting"}))
+		require.Equal(t, http.StatusBadRequest, c.json(http.MethodPost, "/api/voices/preview",
+			map[string]any{"voice": "orpheus:tara", "text": "Hi"}, nil), "not configured")
+		require.Equal(t, http.StatusBadRequest, c.json(http.MethodPost, "/api/voices/preview",
+			map[string]any{"voice": "cb:Emily.wav+af_heart", "text": "Hi"}, nil), "engine voices do not mix")
+
+		data, err := epubtest.Sample()
+		require.NoError(t, err)
+		var book api.Book
+		require.Equal(t, http.StatusAccepted, c.upload("sample.epub", data, &book))
+		waitImported(t, c, book.Id)
+		id := itoa(book.Id)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/books/"+id,
+			map[string]any{"narratorVoice": "cb:Emily.wav"}, &book))
+		assert.Equal(t, "cb:Emily.wav", book.NarratorVoice)
+		require.Equal(t, http.StatusBadRequest, c.json(http.MethodPatch, "/api/books/"+id,
+			map[string]any{"narratorVoice": "orpheus:tara"}, nil))
+	})
+}

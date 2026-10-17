@@ -510,6 +510,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/tts/engines': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The speech engines configured besides Kokoro, with their voices */
+    get: operations['listTTSEngines'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/voices/preview': {
     parameters: {
       query?: never;
@@ -1301,6 +1318,21 @@ export interface components {
       voice: string;
       speed?: number;
       text?: string;
+      /** @description Spoken with this emotion (as a quote would be) */
+      emotion?: components['schemas']['Emotion'];
+    };
+    /** @description A speech engine besides Kokoro; its voices are written "<name>:<voice>" */
+    TTSEngine: {
+      name: string;
+      /** @enum {string} */
+      kind: 'openai' | 'chatterbox';
+      /** @description Speaks emotions and moods itself (Kokoro voices get pace and loudness instead) */
+      emotions: boolean;
+      /** @description Takes a voice's speed */
+      speed: boolean;
+      voices: string[];
+      /** @description Why its voices could not be listed */
+      error?: string;
     };
     /** @description Provider limits; 0 means no limit. Daily limits reset at midnight in quotaTimezone. */
     LLMLimits: {
@@ -2462,6 +2494,27 @@ export interface operations {
         };
       };
       502: components['responses']['Error'];
+      default: components['responses']['Error'];
+    };
+  };
+  listTTSEngines: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Engines */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TTSEngine'][];
+        };
+      };
       default: components['responses']['Error'];
     };
   };

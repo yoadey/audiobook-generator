@@ -54,6 +54,16 @@ func (fakeTTS) Synthesize(_ context.Context, s tts.Speech) ([]byte, error) {
 	return make([]byte, 4800), nil
 }
 
+// The fake has one more engine, "cb" (Chatterbox).
+func (fakeTTS) Configured(voice string) bool {
+	engine, _, ok := tts.SplitVoice(voice)
+	return !ok || engine == "cb"
+}
+
+func (fakeTTS) Engines(context.Context) []tts.Engine {
+	return []tts.Engine{{Name: "cb", Kind: tts.KindChatterbox, Emotions: true, Voices: []string{"Emily.wav"}}}
+}
+
 type client struct {
 	t   *testing.T
 	url string

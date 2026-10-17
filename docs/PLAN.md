@@ -407,6 +407,20 @@ forms (the lexicon keeps its entries).
   starting with their first word. Renders from before get an estimate from
   the text length; a re-render makes them exact.
 
+### 3.7a Other speech engines (optional)
+
+Kokoro cannot act. Further engines are configured by name
+(`ABG_TTS_ENGINES`, chart `tts.engines` / `tts.chatterbox`) and their
+voices written `<engine>:<voice>`, chosen per character (or, through the
+API, as narrator). A router in `internal/tts` sends each piece to its
+voice's engine (bounded concurrency per engine) and converts its WAV to
+24 kHz mono PCM. An engine that speaks emotions itself (Chatterbox, model
+*original*) is given the quote's emotion, the narration's mood and
+thoughts, mapped to its exaggeration/cfg controls with a fixed seed per
+voice; the render then leaves pace alone (only loudness). Engines have no
+word timings (sentence marking only). Details and the evaluation of
+Chatterbox: `docs/tts-engines.md`.
+
 ### 3.8 Scheduler and jobs
 
 - Job table in the database; types: `import`, `analyze_batch`, `merge`,
@@ -737,7 +751,7 @@ Every milestone ends with an installable chart.
 | **M5** | Casting + voice catalogue + voice editor + previews | every main character has a recipe |
 | **M6** | Speaker attribution + multi-voice rendering + chapter editor | **A multi-voice audiobook** |
 | **M7** | Pronunciation lexicon, podcast RSS, OIDC, metrics/ServiceMonitor, Litestream, export/import, M4B per volume | feature-complete v1.0 |
-| **M8** | Reading along: segment timings recorded while rendering, a reader (page scrolling, sticky player bar, sentence marking) that follows the voice and shares its position with the player, WebVTT transcripts per sentence in the podcast feed; more quotation styles (single, guillemets, low-high, dash dialogue), italics kept and italic/single-quoted thoughts attributed and voiced; spoken-text cleanup; custom sample texts for voice previews (instance, book, character); expression: emotions as pace and loudness, pauses by context, word timings from Kokoro (word marking in the reader, WebVTT lines by word), optional LLM chapter preparation (moods, dramatic pauses, spoken forms, pronunciation suggestions) | read and listen at once |
+| **M8** | Reading along: segment timings recorded while rendering, a reader (page scrolling, sticky player bar, sentence marking) that follows the voice and shares its position with the player, WebVTT transcripts per sentence in the podcast feed; more quotation styles (single, guillemets, low-high, dash dialogue), italics kept and italic/single-quoted thoughts attributed and voiced; spoken-text cleanup; custom sample texts for voice previews (instance, book, character); expression: emotions as pace and loudness, pauses by context, word timings from Kokoro (word marking in the reader, WebVTT lines by word), optional LLM chapter preparation (moods, dramatic pauses, spoken forms, pronunciation suggestions); further speech engines per character (Chatterbox with emotions, OpenAI-compatible servers), Chatterbox-TTS-Server in the chart (optional) | read and listen at once |
 | **M9** (optional) | segment cache, POV narrator voice, Audiobookshelf export, local LLM fallback | refinements |
 
 Integration into the cluster repo (`HelmRelease`, Zitadel client via
@@ -754,6 +768,7 @@ database) happens separately there once M2 is done.
 | Free tiers use inputs for training | conscious decision, stated in docs/UI; local fallback possible |
 | Attribution quality on web-serial prose | measured against an annotated corpus, confidence flags, a fast manual editor |
 | Kokoro on CPU slower than expected | M2 measures early; Kokoro replicas scale; lookahead buffers |
+| Kokoro cannot act emotions | pace, loudness and pauses by context; optional expressive engines (Chatterbox) for main characters where a GPU allows |
 | Only ~25 English base voices | weighted mixing + speed; pool for minor characters; minimum distance enforced in code |
 | Pathological EPUBs (one giant file, broken TOC) | streaming parser, several fallbacks, manual chapter correction |
 | Two database dialects drift apart | no raw SQL outside a tiny dialect interface, CI matrix over both |

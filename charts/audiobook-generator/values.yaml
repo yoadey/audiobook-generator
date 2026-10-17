@@ -236,6 +236,67 @@ tts:
       limits:
         memory: 4Gi
 
+  # Speech engines besides Kokoro, e.g. a stronger one for the main
+  # characters (docs/tts-engines.md). Their voices are written
+  # "<name>:<voice>" and chosen per character. Fields: name, kind
+  # (openai | chatterbox), url, and optionally model, variant, concurrency,
+  # timeout, gain, speed, voices.
+  engines: []
+  # - name: orpheus
+  #   kind: openai
+  #   url: http://orpheus.tts:5005
+  # Chatterbox-TTS-Server (devnen), which speaks emotions itself. Off by
+  # default: it needs a GPU for book-length work (on CPU it is roughly ten
+  # times slower than Kokoro). When on, it joins tts.engines.
+  chatterbox:
+    enabled: false
+    # Engine name, the prefix of its voices ("chatterbox:Emily.wav").
+    name: chatterbox
+    # original (0.5B) acts emotions (exaggeration); turbo (350M) is faster
+    # but ignores them.
+    variant: original
+    # Parallel requests (one GPU takes one or two).
+    concurrency: 1
+    timeout: 10m
+    # Evens out its loudness against Kokoro's.
+    gain: 1
+    image:
+      repository: ghcr.io/devnen/chatterbox-tts-server
+      # -cpu, -nvidia (CUDA 12.1), -cu128, -cu130 or -rocm.
+      tag: sha-915ae28-cpu
+      pullPolicy: IfNotPresent
+    # Model weights (downloaded from Hugging Face on first start) and the
+    # reference clips voices are cloned from (reference_audio/).
+    persistence:
+      enabled: true
+      existingClaim: ""
+      storageClass: ""
+      accessModes: [ReadWriteOnce]
+      size: 20Gi
+    # Optional Hugging Face token (a Secret with key HF_TOKEN).
+    hfTokenSecret: ""
+    podAnnotations: {}
+    priorityClassName: ""
+    # E.g. runtimeClassName: nvidia for the NVIDIA container runtime.
+    runtimeClassName: ""
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    # The image runs as root and writes below /app.
+    podSecurityContext:
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+    extraEnv: []
+    # For a GPU add e.g. limits: {nvidia.com/gpu: 1}.
+    resources:
+      requests:
+        cpu: "2"
+        memory: 6Gi
+      limits:
+        memory: 12Gi
+
 casting:
   # How many speaking characters (the most important ones) get a voice
   # recipe of their own; everyone else speaks with a pool voice by gender

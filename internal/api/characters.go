@@ -344,6 +344,11 @@ func (s *Server) UpdateCharacter(ctx context.Context, req UpdateCharacterRequest
 	if msg := validateCharacterUpdate(req.Body); msg != "" {
 		return UpdateCharacter400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 	}
+	if v := req.Body.Voice; v != nil && strings.TrimSpace(*v) != "" {
+		if msg := s.engineMissing(*v); msg != "" {
+			return UpdateCharacter400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
+		}
+	}
 	fields := map[string]any{}
 	if !voiceOnly {
 		fields["UserEdited"] = true

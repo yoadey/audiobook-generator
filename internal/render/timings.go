@@ -129,7 +129,7 @@ func pcmDuration(n int64) time.Duration {
 func EstimateTimings(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, duration time.Duration) *Timings {
 	// Such renders had no prepared pauses.
 	withoutPreparation(paras, segs)
-	items := plan(ch, paras, segs, func(*store.Segment) (string, float64) { return "", 1 }, lexicon.Compile(nil))
+	items := plan(ch, paras, segs, func(*store.Segment) (string, float64) { return "", 1 }, lexicon.Compile(nil), nil)
 	if len(items) == 0 {
 		return &Timings{Cues: []Cue{}}
 	}

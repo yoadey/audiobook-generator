@@ -59,7 +59,7 @@ func chapter(paras ...[]string) ([]store.Paragraph, []store.Segment) {
 func planOf(paras []store.Paragraph, segs []store.Segment) []item {
 	ch := &store.Chapter{Title: "Ignored"}
 	paras = append([]store.Paragraph{{ID: 99, Kind: store.ParagraphHeading}}, paras...)
-	return plan(ch, paras, segs, func(*store.Segment) (string, float64) { return "af_heart", 1 }, lexicon.Compile(nil))
+	return plan(ch, paras, segs, func(*store.Segment) (string, float64) { return "af_heart", 1 }, lexicon.Compile(nil), nil)
 }
 
 func TestPauses(t *testing.T) {
@@ -102,6 +102,41 @@ func TestEmotionProsody(t *testing.T) {
 	assert.Equal(t, 1.0, items[1].gain)
 	assert.Equal(t, 1.3, items[2].gain)
 	assert.InDelta(t, 0.85, items[3].gain, 1e-9, "thoughts are softer")
+}
+
+// engines: voices "cb:…" are an expressive engine that paces itself.
+type engines struct{}
+
+func (engines) Expressive(v string) bool { return v[:3] == "cb:" }
+func (engines) TakesSpeed(v string) bool { return v[:3] != "cb:" }
+
+func TestExpressiveEngine(t *testing.T) {
+	ps, ss := chapter([]string{"e:shouting:“Run!”", "n:she said."}, []string{"t:Too late,", "n:he thought."})
+	ps[1].Mood = "tense"
+	ch := &store.Chapter{Title: "Ignored"}
+	paras := append([]store.Paragraph{{ID: 99, Kind: store.ParagraphHeading}}, ps...)
+	items := plan(ch, paras, ss, func(s *store.Segment) (string, float64) {
+		if s != nil && s.QuoteRef > 0 {
+			return "cb:anna.wav", 1.2
+		}
+		return "af_heart", 1.1
+	}, lexicon.Compile(nil), engines{})
+	require.Len(t, items, 4)
+	shout, said, thought, narration := items[0], items[1], items[2], items[3]
+	assert.Equal(t, &style{emotion: "shouting"}, shout.style)
+	assert.Equal(t, 1.0, shout.speed, "the engine paces itself")
+	assert.Equal(t, 1.3, shout.gain, "loudness is still ours")
+	assert.Equal(t, tts.Speech{Text: "Run!", Voice: "cb:anna.wav", Speed: 1, Format: "pcm", Emotion: "shouting"},
+		shout.speech())
+	assert.Nil(t, said.style, "Kokoro gets pace instead")
+	assert.Equal(t, 1.1, said.speed)
+	assert.Equal(t, &style{thought: true}, thought.style)
+	assert.InDelta(t, 1.04*1.1, narration.speed, 0.006, "Kokoro narration in a tense mood")
+
+	// The style is part of the cache key.
+	calm := shout
+	calm.style = &style{emotion: "happy"}
+	assert.NotEqual(t, shout.file("d", 0), calm.file("d", 0))
 }
 
 func TestPhrases(t *testing.T) {

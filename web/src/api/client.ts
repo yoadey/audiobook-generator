@@ -44,6 +44,7 @@ export type Quote = components['schemas']['Quote'];
 export type Segment = components['schemas']['Segment'];
 export type SystemInfo = components['schemas']['SystemInfo'];
 export type Tier = components['schemas']['Tier'];
+export type TTSEngine = components['schemas']['TTSEngine'];
 export type Voice = components['schemas']['Voice'];
 export type Volume = components['schemas']['Volume'];
 
@@ -224,6 +225,13 @@ export const voicesQuery = queryOptions({
   queryKey: ['voices'],
   queryFn: () => unwrap(api.GET('/voices')),
   staleTime: 5 * 60_000,
+});
+
+/** Speech engines besides Kokoro, with their voices. */
+export const ttsEnginesQuery = queryOptions({
+  queryKey: ['tts-engines'],
+  queryFn: () => unwrap(api.GET('/tts/engines')),
+  staleTime: 60_000,
 });
 
 export const jobsQuery = (status?: Job['status'][]) =>
@@ -409,11 +417,12 @@ export async function previewVoice(
   text?: string,
   signal?: AbortSignal,
   bookId?: number,
+  emotion?: Emotion,
 ): Promise<string> {
   const response = await globalThis.fetch(`${baseUrl}/voices/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ voice, speed, text, bookId }),
+    body: JSON.stringify({ voice, speed, text, bookId, emotion }),
     signal,
   });
   signInIfExpired(response);

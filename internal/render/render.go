@@ -52,6 +52,16 @@ type TimedSynthesizer interface {
 	SynthesizeTimed(ctx context.Context, s tts.Speech) ([]byte, []tts.Word, error)
 }
 
+// Engines tells what a voice's engine does itself (optional: without it
+// every voice is Kokoro's).
+type Engines interface {
+	// Expressive: the engine speaks emotions and moods itself, so they
+	// are not given by pace (only loudness).
+	Expressive(voice string) bool
+	// TakesSpeed: the engine takes a speed.
+	TakesSpeed(voice string) bool
+}
+
 // VoiceCatalog lists the base voices pool voices are chosen from.
 type VoiceCatalog interface {
 	Voices(ctx context.Context) ([]casting.BaseVoice, error)
@@ -207,14 +217,45 @@ type item struct {
 	quote, thought, dialogue bool
 	emotion                  string
 	extra                    time.Duration
+	// style is how an expressive engine is told to speak it (nil: Kokoro
+	// gets pace and loudness instead).
+	style *style
+}
+
+// style is how to speak, for an engine that acts itself.
+type style struct {
+	emotion, mood string
+	thought       bool
+}
+
+func (s *style) key() string {
+	if s == nil {
+		return ""
+	}
+	return fmt.Sprintf("|%s|%s|%t", s.emotion, s.mood, s.thought)
+}
+
+// speech is the TTS request of an item.
+func (it item) speech() tts.Speech {
+	sp := tts.Speech{Text: it.text, Voice: it.voice, Speed: it.speed, Format: "pcm"}
+	if it.style != nil {
+		sp.Emotion, sp.Mood, sp.Thought = it.style.emotion, it.style.mood, it.style.thought
+	}
+	return sp
+}
+
+// file is where an item's audio is cached.
+func (it item) file(dir string, i int) string {
+	return filepath.Join(dir, fmt.Sprintf("%05d-%s.pcm", i, cacheKey(VoiceKey(it.voice, it.speed)+it.style.key(), it.text)))
 }
 
 // voiceFunc returns the voice of a segment.
 type voiceFunc func(s *store.Segment) (string, float64)
 
-// plan lists what to say, in order, with the book's pronunciations applied.
+// plan lists what to say, in order, with the book's pronunciations applied
+// (engines may be nil: all voices are Kokoro's).
 func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voiceOf voiceFunc,
-	lex *lexicon.Lexicon,
+	lex *lexicon.Lexicon, engines Engines,
 ) []item {
 	byPara := map[int64][]store.Segment{}
 	for _, s := range segs {
@@ -230,6 +271,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 	say := func(s *store.Segment, text, voice string, speed float64, dialogue bool, mood string) {
 		id, pr := int64(0), prosodyOf(s)
 		lead := 0
+		var st *style
 		if s != nil {
 			id = s.ID
 			if i := strings.Index(s.Text, text); i > 0 {
@@ -238,6 +280,18 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			if m, ok := moods[mood]; ok && s.QuoteRef == 0 {
 				pr = m // narration in the paragraph's mood
 			}
+			if engines != nil && engines.Expressive(voice) {
+				// The engine acts itself; only loudness is ours.
+				st, pr.speed = &style{thought: s.Kind == store.SegmentThought}, 1
+				if s.QuoteRef > 0 {
+					st.emotion = s.Emotion
+				} else {
+					st.mood = mood
+				}
+			}
+		}
+		if engines != nil && !engines.TakesSpeed(voice) {
+			speed, pr.speed = 1, 1
 		}
 		d := direct(s, text, lead)
 		for i, ph := range d.phrases {
@@ -250,7 +304,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			}
 			it := item{
 				text: t, voice: voice, speed: clampSpeed(speed * pr.speed), gain: pr.gain,
-				gap: gapPhrase, pause: d.pauses[i], segmentID: id, dialogue: dialogue,
+				gap: gapPhrase, pause: d.pauses[i], segmentID: id, dialogue: dialogue, style: st,
 			}
 			if s != nil {
 				it.quote, it.thought, it.emotion = s.QuoteRef > 0, s.Kind == store.SegmentThought, s.Emotion
@@ -394,7 +448,8 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if !book.PrepareChapters {
 		withoutPreparation(paras, segs)
 	}
-	items := plan(ch, paras, segs, voiceOf, lexicon.Compile(entries))
+	engines, _ := r.TTS.(Engines)
+	items := plan(ch, paras, segs, voiceOf, lexicon.Compile(entries), engines)
 	text := fingerprint(paras, segs)
 	start := time.Now()
 
@@ -410,13 +465,13 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	g.SetLimit(max(r.Concurrency, 1))
 	progressCh := make(chan struct{}, len(items))
 	for i, it := range items {
-		files[i] = filepath.Join(cacheDir, fmt.Sprintf("%05d-%s.pcm", i, cacheKey(VoiceKey(it.voice, it.speed), it.text)))
+		files[i] = it.file(cacheDir, i)
 		if _, err := os.Stat(files[i]); err == nil {
 			progressCh <- struct{}{}
 			continue
 		}
 		g.Go(func() error {
-			pcm, words, err := r.synthesize(gctx, tts.Speech{Text: it.text, Voice: it.voice, Speed: it.speed, Format: "pcm"})
+			pcm, words, err := r.synthesize(gctx, it.speech())
 			if err != nil {
 				var he *tts.HTTPError
 				if errors.As(err, &he) && he.Permanent() {

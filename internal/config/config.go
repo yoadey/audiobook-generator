@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+
+	"github.com/yoadey/audiobook-generator/internal/tts"
 )
 
 // Database dialects.
@@ -122,6 +124,9 @@ type TTS struct {
 	Concurrency int `env:"CONCURRENCY" envDefault:"2"`
 	// DefaultVoice narrates books that have no voice set.
 	DefaultVoice string `env:"DEFAULT_VOICE" envDefault:"af_heart"`
+	// Engines are speech servers besides Kokoro (a JSON list, see
+	// tts.EngineConfig), whose voices are written "<name>:<voice>".
+	Engines tts.Engines `env:"ENGINES"`
 }
 
 // Load reads the configuration from the environment and validates it.
@@ -184,6 +189,11 @@ func (c Config) Validate() error {
 	}
 	if c.TTS.Concurrency < 1 {
 		errs = append(errs, fmt.Errorf("ABG_TTS_CONCURRENCY must be at least 1, got %d", c.TTS.Concurrency))
+	}
+	for i := range c.TTS.Engines {
+		if err := c.TTS.Engines[i].Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("ABG_TTS_ENGINES: %w", err))
+		}
 	}
 	if c.TTS.DefaultVoice == "" {
 		errs = append(errs, errors.New("ABG_TTS_DEFAULT_VOICE must not be empty"))

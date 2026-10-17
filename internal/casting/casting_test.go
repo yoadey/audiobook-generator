@@ -35,8 +35,11 @@ func TestRecipes(t *testing.T) {
 	r, err = ParseRecipe("af_sky(1)+af_sky(1)+am_adam(2)")
 	require.NoError(t, err)
 	assert.Equal(t, "af_sky(0.5)+am_adam(0.5)", r.String())
+	r, err = ParseRecipe("chatterbox:Emily.wav")
+	require.NoError(t, err)
+	assert.Equal(t, "chatterbox:Emily.wav", r.String())
 	for _, bad := range []string{"", "heart", "af_heart(0)", "af_heart+", "AF_heart", "a(1)+b(1)",
-		"af_a+af_b+af_c+af_d+af_e"} {
+		"af_a+af_b+af_c+af_d+af_e", "chatterbox:Emily.wav+af_heart", "Chatterbox:x", "chatterbox:", "x:a b"} {
 		_, err := ParseRecipe(bad)
 		assert.ErrorIs(t, err, ErrRecipe, bad)
 	}

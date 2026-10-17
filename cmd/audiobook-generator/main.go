@@ -85,14 +85,18 @@ func run() error {
 	llmPool := llm.NewPool(st, llm.NewMetrics(reg), log)
 	llmPool.MaxWait = cfg.LLM.MaxWait
 
-	speech := tts.New(cfg.TTS.URL, cfg.TTS.Timeout)
+	kokoro := tts.New(cfg.TTS.URL, cfg.TTS.Timeout)
+	speech, err := tts.NewRouter(kokoro, cfg.TTS.Engines)
+	if err != nil {
+		return fmt.Errorf("ABG_TTS_ENGINES: %w", err)
+	}
 	runner := jobs.New(st, log)
 	runner.Metrics = jobs.NewMetrics(reg)
 	reg.MustRegister(metrics.NewCollector(st, log))
 	imp := &importer.Importer{Store: st, DataDir: cfg.DataDir, Log: log}
 	runner.Handle(importer.JobType, imp.Handler())
 	runner.Handle(transfer.JobType, (&transfer.Restorer{Store: st, DataDir: cfg.DataDir, Log: log}).Handler())
-	voices := casting.NewCatalog(speech)
+	voices := casting.NewCatalog(kokoro)
 	attributor := &attribution.Attributor{
 		Store: st, LLM: llmPool, Jobs: runner, PartTokens: cfg.LLM.AttributionTokens, Log: log,
 	}

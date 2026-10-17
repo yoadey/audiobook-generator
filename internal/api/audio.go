@@ -50,6 +50,9 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(
 				`narratorVoice must be a voice like "af_heart" or a mix like "bf_emma(2)+af_bella(1)"`))}, nil
 		}
+		if msg := s.engineMissing(voice); msg != "" {
+			return UpdateBook400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
+		}
 		fields["NarratorVoice"] = strings.Join(strings.Fields(voice), "")
 	}
 	if v := req.Body.NarratorSpeed; v != nil {
@@ -251,11 +254,48 @@ func (s *Server) ListVoices(ctx context.Context, _ ListVoicesRequestObject) (Lis
 	return ListVoices200JSONResponse(out), nil
 }
 
+// engineMissing tells why a voice cannot be used: its engine is not
+// configured ("" when it can, or the TTS cannot tell).
+func (s *Server) engineMissing(voice string) string {
+	c, ok := s.TTS.(interface{ Configured(voice string) bool })
+	if !ok || c.Configured(strings.TrimSpace(voice)) {
+		return ""
+	}
+	engine, _, _ := tts.SplitVoice(strings.TrimSpace(voice))
+	return fmt.Sprintf("the engine %q of this voice is not configured (ABG_TTS_ENGINES)", engine)
+}
+
+// EngineLister lists the speech engines besides Kokoro (the TTS may not).
+type EngineLister interface {
+	Engines(ctx context.Context) []tts.Engine
+}
+
+// ListTTSEngines lists the configured engines with their voices.
+func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObject) (ListTTSEnginesResponseObject, error) {
+	out := []TTSEngine{}
+	if l, ok := s.TTS.(EngineLister); ok {
+		for _, e := range l.Engines(ctx) {
+			voices := e.Voices
+			if voices == nil {
+				voices = []string{}
+			}
+			out = append(out, TTSEngine{
+				Name: e.Name, Kind: TTSEngineKind(e.Kind), Emotions: e.Emotions, Speed: e.Speed, Voices: voices,
+				Error: nonEmpty(e.Err),
+			})
+		}
+	}
+	return ListTTSEngines200JSONResponse(out), nil
+}
+
 // PreviewVoice speaks a sample; recent previews are cached.
 func (s *Server) PreviewVoice(ctx context.Context, req PreviewVoiceRequestObject) (PreviewVoiceResponseObject, error) {
 	voice := strings.TrimSpace(req.Body.Voice)
 	if _, err := casting.ParseRecipe(voice); err != nil {
 		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg(err.Error()))}, nil
+	}
+	if msg := s.engineMissing(voice); msg != "" {
+		return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg(msg))}, nil
 	}
 	var text string
 	if req.Body.Text != nil {
@@ -281,11 +321,18 @@ func (s *Server) PreviewVoice(ctx context.Context, req PreviewVoiceRequestObject
 		}
 		text = lexicon.Compile(entries).Apply(text)
 	}
-	key := previewKey(voice, speed, text)
+	emotion := ""
+	if e := req.Body.Emotion; e != nil && *e != EmotionNeutral {
+		if !e.Valid() {
+			return PreviewVoice400JSONResponse{ErrorJSONResponse(errMsg("unknown emotion"))}, nil
+		}
+		emotion = string(*e)
+	}
+	key := previewKey(voice+"|"+emotion, speed, text)
 	data, ok := s.previews.get(key)
 	if !ok {
 		var err error
-		data, err = s.TTS.Synthesize(ctx, tts.Speech{Text: text, Voice: voice, Speed: speed, Format: "mp3"})
+		data, err = s.TTS.Synthesize(ctx, tts.Speech{Text: text, Voice: voice, Speed: speed, Format: "mp3", Emotion: emotion})
 		if err != nil {
 			return PreviewVoice502JSONResponse{Message: "TTS server: " + err.Error()}, nil
 		}

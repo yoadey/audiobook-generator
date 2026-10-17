@@ -35,6 +35,10 @@ args=(
   --set 'llm.providers[0].apiKeySecret.name=llm-keys'
   --set 'llm.providers[0].apiKeySecret.key=fake'
   --set 'llm.providers[0].limits.rpd=100'
+  # A second engine (Chatterbox-TTS-Server's API), also served by the fake.
+  --set 'tts.engines[0].name=chatterbox'
+  --set 'tts.engines[0].kind=chatterbox'
+  --set 'tts.engines[0].url=http://fake-tts:8880'
 )
 kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n "$ns" create configmap fake-tts --from-file="$root/hack/fake-tts/server.py" \
@@ -197,6 +201,16 @@ grep -q ' --> ' <<<"$vtt"
 # The sample text of voice previews.
 curl -fsS -X PATCH -H 'Content-Type: application/json' -d '{"previewText":"Call me Ishmael."}' \
   localhost:18080/api/settings | grep -q '"previewText":"Call me Ishmael."'
+
+# Voices of other engines: listed, and previewed with an emotion.
+engines="$(curl -fsS localhost:18080/api/tts/engines)"
+echo "$engines"
+grep -q '"Emily.wav"' <<<"$engines"
+grep -q '"emotions":true' <<<"$engines"
+code="$(curl -sS -o /tmp/preview.audio -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+  -d '{"voice":"chatterbox:Emily.wav","text":"Run!","emotion":"shouting"}' localhost:18080/api/voices/preview)"
+test "$code" = 200
+test -s /tmp/preview.audio
 
 # M4B of the first volume (its missing chapters are rendered first).
 volume="$(curl -fsS "localhost:18080/api/books/$id/downloads" |
