@@ -285,91 +285,93 @@ export function CharactersPage() {
         </Text>
       )}
       {chars.data && total > 0 && (
-        <Table striped highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th w={40} />
-              <Table.Th>Name</Table.Th>
-              <Table.Th>Gender · age</Table.Th>
-              <Table.Th>Role</Table.Th>
-              <Table.Th>Importance</Table.Th>
-              <Table.Th ta="right">Chapters</Table.Th>
-              <Table.Th>Voice</Table.Th>
-              <Table.Th w={40} />
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {chars.data.items.map((c) => (
-              <Table.Tr key={c.id}>
-                <Table.Td>
-                  <Checkbox
-                    aria-label={`Select ${c.name}`}
-                    checked={selected.has(c.id)}
-                    onChange={(e) => toggle(c, e.currentTarget.checked)}
-                  />
-                </Table.Td>
-                <Table.Td>
-                  <Group gap={6} wrap="nowrap">
-                    <AnchorLink
-                      to="/books/$bookId/characters/$characterId"
-                      params={{ bookId: String(bookId), characterId: String(c.id) }}
-                      fw={500}
-                    >
-                      {c.name}
-                    </AnchorLink>
-                    {c.speaks && (
-                      <Tooltip label="Speaks">
-                        <IconMessage size={14} aria-label="speaks" />
-                      </Tooltip>
-                    )}
-                    {c.tier === 'main' && (
-                      <Badge size="xs" variant="light">
-                        main
-                      </Badge>
-                    )}
-                    {c.userEdited && (
-                      <Badge size="xs" variant="outline" color="gray">
-                        edited
-                      </Badge>
-                    )}
-                  </Group>
-                  {c.aliases.length > 0 && (
-                    <Text size="xs" c="dimmed" lineClamp={1}>
-                      {c.aliases.join(', ')}
-                    </Text>
-                  )}
-                </Table.Td>
-                <Table.Td>
-                  <Text size="sm">
-                    {genderLabel[c.gender]} · {c.ageGroup === 'unknown' ? '?' : c.ageGroup}
-                  </Text>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="sm" lineClamp={2}>
-                    {c.role}
-                  </Text>
-                </Table.Td>
-                <Table.Td>
-                  <Rating value={c.importance} count={5} readOnly size="xs" />
-                </Table.Td>
-                <Table.Td ta="right">{formatNumber(c.chapterCount)}</Table.Td>
-                <Table.Td>
-                  <VoiceLabel c={c} />
-                </Table.Td>
-                <Table.Td>
-                  <VoicePreviewButton
-                    id={String(c.id)}
-                    voice={c.voice}
-                    speed={c.voiceSpeed}
-                    text={c.previewText || sample(c.id)}
-                    preview={preview}
-                    label={`Listen to ${c.name}`}
-                  />
-                </Table.Td>
+        <Table.ScrollContainer minWidth={720} type="native">
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th w={40} />
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Gender · age</Table.Th>
+                <Table.Th>Role</Table.Th>
+                <Table.Th>Importance</Table.Th>
+                <Table.Th ta="right">Chapters</Table.Th>
+                <Table.Th>Voice</Table.Th>
+                <Table.Th w={40} />
               </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
+            </Table.Thead>
+            <Table.Tbody>
+              {chars.data.items.map((c) => (
+                <Table.Tr key={c.id}>
+                  <Table.Td>
+                    <Checkbox
+                      aria-label={`Select ${c.name}`}
+                      checked={selected.has(c.id)}
+                      onChange={(e) => toggle(c, e.currentTarget.checked)}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap={6} wrap="nowrap">
+                      <AnchorLink
+                        to="/books/$bookId/characters/$characterId"
+                        params={{ bookId: String(bookId), characterId: String(c.id) }}
+                        fw={500}
+                      >
+                        {c.name}
+                      </AnchorLink>
+                      {c.speaks && (
+                        <Tooltip label="Speaks">
+                          <IconMessage size={14} aria-label="speaks" />
+                        </Tooltip>
+                      )}
+                      {c.tier === 'main' && (
+                        <Badge size="xs" variant="light">
+                          main
+                        </Badge>
+                      )}
+                      {c.userEdited && (
+                        <Badge size="xs" variant="outline" color="gray">
+                          edited
+                        </Badge>
+                      )}
+                    </Group>
+                    {c.aliases.length > 0 && (
+                      <Text size="xs" c="dimmed" lineClamp={1}>
+                        {c.aliases.join(', ')}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">
+                      {genderLabel[c.gender]} · {c.ageGroup === 'unknown' ? '?' : c.ageGroup}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" lineClamp={2}>
+                      {c.role}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Rating value={c.importance} count={5} readOnly size="xs" />
+                  </Table.Td>
+                  <Table.Td ta="right">{formatNumber(c.chapterCount)}</Table.Td>
+                  <Table.Td>
+                    <VoiceLabel c={c} />
+                  </Table.Td>
+                  <Table.Td>
+                    <VoicePreviewButton
+                      id={String(c.id)}
+                      voice={c.voice}
+                      speed={c.voiceSpeed}
+                      text={c.previewText || sample(c.id)}
+                      preview={preview}
+                      label={`Listen to ${c.name}`}
+                    />
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
       {total > PAGE_SIZE && (
         <Group justify="center">

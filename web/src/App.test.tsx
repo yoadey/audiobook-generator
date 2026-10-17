@@ -302,6 +302,32 @@ describe('App', () => {
     expect(screen.getByText('Narrator')).toBeInTheDocument();
   });
 
+  it('keeps the chapter list within a phone screen', async () => {
+    const desktop = window.matchMedia;
+    window.matchMedia = (query: string) => ({
+      ...desktop(query),
+      matches: query.includes('max-width'),
+    });
+    try {
+      stubApi({
+        '/api/voices': [{ id: 'af_heart', language: 'en-US', gender: 'female', grade: 'A' }],
+        '/api/books/1': book,
+        '/api/books/1/volumes': [],
+        '/api/books/1/chapters': { items: chapters, total: 2 },
+      });
+      renderAt('/books/1');
+      const rows = await screen.findAllByTestId('chapter-row');
+      // Title, audio, narrate and actions; no counts that widen the page.
+      expect(within(rows[0]!).getByText('Chapter 1')).toBeInTheDocument();
+      expect(within(rows[0]!).getByText('4:05')).toBeInTheDocument();
+      expect(within(rows[0]!).getByRole('switch')).toBeChecked();
+      expect(within(rows[0]!).queryByText('1,200')).not.toBeInTheDocument();
+      expect(within(rows[0]!).queryByText('14')).not.toBeInTheDocument();
+    } finally {
+      window.matchMedia = desktop;
+    }
+  });
+
   it('plays the chapter of the saved position', async () => {
     const fetch = stubApi({
       '/api/books/1': book,

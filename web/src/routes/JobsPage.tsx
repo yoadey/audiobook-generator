@@ -85,81 +85,83 @@ export function JobsPage() {
         </Text>
       )}
       {jobs.data && jobs.data.items.length > 0 && (
-        <Table striped>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>#</Table.Th>
-              <Table.Th>Type</Table.Th>
-              <Table.Th>Book / chapter</Table.Th>
-              <Table.Th>Status</Table.Th>
-              <Table.Th>Progress</Table.Th>
-              <Table.Th>Attempts</Table.Th>
-              <Table.Th>Created</Table.Th>
-              <Table.Th />
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {jobs.data.items.map((j) => (
-              <Table.Tr key={j.id}>
-                <Table.Td>{j.id}</Table.Td>
-                <Table.Td>{j.type}</Table.Td>
-                <Table.Td>
-                  {j.bookId ?? '–'}
-                  {j.chapterId ? ` / ${j.chapterId}` : ''}
-                </Table.Td>
-                <Table.Td>
-                  <Tooltip label={j.error} disabled={!j.error} multiline w={360}>
-                    <Badge variant="light" color={statusColor[j.status]}>
-                      {j.status}
-                    </Badge>
-                  </Tooltip>
-                </Table.Td>
-                <Table.Td w={140}>
-                  {j.status === 'running' ? (
-                    <Progress value={j.progress * 100} animated size="sm" />
-                  ) : j.notBefore ? (
-                    <Tooltip label={j.error} disabled={!j.error} multiline w={360}>
-                      <Text size="xs" c="dimmed">
-                        waits until {when(j.notBefore)}
-                      </Text>
-                    </Tooltip>
-                  ) : (
-                    <Text size="xs" c="dimmed">
-                      {j.status === 'done' ? '100%' : ''}
-                    </Text>
-                  )}
-                </Table.Td>
-                <Table.Td>
-                  {j.attempts}/{j.maxAttempts}
-                </Table.Td>
-                <Table.Td>
-                  <Text size="xs">{when(j.createdAt)}</Text>
-                </Table.Td>
-                <Table.Td>
-                  {(j.status === 'failed' || j.status === 'canceled') && (
-                    <ActionIcon
-                      variant="subtle"
-                      onClick={() => retry.mutate(j.id)}
-                      aria-label={`Retry job ${j.id}`}
-                    >
-                      <IconRefresh size={16} />
-                    </ActionIcon>
-                  )}
-                  {j.status === 'queued' && (
-                    <ActionIcon
-                      variant="subtle"
-                      color="red"
-                      onClick={() => cancel.mutate(j.id)}
-                      aria-label={`Cancel job ${j.id}`}
-                    >
-                      <IconPlayerStop size={16} />
-                    </ActionIcon>
-                  )}
-                </Table.Td>
+        <Table.ScrollContainer minWidth={600} type="native">
+          <Table striped>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>#</Table.Th>
+                <Table.Th>Type</Table.Th>
+                <Table.Th>Book / chapter</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>Progress</Table.Th>
+                <Table.Th>Attempts</Table.Th>
+                <Table.Th>Created</Table.Th>
+                <Table.Th />
               </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
+            </Table.Thead>
+            <Table.Tbody>
+              {jobs.data.items.map((j) => (
+                <Table.Tr key={j.id}>
+                  <Table.Td>{j.id}</Table.Td>
+                  <Table.Td>{j.type}</Table.Td>
+                  <Table.Td>
+                    {j.bookId ?? '–'}
+                    {j.chapterId ? ` / ${j.chapterId}` : ''}
+                  </Table.Td>
+                  <Table.Td>
+                    <Tooltip label={j.error} disabled={!j.error} multiline w={360}>
+                      <Badge variant="light" color={statusColor[j.status]}>
+                        {j.status}
+                      </Badge>
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td w={140}>
+                    {j.status === 'running' ? (
+                      <Progress value={j.progress * 100} animated size="sm" />
+                    ) : j.notBefore ? (
+                      <Tooltip label={j.error} disabled={!j.error} multiline w={360}>
+                        <Text size="xs" c="dimmed">
+                          waits until {when(j.notBefore)}
+                        </Text>
+                      </Tooltip>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        {j.status === 'done' ? '100%' : ''}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {j.attempts}/{j.maxAttempts}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs">{when(j.createdAt)}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    {(j.status === 'failed' || j.status === 'canceled') && (
+                      <ActionIcon
+                        variant="subtle"
+                        onClick={() => retry.mutate(j.id)}
+                        aria-label={`Retry job ${j.id}`}
+                      >
+                        <IconRefresh size={16} />
+                      </ActionIcon>
+                    )}
+                    {j.status === 'queued' && (
+                      <ActionIcon
+                        variant="subtle"
+                        color="red"
+                        onClick={() => cancel.mutate(j.id)}
+                        aria-label={`Cancel job ${j.id}`}
+                      >
+                        <IconPlayerStop size={16} />
+                      </ActionIcon>
+                    )}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
     </Stack>
   );
