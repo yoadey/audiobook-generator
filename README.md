@@ -99,8 +99,14 @@ URLs carry a token instead, so treat them like passwords.
   (scroll away and *Back to the voice* returns). A click on a passage
   listens from there; scrolling while paused moves the listening position
   to what you read (also in chapters without audio yet), so reading and
-  listening continue at the same place. Text size and serif/sans are under
-  *Aa*, chapters in the list beside it; space plays and pauses, the arrow
+  listening continue at the same place. *Aa* holds the reading settings
+  (kept per browser): the font (the system's serif and sans, and shipped
+  Literata, Merriweather, EB Garamond, Atkinson Hyperlegible, Lexend,
+  OpenDyslexic and monospace), text size, line spacing, text width, side
+  margins, left or justified text, spaced or indented paragraphs, a sepia
+  page, what is marked while playing (sentence and word, sentence, or
+  nothing) and whether the saved position is marked while paused. The
+  chapters are in the list beside it; space plays and pauses, the arrow
   keys skip.
 - **Quotation marks and thoughts**: speech in double or single marks
   (curly or straight), guillemets, „low-high“ marks or dash dialogue is

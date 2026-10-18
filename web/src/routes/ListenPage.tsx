@@ -9,8 +9,6 @@ import {
   Group,
   Loader,
   Menu,
-  Popover,
-  SegmentedControl,
   Slider,
   Stack,
   Text,
@@ -52,10 +50,12 @@ import {
 } from '../api/client';
 import { AudioBadge } from '../components/AudioBadge';
 import { AnchorLink } from '../components/links';
-import { Reader, type ReaderPrefs } from '../components/Reader';
+import { Reader } from '../components/Reader';
+import { ReaderSettings } from '../components/ReaderSettings';
 import { formatDuration } from '../lib/format';
 import { notifyError } from '../lib/notify';
 import { resumeAt as resumePosition, segmentAt, startOf } from '../lib/reading';
+import { parsePrefs, type ReaderPrefs } from '../lib/readerPrefs';
 
 const SAVE_EVERY_MS = 15_000;
 const RATES = ['0.8', '0.9', '1', '1.1', '1.25', '1.5', '1.75', '2'];
@@ -79,15 +79,7 @@ function store(key: string, value: string) {
 }
 
 function storedPrefs(): ReaderPrefs {
-  try {
-    const p = JSON.parse(stored(PREFS_KEY, '{}')) as Partial<ReaderPrefs>;
-    return {
-      size: p.size && ['S', 'M', 'L', 'XL'].includes(p.size) ? p.size : 'M',
-      font: p.font === 'sans' ? 'sans' : 'serif',
-    };
-  } catch {
-    return { size: 'M', font: 'serif' };
-  }
+  return parsePrefs(stored(PREFS_KEY, '{}'));
 }
 
 /**
@@ -194,6 +186,7 @@ function Player({
   const [rate, setRate] = useState(() => stored(RATE_KEY, '1'));
   const [prefs, setPrefs] = useState<ReaderPrefs>(storedPrefs);
   const [chaptersOpen, setChaptersOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // The playing chapter's entry in the chapter list (opened at it).
   const currentEntry = useRef<HTMLButtonElement>(null);
   // The page's first chapter was left: its stored position is outdated.
@@ -491,6 +484,13 @@ function Player({
   }, [togglePlay, seek]);
 
   useEffect(() => store(PREFS_KEY, JSON.stringify(prefs)), [prefs]);
+  // The page colour covers the whole page while reading.
+  useEffect(() => {
+    document.documentElement.dataset.paper = prefs.paper;
+    return () => {
+      delete document.documentElement.dataset.paper;
+    };
+  }, [prefs.paper]);
 
   if (!current) {
     return <Alert title="Nothing to play">This book has no narrated chapters.</Alert>;
@@ -713,34 +713,14 @@ function Player({
                   ))}
                 </Menu.Dropdown>
               </Menu>
-              <Popover position="top-end" withinPortal shadow="md">
-                <Popover.Target>
-                  <ActionIcon variant="subtle" color="gray" aria-label="Text settings">
-                    <IconLetterCase size={18} />
-                  </ActionIcon>
-                </Popover.Target>
-                <Popover.Dropdown>
-                  <Stack gap="xs">
-                    <SegmentedControl
-                      size="xs"
-                      value={prefs.size}
-                      onChange={(v) => setPrefs({ ...prefs, size: v as ReaderPrefs['size'] })}
-                      data={['S', 'M', 'L', 'XL']}
-                      aria-label="Text size"
-                    />
-                    <SegmentedControl
-                      size="xs"
-                      value={prefs.font}
-                      onChange={(v) => setPrefs({ ...prefs, font: v as ReaderPrefs['font'] })}
-                      data={[
-                        { value: 'serif', label: 'Serif' },
-                        { value: 'sans', label: 'Sans' },
-                      ]}
-                      aria-label="Font"
-                    />
-                  </Stack>
-                </Popover.Dropdown>
-              </Popover>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Reading settings"
+              >
+                <IconLetterCase size={18} />
+              </ActionIcon>
               <ActionIcon
                 variant="subtle"
                 color="gray"
@@ -753,6 +733,13 @@ function Player({
           </Group>
         </Stack>
       </Box>
+
+      <ReaderSettings
+        opened={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        prefs={prefs}
+        onChange={setPrefs}
+      />
 
       <Drawer
         opened={chaptersOpen}

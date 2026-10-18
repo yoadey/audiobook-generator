@@ -1,0 +1,27 @@
+/* The sepia page colour of the reader (see ReaderPrefs.paper): the
+   page's surfaces and greys take on its warmth. */
+:root[data-paper='sepia'][data-mantine-color-scheme='light'] {
+  --mantine-color-body: #f5ecd9;
+  --mantine-color-text: #4a3b2c;
+  --mantine-color-dimmed: #7d6b57;
+  --mantine-color-default: #fbf4e6;
+  --mantine-color-default-hover: #ede2cb;
+  --mantine-color-default-border: #dccfb5;
+  --mantine-color-gray-0: #f9f1e1;
+  --mantine-color-gray-1: #eee3cc;
+  --mantine-color-gray-2: #e3d6bc;
+  --mantine-color-gray-3: #d6c7aa;
+}
+:root[data-paper='sepia'][data-mantine-color-scheme='dark'] {
+  --mantine-color-body: #26201a;
+  --mantine-color-text: #e2d6c1;
+  --mantine-color-dimmed: #a8987f;
+  --mantine-color-default: #312921;
+  --mantine-color-default-hover: #3b3128;
+  --mantine-color-default-border: #4a3e32;
+  --mantine-color-dark-4: #5a4c3e;
+  --mantine-color-dark-5: #4a3e32;
+  --mantine-color-dark-6: #312921;
+  --mantine-color-dark-7: #26201a;
+  --mantine-color-dark-8: #1e1914;
+}

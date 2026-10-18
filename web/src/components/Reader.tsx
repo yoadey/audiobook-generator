@@ -5,17 +5,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type Chapter, chapterQuery, type Cue, type Paragraph, type Segment } from '../api/client';
 import { cueOf, pieces, segmentAt, sentenceAt, startOf, wordAt } from '../lib/reading';
+import { FONTS, type ReaderPrefs, WIDTHS } from '../lib/readerPrefs';
 
-/** Reading preferences (kept per browser). */
-export type ReaderPrefs = { size: 'S' | 'M' | 'L' | 'XL'; font: 'serif' | 'sans' };
-
-const FONT_SIZE: Record<ReaderPrefs['size'], string> = {
-  S: '1rem',
-  M: '1.125rem',
-  L: '1.3rem',
-  XL: '1.5rem',
-};
-const SERIF = 'ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, Cambria, serif';
 /** How long scrolling must rest before it counts as the reading position. */
 const READ_DELAY_MS = 700;
 /** Where the reading position is looked for: below the fixed page header. */
@@ -104,10 +95,15 @@ export function Reader({
   const activeSeg = active !== undefined ? segments.byId.get(active)?.s : undefined;
   const cue = cues && active !== undefined ? cueOf(cues, active) : undefined;
   const sentence = activeSeg && cue ? sentenceAt(activeSeg.text, cue, positionMs) : undefined;
-  const mark: [number, number] | undefined = activeSeg
-    ? (sentence ?? [0, Array.from(activeSeg.text).length])
-    : undefined;
-  const word = activeSeg && cue && playing ? wordAt(activeSeg.text, cue, positionMs) : undefined;
+  // What is marked: while playing as chosen; while paused, the position
+  // when it is to be shown.
+  const marking = playing ? prefs.highlight !== 'off' : prefs.showPosition;
+  const mark: [number, number] | undefined =
+    activeSeg && marking ? (sentence ?? [0, Array.from(activeSeg.text).length]) : undefined;
+  const word =
+    activeSeg && cue && playing && prefs.highlight === 'word'
+      ? wordAt(activeSeg.text, cue, positionMs)
+      : undefined;
 
   // A segment that is not spoken (only punctuation) stands for the next
   // one that is, so a position always has a time in the audio.
@@ -251,17 +247,22 @@ export function Reader({
 
   const paragraphs = text.data.paragraphs;
   const titled = paragraphs[0]?.kind === 'heading';
+  const indented = prefs.paragraphs === 'indented';
+  const width = WIDTHS[prefs.width];
   return (
     <Box
       ref={root}
-      maw="38em"
+      lang="en"
+      maw={width && `calc(${width}em + ${2 * prefs.margin}px)`}
       mx="auto"
       w="100%"
-      px={{ base: 'xs', sm: 'md' }}
       style={{
-        fontFamily: prefs.font === 'serif' ? SERIF : undefined,
-        fontSize: FONT_SIZE[prefs.size],
-        lineHeight: 1.75,
+        paddingInline: prefs.margin,
+        fontFamily: FONTS[prefs.font].family,
+        fontSize: prefs.size,
+        lineHeight: prefs.lineHeight,
+        textAlign: prefs.align,
+        hyphens: prefs.align === 'justify' ? 'auto' : undefined,
       }}
       data-testid="reader"
       aria-label="Chapter text"
@@ -271,11 +272,13 @@ export function Reader({
           {chapter.title}
         </Title>
       )}
-      <Stack gap="0.9em">
-        {paragraphs.map((p) => (
+      <Stack gap={indented ? 0 : '0.9em'}>
+        {paragraphs.map((p, i) => (
           <ParagraphView
             key={p.id}
             p={p}
+            // Printed books indent a paragraph that follows another one.
+            indent={indented && p.kind === 'text' && paragraphs[i - 1]?.kind === 'text'}
             active={p.id === activeParagraph ? active : undefined}
             mark={p.id === activeParagraph ? mark : undefined}
             word={p.id === activeParagraph ? word : undefined}
@@ -322,12 +325,14 @@ export function Reader({
 
 const ParagraphView = memo(function ParagraphView({
   p,
+  indent,
   active,
   mark,
   word,
   onSelect,
 }: {
   p: Paragraph;
+  indent: boolean;
   /** The marked segment, when it is in this paragraph. */
   active?: number;
   /** The marked characters of the active segment. */
@@ -392,7 +397,14 @@ const ParagraphView = memo(function ParagraphView({
     );
   }
   return (
-    <Text component="p" m={0} fz="inherit" lh="inherit" ff="inherit">
+    <Text
+      component="p"
+      m={0}
+      fz="inherit"
+      lh="inherit"
+      ff="inherit"
+      style={indent ? { textIndent: '1.5em' } : undefined}
+    >
       {spans}
     </Text>
   );
