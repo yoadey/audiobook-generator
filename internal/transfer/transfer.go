@@ -322,6 +322,11 @@ func (r *Restorer) Restore(ctx context.Context, bookID int64, progress func(floa
 			return err
 		}
 		fields["EpubPath"] = rel
+		// An export from before descriptions were kept: read it now.
+		if h.Book.Description == nil {
+			im := importer.Importer{Store: r.Store, DataDir: r.DataDir, Log: r.Log}
+			fields["Description"] = im.ReadDescription(bookID, rel)
+		}
 	}
 	if f := coverEntry(&zr.Reader); f != nil && h.Book.CoverPath != "" {
 		rc, err := f.Open()

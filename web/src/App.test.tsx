@@ -28,7 +28,7 @@ function stubApi(routes: Routes) {
 function renderAt(path: string) {
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }));
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<App router={router} queryClient={queryClient} />);
+  return { ...render(<App router={router} queryClient={queryClient} />), router };
 }
 
 const book = {
@@ -277,7 +277,7 @@ describe('App', () => {
   });
 
   it('shows a book to read: description and contents', async () => {
-    stubApi({
+    const fetch = stubApi({
       '/api/books/1': { ...book, description: 'A novel of manners.\n\nSecond paragraph.' },
       '/api/books/1/volumes': [
         { id: 5, idx: 0, title: 'Volume One', chapterCount: 2, wordCount: 1240 },
@@ -289,7 +289,7 @@ describe('App', () => {
       'GET /api/books/1/progress': { chapterId: 12, positionMs: 0 },
       'PUT /api/books/1/progress': { chapterId: 12, positionMs: 0 },
     });
-    renderAt('/books/1');
+    const { router } = renderAt('/books/1');
     expect(await screen.findByRole('heading', { name: 'Pride and Prejudice' })).toBeInTheDocument();
     expect(screen.getByText(/A novel of manners\./)).toBeInTheDocument();
     // No audiobook controls here: they are a page of their own.
@@ -316,11 +316,30 @@ describe('App', () => {
       '/books/1/listen',
     );
 
-    // A chapter opens the reader at its start.
+    // A chapter opens the reader at its start (stored so); the address
+    // then forgets it, so a reload goes on where reading is.
     fireEvent.click(within(contents).getByRole('button', { name: /Chapter 1/ }));
     const player = await screen.findByTestId('player');
     expect(within(player).getByText('Chapter 1')).toBeInTheDocument();
     expect(screen.getByText('1 / 2')).toBeInTheDocument();
+    await vi.waitFor(() => expect(router.state.location.searchStr).toBe(''));
+    expect(router.state.location.pathname).toBe('/books/1/listen');
+    await vi.waitFor(async () => {
+      const bodies = await Promise.all(progressPuts(fetch).map((r) => r.clone().json()));
+      expect(bodies).toContainEqual({ chapterId: 10, positionMs: 0 });
+    });
+  });
+
+  it('says when a book has nothing to read', async () => {
+    stubApi({
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: [chapters[1]], total: 1 },
+      'GET /api/books/1/progress': { positionMs: 0 },
+    });
+    renderAt('/books/1');
+    expect(await screen.findByText(/No chapters to read/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /^(Read|Continue reading)$/ })).toBeNull();
   });
 
   it('shows the audiobook of a book with its chapters', async () => {

@@ -271,6 +271,9 @@ export function CharacterPage() {
         <AnchorLink to="/books/$bookId" params={{ bookId: String(bookId) }} size="sm">
           {book.data?.title ?? 'Book'}
         </AnchorLink>
+        <AnchorLink to="/books/$bookId/audiobook" params={{ bookId: String(bookId) }} size="sm">
+          Audiobook
+        </AnchorLink>
         <AnchorLink to="/books/$bookId/characters" params={{ bookId: String(bookId) }} size="sm">
           Characters
         </AnchorLink>

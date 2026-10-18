@@ -137,10 +137,13 @@ func TestFillDescriptions(t *testing.T) {
 		require.NoError(t, s.CreateBook(ctx, gone))
 		require.NoError(t, s.CreateBook(ctx, importing))
 		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"Status": store.BookImported}))
+		before, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
 
 		require.NoError(t, im.FillDescriptions(ctx))
 		book, err := s.GetBook(ctx, b.ID)
 		require.NoError(t, err)
+		assert.True(t, before.UpdatedAt.Equal(book.UpdatedAt), "no change of the book's own")
 		require.NotNil(t, book.Description)
 		assert.Contains(t, *book.Description, "Two mornings")
 		g, err := s.GetBook(ctx, gone.ID)

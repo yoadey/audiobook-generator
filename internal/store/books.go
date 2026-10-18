@@ -67,6 +67,19 @@ func (s *Store) BooksWithoutDescription(ctx context.Context) ([]Book, error) {
 	return books, err
 }
 
+// SetBookDescription stores a book's description; it is no change of the
+// book's own (updated_at stays).
+func (s *Store) SetBookDescription(ctx context.Context, id int64, description string) error {
+	res := s.db.WithContext(ctx).Model(&Book{ID: id}).UpdateColumn("description", description)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteBook removes a book with its content and jobs.
 func (s *Store) DeleteBook(ctx context.Context, id int64) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

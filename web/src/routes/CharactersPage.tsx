@@ -180,6 +180,9 @@ export function CharactersPage() {
         <AnchorLink to="/books/$bookId" params={{ bookId: String(bookId) }} size="sm">
           {book.data?.title ?? 'Book'}
         </AnchorLink>
+        <AnchorLink to="/books/$bookId/audiobook" params={{ bookId: String(bookId) }} size="sm">
+          Audiobook
+        </AnchorLink>
         <Text size="sm">Characters</Text>
       </Breadcrumbs>
       <Group justify="space-between">

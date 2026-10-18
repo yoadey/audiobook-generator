@@ -28,7 +28,7 @@ export function Cover({
       src={coverUrl(book.id)}
       h={h}
       fit="contain"
-      style={{ objectPosition: position }}
+      styles={{ root: { objectPosition: position } }}
       alt=""
       onError={() => setFailed(true)}
     />

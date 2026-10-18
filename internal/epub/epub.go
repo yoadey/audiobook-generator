@@ -123,10 +123,10 @@ func (b *Book) rootfile() (string, error) {
 
 type opfPackage struct {
 	Metadata struct {
-		Titles       []string `xml:"title"`
-		Creators     []string `xml:"creator"`
-		Languages    []string `xml:"language"`
-		Descriptions []string `xml:"description"`
+		Titles       []string  `xml:"title"`
+		Creators     []string  `xml:"creator"`
+		Languages    []string  `xml:"language"`
+		Descriptions []xmlText `xml:"description"`
 		Metas        []struct {
 			Name    string `xml:"name,attr"`
 			Content string `xml:"content,attr"`
@@ -157,7 +157,11 @@ func (b *Book) readPackage(opfPath string) error {
 	b.Title = firstNonEmpty(p.Metadata.Titles)
 	b.Author = strings.Join(trimAll(p.Metadata.Creators), ", ")
 	b.Language = firstNonEmpty(p.Metadata.Languages)
-	b.Description = plainText(firstNonEmpty(p.Metadata.Descriptions))
+	for _, d := range p.Metadata.Descriptions {
+		if b.Description = plainText(d.source()); b.Description != "" {
+			break
+		}
+	}
 
 	type item struct{ href, mediaType, props string }
 	items := make(map[string]item, len(p.Manifest))

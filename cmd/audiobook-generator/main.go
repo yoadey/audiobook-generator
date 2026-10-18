@@ -203,7 +203,7 @@ func run() error {
 		}, log)
 	}
 	go func() {
-		if err := imp.FillDescriptions(ctx); err != nil {
+		if err := imp.FillDescriptions(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("read the descriptions of earlier books", "err", err)
 		}
 	}()

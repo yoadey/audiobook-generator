@@ -115,7 +115,7 @@ export function ListenPage() {
   // address then forgets it, so a reload goes on where reading stopped).
   const navigate = useNavigate();
   const { chapter: chosen } = useSearch({ from: '/books/$bookId/listen' });
-  const [startAt] = useState(chosen);
+  const [startAt, setStartAt] = useState(chosen);
   useEffect(() => {
     if (chosen !== undefined) void navigate({ to: '.', search: {}, replace: true });
   }, [chosen, navigate]);
@@ -160,17 +160,29 @@ export function ListenPage() {
     startAt !== undefined && startAt !== stored.chapterId && narrated.some((c) => c.id === startAt)
       ? { ...stored, chapterId: startAt, positionMs: 0, segmentId: undefined }
       : stored;
-  return <Player book={book.data} narrated={narrated} progress={start} />;
+  return (
+    <Player
+      book={book.data}
+      narrated={narrated}
+      progress={start}
+      // Used once: a player shown again (after an error) goes on where
+      // reading is now.
+      onStarted={() => setStartAt(undefined)}
+    />
+  );
 }
 
 function Player({
   book,
   narrated,
   progress,
+  onStarted,
 }: {
   book: Book;
   narrated: Chapter[];
   progress: Progress;
+  /** The player took up the position it was given. */
+  onStarted: () => void;
 }) {
   const bookId = book.id;
   const queryClient = useQueryClient();
@@ -366,10 +378,11 @@ function Player({
   const savedFor = useRef<number | null>(null);
   useEffect(() => {
     if (current && savedFor.current !== current.id) {
+      if (savedFor.current === null) onStarted();
       savedFor.current = current.id;
       persist(current.id, resumeAt.current ?? 0, resumeSegment.current ?? undefined);
     }
-  }, [current, persist]);
+  }, [current, persist, onStarted]);
 
   const goTo = useCallback(
     (c: Chapter | undefined, play: boolean) => {

@@ -99,21 +99,28 @@ func (im *Importer) FillDescriptions(ctx context.Context) error {
 		return err
 	}
 	for i := range books {
-		desc := ""
-		if books[i].EpubPath != "" {
-			b, f, err := OpenEPUB(filepath.Join(im.DataDir, books[i].EpubPath))
-			if err != nil {
-				im.Log.Warn("read the book's description", "book", books[i].ID, "err", err)
-			} else {
-				desc = Description(b.Description)
-				_ = f.Close()
-			}
-		}
-		if err := im.Store.UpdateBook(ctx, books[i].ID, map[string]any{"Description": desc}); err != nil {
+		desc := im.ReadDescription(books[i].ID, books[i].EpubPath)
+		err := im.Store.SetBookDescription(ctx, books[i].ID, desc)
+		if err != nil && !errors.Is(err, store.ErrNotFound) { // deleted meanwhile
 			return err
 		}
 	}
 	return nil
+}
+
+// ReadDescription reads a book's description from its EPUB ("" when the
+// file is gone or unreadable).
+func (im *Importer) ReadDescription(bookID int64, epubPath string) string {
+	if epubPath == "" {
+		return ""
+	}
+	b, f, err := OpenEPUB(filepath.Join(im.DataDir, epubPath))
+	if err != nil {
+		im.Log.Warn("read the book's description", "book", bookID, "err", err)
+		return ""
+	}
+	_ = f.Close()
+	return Description(b.Description)
 }
 
 // Import (re-)imports a book from scratch. It is idempotent, so a failed

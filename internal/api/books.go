@@ -56,6 +56,7 @@ func (s *Server) ListBooks(ctx context.Context, req ListBooksRequestObject) (Lis
 	out := BookPage{Items: make([]Book, 0, len(books)), Total: total}
 	for i := range books {
 		bk := s.toBook(&books[i])
+		bk.Description = nil // only on a book's own page
 		if err := s.addAnalysisProgress(ctx, &bk); err != nil {
 			return nil, err
 		}

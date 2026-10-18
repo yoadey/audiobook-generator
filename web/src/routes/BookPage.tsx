@@ -86,6 +86,8 @@ export function BookPage() {
   const words = toRead.reduce((sum, c) => sum + c.wordCount, 0);
   const currentId = progress.data?.chapterId;
   const current = toRead.find((c) => c.id === currentId);
+  // Every chapter excluded (or none at all): nothing for the reader.
+  const nothingToRead = chapters.isSuccess && toRead.length === 0;
   const started = current !== undefined && (current !== toRead[0] || progress.data!.positionMs > 0);
 
   return (
@@ -130,7 +132,7 @@ export function BookPage() {
             </Alert>
           )}
           <Group gap="sm" mt="xs">
-            {readable && (
+            {readable && !nothingToRead && (
               <ButtonLink
                 to="/books/$bookId/listen"
                 params={{ bookId: String(bookId) }}
@@ -216,6 +218,10 @@ export function BookPage() {
             <Center py="xl">
               <Loader />
             </Center>
+          ) : nothingToRead ? (
+            <Text size="sm" c="dimmed">
+              No chapters to read: all of them are excluded (see the audiobook's chapters).
+            </Text>
           ) : (
             <TableOfContents
               bookId={bookId}
