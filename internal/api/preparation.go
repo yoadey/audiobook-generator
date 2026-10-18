@@ -21,6 +21,7 @@ func (s *Server) toPreparation(ctx context.Context, c *store.Chapter) (ChapterPr
 		Moods:       st.Moods,
 		Pauses:      st.Pauses,
 		SpokenForms: st.SpokenAs,
+		Flows:       st.Flows,
 	}
 	if out.Status == "" {
 		out.Status = PrepStatusNone

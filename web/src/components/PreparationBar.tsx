@@ -69,7 +69,7 @@ export function PreparationBar({
             {statusLabel[p.status]}
           </Badge>
           {p.status === 'done' &&
-            ` ${count(p.moods, 'mood')}, ${count(p.pauses, 'pause')}, ${count(p.spokenForms, 'spot')} read differently`}
+            ` ${count(p.moods, 'mood')}, ${count(p.pauses, 'pause')}, ${count(p.flows, 'paragraph')} read on, ${count(p.spokenForms, 'spot')} read differently`}
           {!enabled && ' (not applied: the book does not prepare its chapters)'}
         </Text>
         {p.spokenForms > 0 && (

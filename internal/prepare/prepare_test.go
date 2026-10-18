@@ -61,7 +61,7 @@ func finishJobs(t *testing.T, s *store.Store) {
 
 func reply(t *testing.T, v map[string]any) llmtest.Reply {
 	t.Helper()
-	for _, k := range []string{"moods", "pauses", "spoken", "pronunciations"} {
+	for _, k := range []string{"moods", "pauses", "spoken", "pronunciations", "flows"} {
 		if v[k] == nil {
 			v[k] = []any{}
 		}
@@ -86,6 +86,7 @@ func TestPrepareChapter(t *testing.T) {
 			return reply(t, map[string]any{
 				"moods":  []any{map[string]any{"p": 6, "mood": "calm"}},
 				"pauses": []any{map[string]any{"p": 2, "after": "said Anna.", "length": "long"}},
+				"flows":  []any{3},
 				"pronunciations": []any{
 					map[string]any{"term": "Anna", "say": "ah-nah", "note": "a name"},
 					map[string]any{"term": "Tom", "say": "tom", "note": "known"},
@@ -99,12 +100,14 @@ func TestPrepareChapter(t *testing.T) {
 		got, err := s.GetChapter(ctx, ch.ID)
 		require.NoError(t, err)
 		assert.Equal(t, store.PrepDone, got.PrepStatus)
-		assert.Equal(t, "prepare_chapter@v1", got.PrepPrompt)
+		assert.Equal(t, "prepare_chapter@v2", got.PrepPrompt)
 		assert.Greater(t, got.VoiceRev, ch.VoiceRev)
 		assert.False(t, prepare.Needed(b, got))
 		paras, segs, err := s.ChapterText(ctx, ch.ID)
 		require.NoError(t, err)
 		assert.Equal(t, "calm", paras[5].Mood)
+		assert.True(t, paras[2].Flows, "goes on from the paragraph before")
+		assert.False(t, paras[1].Flows)
 		var paused []string
 		for _, sg := range segs {
 			if sg.Pauses != "" {
@@ -114,7 +117,7 @@ func TestPrepareChapter(t *testing.T) {
 		assert.Equal(t, []string{"said Anna. [[10,1000]]"}, paused)
 		st, err := s.PrepStats(ctx, ch.ID)
 		require.NoError(t, err)
-		assert.Equal(t, store.PrepCounts{Moods: 1, Pauses: 1}, st)
+		assert.Equal(t, store.PrepCounts{Moods: 1, Pauses: 1, Flows: 1}, st)
 		es, err := s.ListLexicon(ctx, b.ID)
 		require.NoError(t, err)
 		require.Len(t, es, 2)

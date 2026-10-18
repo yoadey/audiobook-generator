@@ -45,6 +45,8 @@ const book = {
   narratorSpeed: 1,
   lookahead: 3,
   previewText: '',
+  prepareChapters: false,
+  characterVoices: true,
   analysisStatus: 'none',
   castingStatus: 'none',
   createdAt: '2026-10-15T00:00:00Z',
@@ -672,6 +674,28 @@ describe('App', () => {
     );
     const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
     expect(await (patch[0] as Request).json()).toEqual({ speakerId: 8, emotion: 'neutral' });
+  });
+
+  it('lets the narrator read everything', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/chapters': { items: [], total: 0 },
+      '/api/voices': voices,
+      'PATCH /api/books/1': { ...book, characterVoices: false },
+    });
+    renderAt('/books/1');
+    const voicesSwitch = await screen.findByRole('switch', { name: /Character voices/ });
+    expect(voicesSwitch).toBeChecked();
+    fireEvent.click(voicesSwitch);
+    const card = voicesSwitch.closest('.mantine-Card-root') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([r]) => typeof r !== 'string' && r.method === 'PATCH')).toBe(
+        true,
+      ),
+    );
+    const patch = fetch.mock.calls.find(([r]) => typeof r !== 'string' && r.method === 'PATCH')!;
+    expect(await (patch[0] as Request).json()).toMatchObject({ characterVoices: false });
   });
 
   it('shows database and TTS status', async () => {

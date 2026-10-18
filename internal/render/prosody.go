@@ -104,6 +104,9 @@ func pauses(items []item) {
 		if i+1 < len(items) {
 			next = &items[i+1]
 		}
+		// plain: the usual pause between segments or paragraphs, nothing
+		// a listener should hear (an engine may read on instead).
+		plain := false
 		switch it.gap {
 		case gapPhrase:
 			if it.pause == 0 {
@@ -111,12 +114,12 @@ func pauses(items []item) {
 			}
 			continue
 		case gapSegment:
-			it.pause = withinPara
+			it.pause, plain = withinPara, true
 			if it.thought || next != nil && next.thought {
-				it.pause = afterThought
+				it.pause, plain = afterThought, false
 			}
 		case gapPara:
-			it.pause = betweenParas
+			it.pause, plain = betweenParas, true
 			if it.dialogue && next != nil && next.dialogue {
 				it.pause = dialogueTurn
 			}
@@ -133,17 +136,20 @@ func pauses(items []item) {
 		}
 		switch ending(it.text) {
 		case trailing:
-			it.pause = max(it.pause, afterTrailing)
+			it.pause, plain = max(it.pause, afterTrailing), false
 		case cut:
 			// Interrupted speech: the next speaker cuts in.
 			if it.quote {
-				it.pause = afterCut
+				it.pause, plain = afterCut, false
 			}
 		}
 		if it.emotion == "sad" {
-			it.pause += afterSad
+			it.pause, plain = it.pause+afterSad, false
 		}
-		it.pause = max(it.pause, it.extra)
+		if it.extra > 0 {
+			it.pause, plain = max(it.pause, it.extra), false
+		}
+		it.plain = plain
 	}
 }
 

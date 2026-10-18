@@ -45,6 +45,14 @@ func (s *Server) UpdateBook(ctx context.Context, req UpdateBookRequestObject) (U
 		fields["PrepareChapters"] = *v
 		touch = true
 	}
+	if v := req.Body.CharacterVoices; v != nil && *v != b.CharacterVoices {
+		// Who speaks the quotations changes (as above).
+		if err := s.Store.TouchBookAudio(ctx, b.ID); err != nil {
+			return nil, err
+		}
+		fields["CharacterVoices"] = *v
+		touch = true
+	}
 	if v := req.Body.NarratorVoice; v != nil {
 		voice := strings.TrimSpace(*v)
 		if _, err := casting.ParseRecipe(voice); voice != "" && err != nil {

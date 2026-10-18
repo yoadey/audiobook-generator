@@ -44,6 +44,10 @@ type Book struct {
 	// PrepareChapters: chapters are prepared by the LLM before they are
 	// rendered (narration mood, pauses, spoken forms, pronunciations).
 	PrepareChapters bool `gorm:"not null;default:false"`
+	// CharacterVoices: quotations are spoken by their speakers' voices;
+	// without, the narrator reads everything (no speaker attribution is
+	// waited for).
+	CharacterVoices bool `gorm:"not null;default:true"`
 
 	// Character analysis (see AnalysisStatus); the progress is counted
 	// from the analysis batches.
@@ -192,6 +196,10 @@ type Paragraph struct {
 	WordCount int           `gorm:"not null;default:0"`
 	// Mood of narration from the chapter preparation ("" neutral).
 	Mood string `gorm:"not null;default:''"`
+	// Flows: the chapter preparation found it goes on from the paragraph
+	// before (the same moment, scene and tone), so an engine may read the
+	// two in one go.
+	Flows bool `gorm:"not null;default:false"`
 }
 
 // SegmentKind classifies a segment.

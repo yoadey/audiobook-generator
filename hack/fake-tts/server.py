@@ -22,8 +22,8 @@ answers the app's provider test prompt correctly, the character analysis
 with everyone who "said" something, merge checks with "different", voice
 casting with the first offered voice for everyone (code then makes the
 voices distinct), speaker attribution by the "said Name" of the quote's
-paragraph, chapter preparation with a pause after "said Anna." and a
-pronunciation for Anna, and anything else with "{}". When FAKE_LLM_KEY is set, requests
+paragraph, chapter preparation with a pause after "said Anna.", a
+pronunciation for Anna and narration flowing on from the paragraph before, and anything else with "{}". When FAKE_LLM_KEY is set, requests
 must carry it as bearer token.
 """
 
@@ -111,9 +111,14 @@ def attribute(text: str) -> str:
 
 
 def prepare(text: str) -> str:
-    """Chapter preparation: a pause after "said Anna.", a respelling of Anna."""
-    out = {"moods": [], "pauses": [], "spoken": [], "pronunciations": []}
+    """Chapter preparation: a pause after "said Anna.", a respelling of Anna,
+    narration paragraphs flowing on from the paragraph right before."""
+    out = {"moods": [], "pauses": [], "spoken": [], "pronunciations": [], "flows": []}
+    seen = set()
     for n, para in re.findall(r"^\[p(\d+)\] (.*)$", text, flags=re.M):
+        seen.add(int(n))
+        if int(n) - 1 in seen and not para.startswith(("“", '"')):
+            out["flows"].append(int(n))
         if "said Anna." in para:
             out["pauses"].append({"p": int(n), "after": "said Anna.", "length": "long"})
             out["pronunciations"] = [{"term": "Anna", "say": "ah-nah", "note": "fake"}]

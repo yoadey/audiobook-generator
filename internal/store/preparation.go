@@ -51,7 +51,9 @@ type SegmentPrep struct {
 // Preparation is what one part of a chapter's preparation found.
 type Preparation struct {
 	// Moods of narration by paragraph id.
-	Moods    map[int64]string
+	Moods map[int64]string
+	// Flows lists the paragraphs that go on from the one before.
+	Flows    []int64
 	Segments []SegmentPrep
 	// Suggestions for the book's lexicon (Term, Replacement, Note).
 	Suggestions []LexiconEntry
@@ -85,6 +87,12 @@ func (s *Store) ApplyPreparation(ctx context.Context, chapterID int64, p Prepara
 		for id, mood := range p.Moods {
 			if err := db.Model(&Paragraph{}).Where("id = ? AND chapter_id = ?", id, chapterID).
 				Update("mood", mood).Error; err != nil {
+				return err
+			}
+		}
+		if len(p.Flows) > 0 {
+			if err := db.Model(&Paragraph{}).Where("id IN ? AND chapter_id = ?", p.Flows, chapterID).
+				Update("flows", true).Error; err != nil {
 				return err
 			}
 		}
@@ -134,8 +142,8 @@ func (s *Store) ResetPreparation(ctx context.Context, chapterIDs ...int64) error
 // merged, split or restored chapter keeps them).
 func (s *Store) ClearPreparation(ctx context.Context, chapterIDs ...int64) error {
 	db := s.db.WithContext(ctx)
-	if err := db.Model(&Paragraph{}).Where("chapter_id IN ? AND mood <> ''", chapterIDs).
-		Update("mood", "").Error; err != nil {
+	if err := db.Model(&Paragraph{}).Where("chapter_id IN ? AND (mood <> '' OR flows = ?)", chapterIDs, true).
+		Updates(map[string]any{"mood": "", "flows": false}).Error; err != nil {
 		return err
 	}
 	return db.Model(&Segment{}).Where("chapter_id IN ? AND (pauses <> '' OR spoken_as <> '')", chapterIDs).
@@ -151,10 +159,11 @@ func (s *Store) MarkPrepared(ctx context.Context, chapterID int64, prompt string
 
 // PrepCounts sums up what a chapter's preparation found.
 type PrepCounts struct {
-	Moods, Pauses, SpokenAs int
+	Moods, Pauses, SpokenAs, Flows int
 }
 
-// PrepStats counts the moods, pauses and spoken forms of a chapter.
+// PrepStats counts the moods, pauses, spoken forms and flowing paragraphs
+// of a chapter.
 func (s *Store) PrepStats(ctx context.Context, chapterID int64) (PrepCounts, error) {
 	db := s.db.WithContext(ctx)
 	var out PrepCounts
@@ -163,6 +172,11 @@ func (s *Store) PrepStats(ctx context.Context, chapterID int64) (PrepCounts, err
 		return out, err
 	}
 	out.Moods = int(moods)
+	var flows int64
+	if err := db.Model(&Paragraph{}).Where("chapter_id = ? AND flows = ?", chapterID, true).Count(&flows).Error; err != nil {
+		return out, err
+	}
+	out.Flows = int(flows)
 	var segs []Segment
 	if err := db.Select("id, text, pauses, spoken_as").
 		Where("chapter_id = ? AND (pauses <> '' OR spoken_as <> '')", chapterID).Find(&segs).Error; err != nil {

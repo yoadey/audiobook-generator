@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "properties": {
+    "moods": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "p": { "type": "integer" },
+          "mood": { "type": "string" }
+        },
+        "required": ["p", "mood"]
+      }
+    },
+    "pauses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "p": { "type": "integer" },
+          "after": { "type": "string" },
+          "length": { "type": "string" }
+        },
+        "required": ["p", "after", "length"]
+      }
+    },
+    "spoken": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "p": { "type": "integer" },
+          "text": { "type": "string" },
+          "say": { "type": "string" }
+        },
+        "required": ["p", "text", "say"]
+      }
+    },
+    "pronunciations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "term": { "type": "string" },
+          "say": { "type": "string" },
+          "note": { "type": "string" }
+        },
+        "required": ["term", "say"]
+      }
+    },
+    "flows": {
+      "type": "array",
+      "items": { "type": "integer" }
+    }
+  },
+  "required": ["moods", "pauses", "spoken", "pronunciations", "flows"]
+}

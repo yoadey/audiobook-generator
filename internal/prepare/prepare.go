@@ -341,6 +341,7 @@ func merge(a, b store.Preparation) store.Preparation {
 	for k, v := range b.Moods {
 		a.Moods[k] = v
 	}
+	a.Flows = append(a.Flows, b.Flows...)
 	a.Segments = append(a.Segments, b.Segments...)
 	seen := map[string]bool{}
 	for _, e := range a.Suggestions {

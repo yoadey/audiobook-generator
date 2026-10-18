@@ -44,6 +44,7 @@ export function NarratorSettings({ book }: { book: Book }) {
   const [lookahead, setLookahead] = useState<number | string>(book.lookahead);
   const [sampleText, setSampleText] = useState(book.previewText);
   const [prepare, setPrepare] = useState(book.prepareChapters);
+  const [characterVoices, setCharacterVoices] = useState(book.characterVoices);
   const settings = useQuery(settingsQuery);
   const [playing, setPlaying] = useState(false);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -107,6 +108,7 @@ export function NarratorSettings({ book }: { book: Book }) {
         lookahead: Number(lookahead) || 0,
         previewText: sampleText,
         prepareChapters: prepare,
+        characterVoices,
       }),
     onSuccess: () => {
       notifySuccess('Narrator settings saved');
@@ -135,7 +137,8 @@ export function NarratorSettings({ book }: { book: Book }) {
     speed !== book.narratorSpeed ||
     Number(lookahead) !== book.lookahead ||
     sampleText.trim() !== book.previewText ||
-    prepare !== book.prepareChapters;
+    prepare !== book.prepareChapters ||
+    characterVoices !== book.characterVoices;
 
   return (
     <Card withBorder>
@@ -249,8 +252,15 @@ export function NarratorSettings({ book }: { book: Book }) {
           maw={720}
         />
         <Switch
+          label="Character voices"
+          description="Quotations are spoken by their speakers' voices. Off: the narrator reads everything, like a single-voice audiobook, and chapters are rendered without waiting for the speaker attribution."
+          checked={characterVoices}
+          onChange={(e) => setCharacterVoices(e.currentTarget.checked)}
+          maw={720}
+        />
+        <Switch
           label="Prepare chapters with AI"
-          description="Before a chapter is rendered, the LLM marks the mood of the narration, dramatic pauses and spots the voice would misread, and suggests pronunciations for the lexicon. The text itself is never changed; this uses LLM quota like the speaker attribution."
+          description="Before a chapter is rendered, the LLM marks the mood of the narration, dramatic pauses, spots the voice would misread and paragraphs that flow on from the one before (an engine such as Chatterbox then reads them in one go), and suggests pronunciations for the lexicon. The text itself is never changed; this uses LLM quota like the speaker attribution."
           checked={prepare}
           onChange={(e) => setPrepare(e.currentTarget.checked)}
           maw={720}
@@ -261,8 +271,9 @@ export function NarratorSettings({ book }: { book: Book }) {
           </Button>
         </Group>
         <Text size="xs" c="dimmed">
-          Changing the voice, speed or preparation marks existing audio as outdated; chapters in the
-          lookahead window are rendered again automatically while you listen.
+          Changing the voice, speed, character voices or preparation marks existing audio as
+          outdated; chapters in the lookahead window are rendered again automatically while you
+          listen.
         </Text>
       </Stack>
     </Card>

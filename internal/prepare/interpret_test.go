@@ -86,6 +86,30 @@ func TestInterpret(t *testing.T) {
 		got.Suggestions)
 }
 
+func TestInterpretFlows(t *testing.T) {
+	paras := []store.Paragraph{
+		{ID: 1, Kind: store.ParagraphHeading, Text: "Chapter 1"},
+		{ID: 2, Kind: store.ParagraphText, Text: "The rain fell."},
+		{ID: 3, Kind: store.ParagraphText, Text: "It fell all night."},
+		{ID: 4, Kind: store.ParagraphSceneBreak},
+		{ID: 5, Kind: store.ParagraphText, Text: "Morning came."},
+		{ID: 6, Kind: store.ParagraphText, Text: "The sun rose."},
+	}
+	ans := &answer{Flows: []int{
+		2,  // after a heading: no
+		3,  // yes
+		3,  // once
+		5,  // after a scene break: no
+		6,  // yes, but outside the part
+		0,  // no paragraph
+		99, // no paragraph
+	}}
+	got := interpret(paras, nil, 0, 5, nil, ans)
+	assert.Equal(t, []int64{3}, got.Flows)
+	got = interpret(paras, nil, 5, 6, nil, &answer{Flows: []int{6}})
+	assert.Equal(t, []int64{6}, got.Flows, "on from the last paragraph of the part before")
+}
+
 func TestSpotOK(t *testing.T) {
 	for _, c := range []struct {
 		spot, say string

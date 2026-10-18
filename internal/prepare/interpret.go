@@ -51,6 +51,7 @@ type answer struct {
 		Say  string `json:"say"`
 		Note string `json:"note"`
 	} `json:"pronunciations"`
+	Flows []int `json:"flows"`
 }
 
 // placed is a segment with where its text starts in its paragraph (runes).
@@ -131,6 +132,14 @@ func interpret(paras []store.Paragraph, segs []store.Segment, from, to int, know
 		mood := strings.ToLower(strings.TrimSpace(m.Mood))
 		if p := para(m.P); p != nil && p.Kind == store.ParagraphText && slices.Contains(Moods, mood) {
 			out.Moods[p.ID] = mood
+		}
+	}
+	// A paragraph flows on from a text paragraph right before it (also
+	// the last one of the part before).
+	for _, n := range ans.Flows {
+		if p := para(n); p != nil && p.Kind == store.ParagraphText && n >= 2 &&
+			paras[n-2].Kind == store.ParagraphText && !slices.Contains(out.Flows, p.ID) {
+			out.Flows = append(out.Flows, p.ID)
 		}
 	}
 
