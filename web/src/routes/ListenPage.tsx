@@ -62,6 +62,7 @@ import { ReaderSettings } from '../components/ReaderSettings';
 import { formatDuration } from '../lib/format';
 import { notifyError } from '../lib/notify';
 import { resumeAt as resumePosition, segmentAt, startOf } from '../lib/reading';
+import { typing } from '../lib/keys';
 import { parsePrefs, type ReaderPrefs } from '../lib/readerPrefs';
 
 const SAVE_EVERY_MS = 15_000;
@@ -87,24 +88,6 @@ function store(key: string, value: string) {
 
 function storedPrefs(): ReaderPrefs {
   return parsePrefs(stored(PREFS_KEY, '{}'));
-}
-
-/**
- * Whether a key press belongs to something else than the player: a form
- * field, the position slider (which handles arrows itself), or an open
- * menu, popover or drawer. A focused button of the player does not count:
- * space still plays and pauses after a click on "Forward 30".
- */
-function typing(e: KeyboardEvent): boolean {
-  const t = e.target as HTMLElement | null;
-  return (
-    e.defaultPrevented ||
-    (!!t &&
-      (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) ||
-        t.isContentEditable ||
-        t.getAttribute('role') === 'slider' ||
-        !!t.closest('[role=dialog],[role=menu],[role=listbox]')))
-  );
 }
 
 export function ListenPage() {
@@ -473,13 +456,16 @@ function Player({
     [currentId, persist],
   );
 
-  // Keyboard: space plays and pauses, the arrows skip.
+  // Keyboard: space plays and pauses, the arrows skip (or turn the pages).
+  const paged = prefs.turning === 'pages';
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === ' ') {
         e.preventDefault();
         togglePlay();
+      } else if (paged) {
+        // The arrows turn the pages (the reader's own keys).
       } else if (e.key === 'ArrowLeft') {
         seek(-15);
       } else if (e.key === 'ArrowRight') {
@@ -488,7 +474,7 @@ function Player({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [togglePlay, seek]);
+  }, [togglePlay, seek, paged]);
 
   useEffect(() => store(PREFS_KEY, JSON.stringify(prefs)), [prefs]);
   // The page colour covers the whole page while reading (before it shows).
@@ -512,7 +498,8 @@ function Player({
   const total = duration || (current.audioDurationMs ?? 0);
 
   return (
-    <Stack gap={0} mih="calc(100dvh - 92px)">
+    // Turning pages: the page is the screen, the text never scrolls it.
+    <Stack gap={0} {...(paged ? { h: 'calc(100dvh - 92px)' } : { mih: 'calc(100dvh - 92px)' })}>
       <Group justify="space-between" wrap="nowrap" mb="md">
         <Breadcrumbs separatorMargin={6} style={{ minWidth: 0 }}>
           <AnchorLink to="/library" size="sm" c="dimmed">
@@ -577,7 +564,7 @@ function Player({
         />
       )}
 
-      <Box style={{ flex: 1 }}>
+      <Box style={{ flex: 1, minHeight: 0 }}>
         <Reader
           key={current.id}
           chapter={current}

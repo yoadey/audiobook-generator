@@ -134,6 +134,17 @@ describe('Reader', () => {
     expect(props.onRead).not.toHaveBeenCalled();
   });
 
+  it('turns pages with the arrows; past the last one comes the next chapter', async () => {
+    const { props, rerender } = setup();
+    await screen.findByText('Sentence number 1.');
+    const pages = { ...DEFAULT_PREFS, turning: 'pages' as const };
+    rerender({ prefs: pages, next: { ...chapter, id: 11, title: 'Two' } as never });
+    expect(screen.getByText('Page 1 of 1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(props.onNext).toHaveBeenCalledTimes(1);
+  });
+
   it('lays the text out as chosen', async () => {
     const { rerender } = setup();
     await screen.findByText('Sentence number 1.');

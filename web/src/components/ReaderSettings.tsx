@@ -66,6 +66,19 @@ export function ReaderSettings({
       closeButtonProps={{ 'aria-label': 'Close' }}
     >
       <Stack gap="md" pb="md">
+        <Setting label="Page turning">
+          <SegmentedControl
+            size="xs"
+            fullWidth
+            aria-label="Page turning"
+            value={prefs.turning}
+            onChange={(v) => set('turning', v as ReaderPrefs['turning'])}
+            data={[
+              { value: 'scroll', label: 'Scroll' },
+              { value: 'pages', label: 'Pages' },
+            ]}
+          />
+        </Setting>
         <Select
           label="Font"
           value={prefs.font}

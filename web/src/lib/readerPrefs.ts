@@ -43,6 +43,8 @@ export type Width = keyof typeof WIDTHS;
 
 /** Reading preferences (kept per browser). */
 export type ReaderPrefs = {
+  /** Scroll through a chapter, or turn its pages like a book. */
+  turning: 'scroll' | 'pages';
   font: Font;
   /** Text size in px. */
   size: number;
@@ -66,6 +68,7 @@ export const LINE_HEIGHT = { min: 1.3, max: 2.2 };
 export const MARGIN = { min: 0, max: 64 };
 
 export const DEFAULT_PREFS: ReaderPrefs = {
+  turning: 'scroll',
   font: 'serif',
   size: 18,
   lineHeight: 1.75,
@@ -98,6 +101,7 @@ export function parsePrefs(raw: string | null): ReaderPrefs {
   const d = DEFAULT_PREFS;
   const size = typeof p.size === 'string' ? OLD_SIZES[p.size] : p.size;
   return {
+    turning: oneOf(p.turning, ['scroll', 'pages'], d.turning),
     font: oneOf(p.font, Object.keys(FONTS) as Font[], d.font),
     size: Math.round(within(size, SIZE, d.size)),
     lineHeight: within(p.lineHeight, LINE_HEIGHT, d.lineHeight),

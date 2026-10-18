@@ -100,7 +100,9 @@ URLs carry a token instead, so treat them like passwords.
   listens from there; scrolling while paused moves the listening position
   to what you read (also in chapters without audio yet), so reading and
   listening continue at the same place. *Aa* holds the reading settings
-  (kept per browser): the font (the system's serif and sans, and shipped
+  (kept per browser): scrolling or turning pages (buttons, the arrow keys,
+  a swipe or the mouse wheel; past the last page comes the next chapter),
+  the font (the system's serif and sans, and shipped
   Literata, Merriweather, EB Garamond, Atkinson Hyperlegible, Lexend,
   OpenDyslexic and monospace), text size, line spacing, text width, side
   margins, left or justified text, spaced or indented paragraphs, a sepia
