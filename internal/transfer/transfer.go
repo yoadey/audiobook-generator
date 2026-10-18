@@ -158,7 +158,8 @@ func readHeader(zr *zip.Reader) (*Header, error) {
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	var h Header
+	// Exports from before character voices could be turned off had them.
+	h := Header{Book: store.Book{CharacterVoices: true}}
 	if err := json.NewDecoder(io.LimitReader(rc, 1<<20)).Decode(&h); err != nil || h.Format != Format {
 		return nil, ErrNotExport
 	}
@@ -411,8 +412,9 @@ func restoredBook(b *store.Book) map[string]any {
 		"Title": b.Title, "Author": b.Author, "Language": b.Language, "QuoteStyle": b.QuoteStyle,
 		"WordCount": b.WordCount, "ChapterCount": b.ChapterCount,
 		"NarratorVoice": b.NarratorVoice, "NarratorSpeed": speed, "Lookahead": lookahead,
-		"PreviewText":    truncateRunes(store.CleanText(b.PreviewText), 500),
-		"AnalysisStatus": analysis, "AnalysisError": b.AnalysisError,
+		"CharacterVoices": b.CharacterVoices,
+		"PreviewText":     truncateRunes(store.CleanText(b.PreviewText), 500),
+		"AnalysisStatus":  analysis, "AnalysisError": b.AnalysisError,
 		"AnalysisStartedAt": b.AnalysisStartedAt, "AnalysisFinishedAt": b.AnalysisFinishedAt,
 		"CastingStatus": casting, "CastingError": b.CastingError, "CastingFinishedAt": b.CastingFinishedAt,
 		"Status": status, "Progress": 1.0, "Error": "",

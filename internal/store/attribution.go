@@ -167,7 +167,8 @@ func (s *Store) GetSegment(ctx context.Context, id int64) (*Segment, error) {
 }
 
 // TouchCharacterVoices bumps the voice revision of every chapter in which
-// one of the characters speaks (its voice changed).
+// one of the characters speaks (its voice changed), in books with
+// character voices.
 func (s *Store) TouchCharacterVoices(ctx context.Context, characterIDs ...int64) error {
 	if len(characterIDs) == 0 {
 		return nil
@@ -175,15 +176,24 @@ func (s *Store) TouchCharacterVoices(ctx context.Context, characterIDs ...int64)
 	db := s.db.WithContext(ctx)
 	return db.Model(&Chapter{}).Where("id IN (?)", db.Session(&gorm.Session{NewDB: true}).Model(&Segment{}).
 		Select("chapter_id").Where("speaker_character_id IN ?", characterIDs)).
+		Where("book_id IN (?)", withCharacterVoices(db)).
 		Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
+}
+
+// withCharacterVoices selects the books whose quotations have their
+// speakers' voices (in the others the narrator reads them: who speaks
+// and how they sound changes nothing).
+func withCharacterVoices(db *gorm.DB) *gorm.DB {
+	return db.Session(&gorm.Session{NewDB: true}).Model(&Book{}).Select("id").Where("character_voices = ?", true)
 }
 
 // TouchBookVoices bumps the voice revision of a book's chapters with
 // quotations (their speakers may sound different now; excluded ones too,
-// they may be included again).
+// they may be included again), unless the book has no character voices.
 func (s *Store) TouchBookVoices(ctx context.Context, bookID int64) error {
-	return s.db.WithContext(ctx).Model(&Chapter{}).
-		Where("book_id = ? AND quote_count > 0", bookID).
+	db := s.db.WithContext(ctx)
+	return db.Model(&Chapter{}).
+		Where("book_id = ? AND quote_count > 0", bookID).Where("book_id IN (?)", withCharacterVoices(db)).
 		Update("voice_rev", gorm.Expr("voice_rev + 1")).Error
 }
 

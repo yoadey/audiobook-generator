@@ -233,6 +233,10 @@ type item struct {
 	// parts are the segments a joined item speaks, in order, with their
 	// length in runes (nil: only segmentID).
 	parts []part
+	// plain: the pause after it is the usual one between segments or
+	// paragraphs (see pauses); flows: the next paragraph goes on from
+	// this one (chapter preparation). An engine may read on across both.
+	plain, flows bool
 }
 
 // part is a segment spoken in a joined item.
@@ -252,6 +256,22 @@ func (s *style) key() string {
 		return ""
 	}
 	return fmt.Sprintf("|%s|%s|%t", s.emotion, s.mood, s.thought)
+}
+
+// same tells whether two styles are spoken alike (a neutral emotion is
+// none).
+func (s *style) same(o *style) bool {
+	norm := func(st *style) style {
+		if st == nil {
+			return style{}
+		}
+		n := *st
+		if n.emotion == "neutral" {
+			n.emotion = ""
+		}
+		return n
+	}
+	return (s == nil) == (o == nil) && norm(s) == norm(o)
 }
 
 func boolInt(b bool) int {
@@ -303,16 +323,25 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			if i := strings.Index(s.Text, text); i > 0 {
 				lead = utf8.RuneCountInString(s.Text[:i])
 			}
-			if m, ok := moods[mood]; ok && s.QuoteRef == 0 {
+			// Speech in the narrator's voice without an emotion of its own
+			// (no character voices, an unknown speaker, a character cast
+			// with the narrator's voice) is read like the narration around
+			// it; a thought stays softer.
+			byNarrator := s.QuoteRef == 0 || voice == narrator && (s.Emotion == "" || s.Emotion == "neutral")
+			if m, ok := moods[mood]; ok && byNarrator {
 				pr = m // narration in the paragraph's mood
+				if s.Kind == store.SegmentThought {
+					pr.speed *= thoughtProsody.speed
+					pr.gain *= thoughtProsody.gain
+				}
 			}
 			if engines != nil && engines.Expressive(voice) {
 				// The engine acts itself; only loudness is ours.
 				st, pr.speed = &style{thought: s.Kind == store.SegmentThought}, 1
-				if s.QuoteRef > 0 {
-					st.emotion = s.Emotion
-				} else {
+				if byNarrator {
 					st.mood = mood
+				} else {
+					st.emotion = s.Emotion
 				}
 			}
 		}
@@ -355,7 +384,10 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			gapLast(gapHeading)
 		}
 	}
-	for _, p := range paras {
+	// spoken: the index of the last paragraph that was spoken (a flowing
+	// paragraph reads on only from the paragraph right before it).
+	spoken := -1
+	for pi, p := range paras {
 		switch p.Kind {
 		case store.ParagraphSceneBreak:
 			gapLast(gapScene)
@@ -369,6 +401,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			}
 			gapLast(gapHeading)
 		default:
+			start := len(items)
 			// A paragraph of only speech: an exchange of lines.
 			dialogue := len(byPara[p.ID]) > 0
 			for _, s := range byPara[p.ID] {
@@ -382,6 +415,12 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 					voice, speed := voiceOf(s)
 					say(s, t, voice, speed, dialogue, p.Mood)
 				}
+			}
+			if len(items) > start {
+				if p.Flows && start > 0 && spoken == pi-1 {
+					items[start-1].flows = true
+				}
+				spoken = pi
 			}
 			gapLast(gapPara)
 		}
@@ -397,9 +436,10 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 // join speaks the pieces of a paragraph in one request where an engine
 // that acts itself would otherwise get them one by one (a sentence, a
 // dialogue tag): consecutive items of one voice and style, separated only
-// by the plain pause between segments, up to the engine's limit. Pauses
-// that mean something (after a thought, a trailing line, one the chapter
-// preparation asks for) still split them, as do paragraphs.
+// by the plain pause between segments, up to the engine's limit; across
+// paragraphs too where the chapter preparation found one flows on from
+// the other. Pauses that mean something (after a thought, a trailing
+// line, one the chapter preparation asks for) still split them.
 func join(items []item, limitOf func(voice string) int) []item {
 	out := items[:0:0]
 	for _, it := range items {
@@ -410,9 +450,9 @@ func join(items []item, limitOf func(voice string) int) []item {
 		}
 		prev := &out[n-1]
 		limit := limitOf(it.voice)
+		readsOn := prev.plain && (prev.gap == gapSegment || prev.gap == gapPara && prev.flows)
 		if prev.engine == "" || prev.engine != it.engine || prev.voice != it.voice || prev.speed != it.speed ||
-			prev.gain != it.gain || prev.style.key() != it.style.key() || prev.gap != gapSegment ||
-			prev.pause != withinPara || limit <= 0 ||
+			prev.gain != it.gain || !prev.style.same(it.style) || !readsOn || limit <= 0 ||
 			utf8.RuneCountInString(prev.text)+1+utf8.RuneCountInString(it.text) > limit {
 			out = append(out, it)
 			continue
@@ -433,11 +473,19 @@ func join(items []item, limitOf func(voice string) int) []item {
 	return out
 }
 
+// narratorOnly lets the narrator read every quotation like narration (the
+// book has no character voices).
+func narratorOnly(segs []store.Segment) {
+	for i := range segs {
+		segs[i].SpeakerCharacterID, segs[i].Emotion = nil, ""
+	}
+}
+
 // withoutPreparation drops what a chapter preparation found (the book
 // no longer asks for it).
 func withoutPreparation(paras []store.Paragraph, segs []store.Segment) {
 	for i := range paras {
-		paras[i].Mood = ""
+		paras[i].Mood, paras[i].Flows = "", false
 	}
 	for i := range segs {
 		segs[i].Pauses, segs[i].SpokenAs = "", ""
@@ -504,6 +552,9 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	paras, segs, err := r.Store.ChapterText(ctx, ch.ID)
 	if err != nil {
 		return err
+	}
+	if !book.CharacterVoices {
+		narratorOnly(segs)
 	}
 	if ch.AudioPath == "" {
 		if err := r.Store.SetAudioStatus(ctx, store.AudioRendering, "", ch.ID); err != nil {
@@ -684,7 +735,7 @@ const waitFor = 2 * time.Minute
 // attribution the chapter needs (queued if missing), and for a pending
 // casting when the chapter has speakers — unless that job cannot run soon.
 func (r *Renderer) waitForVoices(ctx context.Context, b *store.Book, ch *store.Chapter) (bool, error) {
-	if r.Attribution == nil {
+	if r.Attribution == nil || !b.CharacterVoices {
 		return false, nil
 	}
 	soon := func(j *store.Job) bool {

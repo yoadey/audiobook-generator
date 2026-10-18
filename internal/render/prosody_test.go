@@ -227,6 +227,78 @@ func TestExpressiveEngine(t *testing.T) {
 	assert.Empty(t, said.engine)
 }
 
+func TestJoinPassages(t *testing.T) {
+	ps, ss := chapter(
+		[]string{"n:The rain fell."},
+		[]string{"n:It fell all night."}, // flows on
+		[]string{"n:Nobody came."},       // flows on (made to trail off below)
+		[]string{"n:Then morning…"},
+		[]string{"n:The sun rose."}, // flows on: after a trailing line still not
+		[]string{"q:“Hello?”", "n:she called."},
+		[]string{"e:angry:“Go away!”", "n:he said."},
+	)
+	for _, i := range []int{1, 2, 4, 5} {
+		ps[i].Flows = true
+	}
+	ss[2].Text = "Nobody came…"
+	ch := &store.Chapter{Title: "One"}
+	// Everything in the narrator's voice (no character voices, unknown
+	// speakers): quotations without an emotion are read like narration.
+	items := plan(ch, ps, ss, func(*store.Segment) (string, float64) { return "cb:emily.wav", 1 },
+		lexicon.Compile(nil), engines("v1"))
+	var texts []string
+	for _, it := range items {
+		texts = append(texts, it.text)
+	}
+	assert.Equal(t, []string{
+		"One",
+		"The rain fell. It fell all night. Nobody came…", // across flowing paragraphs
+		"Then morning…",
+		"The sun rose. Hello? she called.", // the narrator reads the quotation
+		"Go away!", "he said.",             // an emotion of its own stays apart
+	}, texts)
+
+	// Without the preparation's flows: paragraph by paragraph.
+	for i := range ps {
+		ps[i].Flows = false
+	}
+	items = plan(ch, ps, ss, func(*store.Segment) (string, float64) { return "cb:emily.wav", 1 },
+		lexicon.Compile(nil), engines("v1"))
+	assert.Len(t, items, 9)
+	assert.Equal(t, "Hello? she called.", items[6].text)
+
+	// Narrator only: speakers and emotions are dropped.
+	ss[len(ss)-2].SpeakerCharacterID = new(int64)
+	narratorOnly(ss)
+	assert.Nil(t, ss[len(ss)-2].SpeakerCharacterID)
+	assert.Empty(t, ss[len(ss)-2].Emotion)
+}
+
+func TestFlowsAndNarratorThoughts(t *testing.T) {
+	// A paragraph with nothing to say between two others: no reading on
+	// across it, whichever is marked.
+	ps, ss := chapter([]string{"n:The rain fell."}, []string{"n:◇◇◇"}, []string{"n:Morning came."})
+	ss[1].Text = "…"
+	ps[1].Flows, ps[2].Flows = true, true
+	ch := &store.Chapter{Title: "One"}
+	cb := func(*store.Segment) (string, float64) { return "cb:emily.wav", 1 }
+	items := plan(ch, ps, ss, cb, lexicon.Compile(nil), engines("v1"))
+	var texts []string
+	for _, it := range items {
+		texts = append(texts, it.text)
+	}
+	assert.NotContains(t, texts, "The rain fell. Morning came.")
+
+	// A thought the narrator reads in a paragraph with a mood stays softer.
+	ps, ss = chapter([]string{"n:She sat down.", "t:Why me?"})
+	ps[0].Mood = "calm"
+	items = plan(ch, ps, ss, func(*store.Segment) (string, float64) { return "af_heart", 1 },
+		lexicon.Compile(nil), nil)
+	require.Len(t, items, 3)
+	assert.InDelta(t, 0.85, items[2].gain, 1e-9)
+	assert.InDelta(t, 0.97*0.98, items[2].speed, 0.006)
+}
+
 func TestPhrases(t *testing.T) {
 	ps, ss := chapter([]string{"q:“I just… I don’t know. Wait...”"})
 	items := planOf(ps, ss)

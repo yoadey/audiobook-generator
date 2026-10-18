@@ -624,6 +624,29 @@ var migrations = []*gormigrate.Migration{
 			return nil
 		},
 	},
+	{
+		ID: "202610260001_passages",
+		Migrate: func(tx *gorm.DB) error {
+			type Paragraph struct {
+				Flows bool `gorm:"not null;default:false"`
+			}
+			type Book struct {
+				CharacterVoices bool `gorm:"not null;default:true"`
+			}
+			if err := tx.Migrator().AddColumn(&Paragraph{}, "Flows"); err != nil {
+				return err
+			}
+			return tx.Migrator().AddColumn(&Book{}, "CharacterVoices")
+		},
+		Rollback: func(tx *gorm.DB) error {
+			type Paragraph struct{ Flows bool }
+			type Book struct{ CharacterVoices bool }
+			if err := tx.Migrator().DropColumn(&Book{}, "CharacterVoices"); err != nil {
+				return err
+			}
+			return tx.Migrator().DropColumn(&Paragraph{}, "Flows")
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

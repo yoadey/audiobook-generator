@@ -1588,6 +1588,7 @@ components:
         - lookahead
         - previewText
         - prepareChapters
+        - characterVoices
         - analysisStatus
         - castingStatus
         - createdAt
@@ -1635,7 +1636,14 @@ components:
           type: boolean
           description: >-
             Chapters are prepared by the LLM before they are rendered
-            (narration mood, pauses, spoken forms, pronunciation suggestions)
+            (narration mood, pauses, spoken forms, pronunciation suggestions,
+            paragraphs that flow on from the one before)
+        characterVoices:
+          type: boolean
+          description: >-
+            Quotations are spoken by their speakers' voices; without, the
+            narrator reads everything (and renders wait for no speaker
+            attribution)
         analysisStatus:
           $ref: "#/components/schemas/AnalysisStatus"
         analysisProgress:
@@ -1671,6 +1679,8 @@ components:
           maxLength: 500
           description: Sample text of voice previews in this book; empty for the instance's
         prepareChapters:
+          type: boolean
+        characterVoices:
           type: boolean
     BookPage:
       type: object
@@ -1801,7 +1811,7 @@ components:
           description: Prepare again, discarding what was found
     ChapterPreparation:
       type: object
-      required: [status, moods, pauses, spokenForms]
+      required: [status, moods, pauses, spokenForms, flows]
       properties:
         status:
           $ref: "#/components/schemas/PrepStatus"
@@ -1820,6 +1830,9 @@ components:
           type: integer
         spokenForms:
           type: integer
+        flows:
+          type: integer
+          description: Paragraphs that flow on from the one before (an engine may read them in one go)
         job:
           $ref: "#/components/schemas/Job"
     SpokenForm:

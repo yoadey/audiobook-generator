@@ -816,7 +816,10 @@ type Book struct {
 	Author           string         `json:"author"`
 	CastingStatus    CastingStatus  `json:"castingStatus"`
 	ChapterCount     int            `json:"chapterCount"`
-	CreatedAt        time.Time      `json:"createdAt"`
+
+	// CharacterVoices Quotations are spoken by their speakers' voices; without, the narrator reads everything (and renders wait for no speaker attribution)
+	CharacterVoices bool      `json:"characterVoices"`
+	CreatedAt       time.Time `json:"createdAt"`
 
 	// Engine The engine the book speaks with, that of its narrator ("kokoro" or another engine's name); its characters are cast from its voices
 	Engine string `json:"engine"`
@@ -837,7 +840,7 @@ type Book struct {
 	// NarratorVoice Kokoro voice or weighted mix, e.g. "af_heart" or "bf_emma(2)+af_bella(1)", or a voice of another engine ("chatterbox:Emily.wav")
 	NarratorVoice string `json:"narratorVoice"`
 
-	// PrepareChapters Chapters are prepared by the LLM before they are rendered (narration mood, pauses, spoken forms, pronunciation suggestions)
+	// PrepareChapters Chapters are prepared by the LLM before they are rendered (narration mood, pauses, spoken forms, pronunciation suggestions, paragraphs that flow on from the one before)
 	PrepareChapters bool `json:"prepareChapters"`
 
 	// PreviewText Sample text of voice previews in this book (empty - the instance's)
@@ -862,6 +865,7 @@ type BookStatus string
 
 // BookUpdate defines model for BookUpdate.
 type BookUpdate struct {
+	CharacterVoices *bool    `json:"characterVoices,omitempty"`
 	Lookahead       *int     `json:"lookahead,omitempty"`
 	NarratorSpeed   *float32 `json:"narratorSpeed,omitempty"`
 	NarratorVoice   *string  `json:"narratorVoice,omitempty"`
@@ -1031,7 +1035,10 @@ type ChapterPage struct {
 // ChapterPreparation defines model for ChapterPreparation.
 type ChapterPreparation struct {
 	Error *string `json:"error,omitempty"`
-	Job   *Job    `json:"job,omitempty"`
+
+	// Flows Paragraphs that flow on from the one before (an engine may read them in one go)
+	Flows int  `json:"flows"`
+	Job   *Job `json:"job,omitempty"`
 
 	// Moods Paragraphs with a mood
 	Moods      int        `json:"moods"`

@@ -368,14 +368,29 @@ its answer so a stopped job resumes) and returns labels only
   the story, it only says how notation is read;
 - **pronunciations** of invented names as respellings, stored in the book's
   lexicon as *suggestions* (applied only once accepted; dismissed ones are
-  not suggested again); the terms must occur in the text.
+  not suggested again); the terms must occur in the text;
+- **flows** (prompt v2): paragraphs that go straight on from the one
+  before (the same moment, scene and tone; not a new scene, viewpoint,
+  speaker or anything after a scene break or dramatic pause), only after
+  a text paragraph. An engine that joins pieces (Chatterbox) then reads
+  such paragraphs in one request with the paragraph before, as long as
+  voice and style are the same and the pause between them means nothing
+  (§3.7); Kokoro keeps its paragraph pauses. Chapters prepared with v1
+  get them when prepared again.
 
 All of it applies to the TTS input only: the book text, the reader and
 the transcripts stay as written, and word timings skip the replaced spots.
 Applying a part bumps the voice revision; turning the option on or off
 outdates the book's audio, and the render ignores preparations while it
-is off. "Prepare again" discards a chapter's moods, pauses and spoken
-forms (the lexicon keeps its entries).
+is off. "Prepare again" discards a chapter's moods, pauses, spoken forms
+and flows (the lexicon keeps its entries).
+
+A book can also do without **character voices** (`characterVoices`, on by
+default): the narrator then reads every quotation like narration (no
+speaker, no emotion of its own), renders wait for no speaker attribution,
+and an engine reads a dialogue paragraph in one go. Turning it on or off
+outdates the book's audio; while it is off, speakers and character voices
+changing (analysis, casting, voice edits) outdate nothing.
 
 ### 3.7 Rendering and assembly
 

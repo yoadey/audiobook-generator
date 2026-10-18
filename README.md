@@ -119,12 +119,16 @@ URLs carry a token instead, so treat them like passwords.
   within a sentence.
 - **Chapter preparation** (optional, per book under *Narrator*): before a
   chapter is rendered, the LLM marks the mood of the narration, dramatic
-  pauses and notation the voice would misread ("Lv. 5" → "level five"),
-  and suggests pronunciations of invented names, which you accept or
-  dismiss under *Pronunciation*. It only changes how the text is spoken,
+  pauses, notation the voice would misread ("Lv. 5" → "level five") and
+  paragraphs that flow on from the one before (Chatterbox reads those in
+  one go), and suggests pronunciations of invented names, which you accept
+  or dismiss under *Pronunciation*. It only changes how the text is spoken,
   never its words: spoken forms are accepted only for notation (numbers,
   symbols, abbreviations) and must keep every other word. The chapter page
   shows what was found and can prepare it again.
+- **Character voices** (per book under *Narrator*, on by default): off, the
+  narrator reads everything like a single-voice audiobook, without
+  waiting for the speaker attribution.
 - **Speech engines**: Kokoro, Chatterbox (which acts emotions itself) and
   other OpenAI-compatible servers, beside each other or instead of Kokoro
   (`tts.kokoro.enabled: false` with `tts.chatterbox.enabled: true`). Each

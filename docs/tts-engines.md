@@ -56,8 +56,12 @@ instead of it.
   dialogue tag between them before the speakers are known) go out
   together, up to the engine's `maxChars`, so the engine reads them in
   one flow instead of piece by piece. A pause that means something (after
-  a thought, a line trailing off, one the chapter preparation asks for),
-  another voice and every paragraph end still start a new request.
+  a thought, a line trailing off, one the chapter preparation asks for)
+  and another voice start a new request, and so does every paragraph end
+  unless the chapter preparation found that the next paragraph flows on
+  from it. Speech the narrator reads without an emotion of its own (an
+  unknown speaker, or every quotation in a book without character
+  voices) is read like the narration around it, so it joins in too.
   Chatterbox-TTS-Server splits text longer than 450 characters (about
   30 s of speech) by sentences itself.
 - Engines report no word timings: the reader marks their lines by

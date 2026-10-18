@@ -26,6 +26,7 @@ func (s *Server) toBook(b *store.Book) Book {
 		Lookahead:       b.Lookahead,
 		PreviewText:     b.PreviewText,
 		PrepareChapters: b.PrepareChapters,
+		CharacterVoices: b.CharacterVoices,
 		Id:              b.ID,
 		Title:           b.Title,
 		Author:          b.Author,

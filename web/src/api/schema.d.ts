@@ -966,8 +966,10 @@ export interface components {
       lookahead: number;
       /** @description Sample text of voice previews in this book (empty - the instance's) */
       previewText: string;
-      /** @description Chapters are prepared by the LLM before they are rendered (narration mood, pauses, spoken forms, pronunciation suggestions) */
+      /** @description Chapters are prepared by the LLM before they are rendered (narration mood, pauses, spoken forms, pronunciation suggestions, paragraphs that flow on from the one before) */
       prepareChapters: boolean;
+      /** @description Quotations are spoken by their speakers' voices; without, the narrator reads everything (and renders wait for no speaker attribution) */
+      characterVoices: boolean;
       analysisStatus: components['schemas']['AnalysisStatus'];
       /** @description Share of analysed batches (0..1) once the analysis is planned */
       analysisProgress?: number;
@@ -986,6 +988,7 @@ export interface components {
       /** @description Sample text of voice previews in this book; empty for the instance's */
       previewText?: string;
       prepareChapters?: boolean;
+      characterVoices?: boolean;
     };
     BookPage: {
       items: components['schemas']['Book'][];
@@ -1075,6 +1078,8 @@ export interface components {
       moods: number;
       pauses: number;
       spokenForms: number;
+      /** @description Paragraphs that flow on from the one before (an engine may read them in one go) */
+      flows: number;
       job?: components['schemas']['Job'];
     };
     SpokenForm: {
