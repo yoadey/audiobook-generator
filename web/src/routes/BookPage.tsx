@@ -220,7 +220,9 @@ export function BookPage() {
             </Center>
           ) : nothingToRead ? (
             <Text size="sm" c="dimmed">
-              No chapters to read: all of them are excluded (see the audiobook's chapters).
+              {(chapters.data?.items.length ?? 0) > 0
+                ? "No chapters to read: all of them are excluded (see the audiobook's chapters)."
+                : 'This book has no chapters.'}
             </Text>
           ) : (
             <TableOfContents

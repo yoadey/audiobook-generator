@@ -38,7 +38,8 @@ func (t xmlText) source() string {
 func plainText(s string) string {
 	if !tag.MatchString(s) {
 		var paras []string
-		for _, p := range blankLine.Split(s, -1) {
+		// Entities the OPF decoder left (&nbsp;, double escapes) decode too.
+		for _, p := range blankLine.Split(html.UnescapeString(s), -1) {
 			if p = normalizeSpace(p); p != "" {
 				paras = append(paras, p)
 			}
@@ -71,7 +72,7 @@ func plainText(s string) string {
 		case n.Type == html.ElementNode && (n.DataAtom == atom.Td || n.DataAtom == atom.Th):
 			cur.WriteByte(' ')
 		}
-		block := n.Type == html.ElementNode && isBlock(n.DataAtom)
+		block := n.Type == html.ElementNode && isBlock(localAtom(n))
 		if block {
 			end()
 		}
@@ -87,6 +88,15 @@ func plainText(s string) string {
 	}
 	end()
 	return strings.Join(paras, "\n\n")
+}
+
+// localAtom is an element's tag without a namespace prefix (xhtml:p is a p).
+func localAtom(n *html.Node) atom.Atom {
+	if n.DataAtom != 0 {
+		return n.DataAtom
+	}
+	_, local, _ := strings.Cut(n.Data, ":")
+	return atom.Lookup([]byte(local))
 }
 
 func isBlock(a atom.Atom) bool {
