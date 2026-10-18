@@ -87,8 +87,12 @@ export function Reader({
   // Where reading is while paused (placed, turned, scrolled or clicked to):
   // what stays in view when the text flows anew.
   const readAt = useRef<number | undefined>(startSegment);
-  const anchor = () =>
-    latest.current.playing ? latest.current.active : (readAt.current ?? latest.current.active);
+  // None while playing away from the voice: the page shown stays.
+  const anchor = () => {
+    const l = latest.current;
+    if (l.playing) return l.follow ? l.active : undefined;
+    return readAt.current ?? l.active;
+  };
   // Scroll events until then come from a scroll this component started.
   const ownScroll = useRef(false);
   // When the reader's last own scroll started.
@@ -99,10 +103,10 @@ export function Reader({
   // The latest values for the window's scroll handler and the paragraphs'
   // click handler, which stay the same while the position moves.
   const active = cues ? segmentAt(cues, positionMs) : marked;
-  const latest = useRef({ onSeek, onRead, playing, paged, active });
+  const latest = useRef({ onSeek, onRead, playing, paged, active, follow });
   useEffect(() => {
-    latest.current = { onSeek, onRead, playing, paged, active };
-  }, [onSeek, onRead, playing, paged, active]);
+    latest.current = { onSeek, onRead, playing, paged, active, follow };
+  }, [onSeek, onRead, playing, paged, active, follow]);
 
   // Playing again follows the voice.
   const [wasPlaying, setWasPlaying] = useState(playing);
@@ -205,21 +209,35 @@ export function Reader({
     pageNow.current = view.page;
   }, [view.page]);
 
-  // Brings a segment into view: scrolls to it, or turns to its page. A
-  // segment running over a page break: the page of the word spoken (or
-  // the sentence marked), and no turn while that is on the page shown.
+  // The pages a segment shows on: while playing, those of the word spoken
+  // (or the sentence marked), as a segment can run over a page break.
+  const pagesOf = useCallback(
+    (segmentId: number): [number, number] | undefined => {
+      const el = content.current?.querySelector(`[data-seg="${segmentId}"]`);
+      if (!el || !box.w) return undefined;
+      const spot = latest.current.playing
+        ? (el.querySelector('[data-word]') ?? el.querySelector('[data-mark]') ?? el)
+        : el;
+      return [pageOf(spot), pageOf(spot, true)];
+    },
+    [box.w, pageOf],
+  );
+
+  // Brings a segment into view: scrolls to it, or turns to its page (none
+  // while it is on the page shown). Paused, that is its last page: reading
+  // went on from the page before (a turn makes the page's first segment
+  // the position, often begun on the page before).
   const show = useCallback(
     (segmentId: number, smooth: boolean) => {
       if (!paged) return scrollTo(segmentId, smooth);
-      const el = content.current?.querySelector(`[data-seg="${segmentId}"]`);
-      if (!el || !box.w) return false;
-      const spot = el.querySelector('[data-word]') ?? el.querySelector('[data-mark]') ?? el;
-      const first = pageOf(spot);
+      const range = pagesOf(segmentId);
+      if (!range) return false;
+      const [first, last] = range;
       const now = pageNow.current;
-      showPage(now >= first && now <= pageOf(spot, true) ? now : first, smooth);
+      if (now < first || now > last) showPage(latest.current.playing ? first : last, smooth);
       return true;
     },
-    [paged, scrollTo, box.w, pageOf, showPage],
+    [paged, scrollTo, pagesOf, showPage],
   );
 
   // The size of a page, and how many pages the chapter takes.
@@ -330,9 +348,9 @@ export function Reader({
     }
     showPage(page, true);
     if (playing) {
-      const el =
-        active !== undefined ? content.current?.querySelector(`[data-seg="${active}"]`) : null;
-      setFollow(!!el && pageOf(el) === page);
+      // Following on only where the voice is.
+      const range = active !== undefined ? pagesOf(active) : undefined;
+      setFollow(!!range && page >= range[0] && page <= range[1]);
       return;
     }
     const first = firstOn(page);
@@ -500,6 +518,7 @@ export function Reader({
       radius="xl"
       variant="default"
       leftSection={<IconFocus2 size={14} />}
+      ff="var(--mantine-font-family)"
       onClick={() => {
         setFollow(true);
         show(active, true);

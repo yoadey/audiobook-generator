@@ -153,6 +153,35 @@ describe('Reader', () => {
     expect(props.onNext).toHaveBeenCalledTimes(1);
   });
 
+  it('leaves the voice when turning away from it while playing, and follows it again back on its page', async () => {
+    // Three pages of 600 by 400; all text on the first (jsdom lays nothing out).
+    const rect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ width: 600, height: 400, left: 0, top: 0 } as DOMRect);
+    const width = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(1800);
+    onTestFinished(() => {
+      rect.mockRestore();
+      width.mockRestore();
+    });
+    const { rerender } = setup();
+    await screen.findByText('Sentence number 1.');
+    const pages = { ...DEFAULT_PREFS, turning: 'pages' as const };
+    rerender({ prefs: pages, playing: true, positionMs: 100 });
+    expect(await screen.findByText('Page 1 of 3')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to the voice' })).toBeInTheDocument();
+    rerender({ prefs: pages, playing: true, positionMs: 300 });
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument(); // stays where the reader is
+
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Back to the voice' })).toBeNull();
+    rerender({ prefs: pages, playing: true, positionMs: 1100 });
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument(); // no snap away
+  });
+
   it('lays the text out as chosen', async () => {
     const { rerender } = setup();
     await screen.findByText('Sentence number 1.');

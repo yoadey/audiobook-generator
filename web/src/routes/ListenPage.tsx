@@ -484,6 +484,13 @@ function Player({
       delete document.documentElement.dataset.paper;
     };
   }, [prefs.paper]);
+  // Turning pages: a sideways swipe is a turn, not the browser's back.
+  useLayoutEffect(() => {
+    document.documentElement.dataset.turning = prefs.turning;
+    return () => {
+      delete document.documentElement.dataset.turning;
+    };
+  }, [prefs.turning]);
 
   if (!current) {
     return <Alert title="Nothing to play">This book has no narrated chapters.</Alert>;

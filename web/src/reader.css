@@ -25,3 +25,10 @@
   --mantine-color-dark-7: #26201a;
   --mantine-color-dark-8: #1e1914;
 }
+
+/* Turning pages (ReaderPrefs.turning): a sideways swipe or wheel turns a
+   page and never navigates back. */
+:root[data-turning='pages'],
+:root[data-turning='pages'] body {
+  overscroll-behavior-x: none;
+}
