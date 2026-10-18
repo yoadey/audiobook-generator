@@ -3,7 +3,7 @@ import { IconDots, IconGitMerge, IconWaveSine } from '@tabler/icons-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMediaQuery } from '@mantine/hooks';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { type Chapter, mergeChapterWithNext, renderChapter, updateChapter } from '../api/client';
 import { formatNumber } from '../lib/format';
@@ -54,8 +54,19 @@ function useChapterMutations(bookId: number) {
   return { toggle, merge, render };
 }
 
-/** Virtualized chapter list: books can have thousands of chapters. */
-export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: Chapter[] }) {
+/**
+ * Virtualized chapter list: books can have thousands of chapters. It opens
+ * at the chapter being listened to (currentId), which is marked.
+ */
+export function ChapterTable({
+  bookId,
+  chapters,
+  currentId,
+}: {
+  bookId: number;
+  chapters: Chapter[];
+  currentId?: number;
+}) {
   const parentRef = useRef<HTMLDivElement>(null);
   const { toggle, merge, render } = useChapterMutations(bookId);
   const compact = useMediaQuery('(max-width: 40em)') ?? false;
@@ -75,6 +86,14 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
     // jsdom (tests) has no layout; render a first screen anyway.
     initialRect: { width: 1000, height: 800 },
   });
+  // Once per chapter listened to (not again while the list is scrolled).
+  const shownFor = useRef<number | undefined>(undefined);
+  const currentIndex = chapters.findIndex((c) => c.id === currentId);
+  useEffect(() => {
+    if (currentIndex < 0 || shownFor.current === currentId) return;
+    shownFor.current = currentId;
+    virtualizer.scrollToIndex(currentIndex, { align: 'center' });
+  }, [currentIndex, currentId, virtualizer]);
 
   return (
     <Box>
@@ -108,6 +127,8 @@ export function ChapterTable({ bookId, chapters }: { bookId: number; chapters: C
               <Box
                 key={c.id}
                 data-testid="chapter-row"
+                aria-current={c.id === currentId ? 'true' : undefined}
+                bg={c.id === currentId ? 'var(--mantine-color-default-hover)' : undefined}
                 px="xs"
                 style={{
                   position: 'absolute',

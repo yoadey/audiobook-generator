@@ -29,7 +29,7 @@ import {
   IconTrash,
   IconWaveSine,
 } from '@tabler/icons-react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
@@ -38,6 +38,8 @@ import {
   chaptersQuery,
   exportUrl,
   deleteBook,
+  progressQuery,
+  progressSaveKey,
   renderBookChapters,
   volumesQuery,
 } from '../api/client';
@@ -102,6 +104,14 @@ export function BookPage() {
   const imported = book.data !== undefined && book.data.status !== 'importing';
   const volumes = useQuery({ ...volumesQuery(bookId), enabled: imported });
   const chapters = useQuery({ ...chaptersQuery(bookId), enabled: imported });
+  // Where listening stopped: the chapter list opens at it. While the player
+  // still stores it (just left), its answer is the stored position.
+  const saving = useIsMutating({ mutationKey: progressSaveKey(bookId) }) > 0;
+  const progress = useQuery({
+    ...progressQuery(bookId),
+    enabled: imported && !saving,
+    refetchOnMount: 'always',
+  });
 
   const [volume, setVolume] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
@@ -302,7 +312,7 @@ export function BookPage() {
               <Loader />
             </Center>
           ) : (
-            <ChapterTable bookId={bookId} chapters={visible} />
+            <ChapterTable bookId={bookId} chapters={visible} currentId={progress.data?.chapterId} />
           )}
         </>
       )}

@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query';
+import { onlineManager, QueryClient } from '@tanstack/react-query';
 import { createMemoryHistory } from '@tanstack/react-router';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -364,6 +364,254 @@ describe('App', () => {
         true,
       ),
     );
+  });
+
+  it('reopens the player at the chapter listened to last', async () => {
+    const two = {
+      items: [
+        chapters[0],
+        { ...chapters[0], id: 12, idx: 2, title: 'Chapter 2', audioStatus: 'none' },
+      ],
+      total: 2,
+    };
+    const routes: Record<string, unknown> = {
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': two,
+      '/api/voices': voices,
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 12, positionMs: 0 },
+    };
+    const fetch = stubApi(routes);
+    renderAt('/books/1/listen');
+    const player = await screen.findByTestId('player');
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+
+    // The chapter list opens at the chapter playing, selected.
+    fireEvent.click(within(player).getByRole('button', { name: 'Chapters' }));
+    const list = await screen.findByRole('dialog', { name: 'Chapters' });
+    const playingEntry = within(list).getByRole('button', { name: /Chapter 1/ });
+    expect(playingEntry).toHaveAttribute('aria-current', 'true');
+    await vi.waitFor(() => expect(playingEntry).toHaveFocus());
+    fireEvent.click(within(list).getByRole('button', { name: /Chapter 2/ }));
+    await vi.waitFor(() => expect(screen.getByText('2 / 2')).toBeInTheDocument());
+    await vi.waitFor(() =>
+      expect(
+        fetch.mock.calls.some(
+          ([r]) =>
+            typeof r !== 'string' && r.method === 'PUT' && r.url.endsWith('/api/books/1/progress'),
+        ),
+      ).toBe(true),
+    );
+    routes['GET /api/books/1/progress'] = { chapterId: 12, positionMs: 0 };
+
+    // To the book and back: the player starts where listening stopped,
+    // and the chapter list on the book page marks that chapter.
+    fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+    const rows = await screen.findAllByTestId('chapter-row');
+    await vi.waitFor(() => expect(rows[1]).toHaveAttribute('aria-current', 'true'));
+    expect(rows[0]).not.toHaveAttribute('aria-current');
+    fireEvent.click(screen.getByRole('link', { name: /listen/i }));
+    await screen.findByTestId('player');
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+  });
+
+  it('stores the position when the player is left while playing', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: chapters, total: 2 },
+      '/api/voices': voices,
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+    });
+    const { container } = renderAt('/books/1/listen');
+    await screen.findByTestId('player');
+    const audio = container.querySelector('audio')!;
+    Object.defineProperty(audio, 'paused', { value: false });
+    Object.defineProperty(audio, 'currentTime', { value: 42, writable: true });
+    fireEvent.timeUpdate(audio);
+
+    fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+    await screen.findAllByTestId('chapter-row');
+    await vi.waitFor(async () => {
+      const puts = fetch.mock.calls
+        .map(([r]) => r)
+        .filter((r): r is Request => typeof r !== 'string' && r.method === 'PUT');
+      const last = puts[puts.length - 1]!;
+      expect(last.keepalive).toBe(true);
+      expect(await last.clone().json()).toMatchObject({ chapterId: 10, positionMs: 42000 });
+    });
+  });
+
+  it('keeps a later chapter when the player is left after pausing', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': {
+        items: [
+          chapters[0],
+          { ...chapters[0], id: 12, idx: 2, title: 'Chapter 2', audioStatus: 'none' },
+        ],
+        total: 2,
+      },
+      '/api/voices': voices,
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 12, positionMs: 0 },
+    });
+    const { container } = renderAt('/books/1/listen');
+    await screen.findByTestId('player');
+    const audio = container.querySelector('audio')!;
+    let paused = false;
+    Object.defineProperty(audio, 'paused', { get: () => paused });
+    Object.defineProperty(audio, 'currentTime', { value: 42, writable: true });
+    fireEvent.timeUpdate(audio);
+    paused = true;
+    fireEvent.pause(audio);
+    fireEvent.click(screen.getByRole('button', { name: 'Next chapter' }));
+    await vi.waitFor(() => expect(container.querySelector('audio')).toBeNull());
+
+    fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+    await screen.findAllByTestId('chapter-row');
+    const puts = async () =>
+      Promise.all(
+        fetch.mock.calls
+          .map(([r]) => r)
+          .filter((r): r is Request => typeof r !== 'string' && r.method === 'PUT')
+          .map((r) => r.clone().json() as Promise<{ chapterId: number }>),
+      );
+    await vi.waitFor(async () => expect((await puts()).at(-1)).toMatchObject({ chapterId: 12 }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await puts()).at(-1)).toMatchObject({ chapterId: 12, positionMs: 0 });
+  });
+
+  // Holds the position saves until a test lets each one through or fails it.
+  function holdSaves(fetch: ReturnType<typeof stubApi>) {
+    const inner = fetch.getMockImplementation()!;
+    const held: { body: unknown; resolve: () => void; reject: (e: Error) => void }[] = [];
+    fetch.mockImplementation(async (input: Request | string) => {
+      if (typeof input === 'string' || input.method !== 'PUT') return inner(input);
+      const body: unknown = await input.clone().json();
+      return new Promise<Response>((resolve, reject) =>
+        held.push({ body, resolve: () => void inner(input).then(resolve), reject }),
+      );
+    });
+    return held;
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+  const playerAt = async (fetch: ReturnType<typeof stubApi>, container: HTMLElement) => {
+    await screen.findByTestId('player');
+    const held = holdSaves(fetch);
+    await settle();
+    held.splice(0).forEach((h) => h.resolve());
+    const audio = container.querySelector('audio')!;
+    const state = { paused: true, t: 100 };
+    Object.defineProperty(audio, 'paused', { get: () => state.paused });
+    Object.defineProperty(audio, 'currentTime', {
+      get: () => state.t,
+      set: (v: number) => (state.t = v),
+    });
+    return { held, audio, state };
+  };
+  const oneChapter = () =>
+    stubApi({
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: [chapters[0]], total: 1 },
+      '/api/voices': voices,
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+    });
+
+  it('does not resend a failed save over a later one', async () => {
+    const fetch = oneChapter();
+    const { container } = renderAt('/books/1/listen');
+    const { held, audio, state } = await playerAt(fetch, container);
+    fireEvent.pause(audio);
+    await settle();
+    expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 100000 }]);
+    state.paused = false;
+    state.t = 200;
+    fireEvent.timeUpdate(audio);
+    state.paused = true;
+    fireEvent.pause(audio);
+    await settle();
+    held.shift()!.reject(new TypeError('network'));
+    await settle();
+    expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 200000 }]);
+    held.shift()!.resolve();
+    await settle();
+
+    fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+    await screen.findAllByTestId('chapter-row');
+    await settle();
+    expect(held).toEqual([]);
+  });
+
+  it('stores the position right away when the tab closes during a save', async () => {
+    const fetch = oneChapter();
+    const { container } = renderAt('/books/1/listen');
+    const { held, audio, state } = await playerAt(fetch, container);
+    fireEvent.pause(audio);
+    await settle();
+    state.paused = false;
+    state.t = 110;
+    fireEvent.timeUpdate(audio);
+    window.dispatchEvent(new Event('pagehide'));
+    await settle();
+    expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 100000 }, { positionMs: 110000 }]);
+  });
+
+  it('opens the player offline while a save waits for the network', async () => {
+    const fetch = oneChapter();
+    const { container } = renderAt('/books/1/listen');
+    const { audio } = await playerAt(fetch, container);
+    onlineManager.setOnline(false);
+    try {
+      fireEvent.pause(audio);
+      fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+      fireEvent.click(await screen.findByRole('link', { name: 'Listen' }));
+      expect(await screen.findByTestId('player')).toBeInTheDocument();
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it('does not send a waiting save after the tab was closed and kept', async () => {
+    const fetch = oneChapter();
+    const { container } = renderAt('/books/1/listen');
+    const { held, audio, state } = await playerAt(fetch, container);
+    fireEvent.pause(audio);
+    await settle();
+    state.t = 105;
+    fireEvent.pause(audio);
+    state.paused = false;
+    state.t = 110;
+    fireEvent.timeUpdate(audio);
+    window.dispatchEvent(new Event('pagehide'));
+    await settle();
+    expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 100000 }, { positionMs: 110000 }]);
+    held.shift()!.resolve();
+    await settle();
+    expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 110000 }]);
+  });
+
+  it('stores the closing position later when its save failed', async () => {
+    const fetch = oneChapter();
+    const { container } = renderAt('/books/1/listen');
+    const { held, audio, state } = await playerAt(fetch, container);
+    fireEvent.pause(audio);
+    await settle();
+    state.paused = false;
+    state.t = 110;
+    fireEvent.timeUpdate(audio);
+    window.dispatchEvent(new Event('pagehide'));
+    await settle();
+    held.pop()!.reject(new TypeError('offline'));
+    await settle();
+    held.shift()!.resolve();
+    await settle();
+    expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 110000 }]);
   });
 
   it('plays ready audio', async () => {

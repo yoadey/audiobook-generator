@@ -26,9 +26,15 @@ import {
   IconRewindBackward15,
   IconRewindForward30,
 } from '@tabler/icons-react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  onlineManager,
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import {
   audioUrl,
@@ -39,6 +45,7 @@ import {
   coverUrl,
   type Progress,
   progressQuery,
+  progressSaveKey,
   renderChapter,
   saveProgress,
   timingsQuery,
@@ -106,16 +113,31 @@ export function ListenPage() {
   const bookId = Number(raw);
   const book = useQuery(bookQuery(bookId));
   const chapters = useQuery(chaptersQuery(bookId));
-  const progress = useQuery(progressQuery(bookId));
+  // Always the stored position (another device, or this one in an earlier
+  // visit, may have moved it), before the player starts from it.
+  // While a save is still on its way, its answer is the stored position.
+  const saving = useIsMutating({ mutationKey: progressSaveKey(bookId) }) > 0;
+  const progress = useQuery({
+    ...progressQuery(bookId),
+    enabled: !saving,
+    refetchOnMount: 'always',
+  });
 
-  if (book.isPending || chapters.isPending || progress.isPending) {
+  // Offline the refresh (or the save it waits for) waits for the network;
+  // the cached position will do.
+  const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline());
+  const refreshing =
+    !progress.isFetchedAfterMount && progress.fetchStatus !== 'paused' && (online || !saving);
+  if (book.isPending || chapters.isPending || progress.isPending || refreshing) {
     return (
       <Center py="xl">
         <Loader />
       </Center>
     );
   }
-  if (book.error || chapters.error || progress.error) {
+  // A failed refresh still has the position from before.
+  const stored = progress.data;
+  if (book.error || chapters.error || !stored) {
     return (
       <Alert color="red" title="Could not load the book">
         {(book.error ?? chapters.error ?? progress.error)?.message}
@@ -126,7 +148,7 @@ export function ListenPage() {
   if (narrated.length === 0) {
     return <Alert title="Nothing to play">This book has no narrated chapters.</Alert>;
   }
-  return <Player book={book.data} narrated={narrated} progress={progress.data} />;
+  return <Player book={book.data} narrated={narrated} progress={stored} />;
 }
 
 function Player({
@@ -172,6 +194,8 @@ function Player({
   const [rate, setRate] = useState(() => stored(RATE_KEY, '1'));
   const [prefs, setPrefs] = useState<ReaderPrefs>(storedPrefs);
   const [chaptersOpen, setChaptersOpen] = useState(false);
+  // The playing chapter's entry in the chapter list (opened at it).
+  const currentEntry = useRef<HTMLButtonElement>(null);
   // The page's first chapter was left: its stored position is outdated.
   const [leftStart, setLeftStart] = useState(false);
   // Where reading stopped (the stored position, then the reader's).
@@ -181,6 +205,11 @@ function Player({
       : null,
   );
   const lastSaved = useRef(0);
+  // Where playback got to since the last save (or a save that failed):
+  // stored when the page is left.
+  const playedAt = useRef<{ chapter: number; ms: number; segment?: number } | null>(null);
+  const saves = useRef(0);
+  const closedAt = useRef(0);
 
   // The render being played (pinned) and when its segments are spoken.
   const version = pinned?.id === current?.id ? pinned?.version : current?.audioVersion;
@@ -222,29 +251,97 @@ function Player({
   }, [playing, wordTimed]);
 
   const { mutate: saveMutate } = useMutation({
+    mutationKey: progressSaveKey(bookId),
+    // One after the other: the server keeps the last one it gets.
+    scope: { id: `progress-${bookId}` },
     mutationFn: ({
       chapterId,
       ms,
       segmentId,
+      keepalive,
+      seq,
     }: {
       chapterId: number;
       ms: number;
       segmentId?: number;
-    }) => saveProgress(bookId, chapterId, ms, segmentId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['books', bookId, 'chapters'] }),
+      keepalive?: boolean;
+      seq: number;
+    }) =>
+      // Still waiting when the tab was closed (and kept for going back):
+      // the position stored then is newer.
+      seq <= closedAt.current
+        ? Promise.resolve(undefined)
+        : saveProgress(bookId, chapterId, ms, segmentId, keepalive),
+    onSuccess: (stored) => {
+      // An earlier save must not undo the position of a later one.
+      if (stored && queryClient.isMutating({ mutationKey: progressSaveKey(bookId) }) === 1) {
+        queryClient.setQueryData(progressQuery(bookId).queryKey, stored);
+      }
+      return queryClient.invalidateQueries({ queryKey: ['books', bookId, 'chapters'] });
+    },
+    onError: (_err, { chapterId, ms, segmentId, seq }) => {
+      // The latest one is stored again when the page is left, unless
+      // playback moved on.
+      if (seq === saves.current)
+        playedAt.current ??= { chapter: chapterId, ms, segment: segmentId };
+      return queryClient.invalidateQueries({ queryKey: progressQuery(bookId).queryKey });
+    },
   });
   // Stores the position; the segment comes from the timings of the chapter
   // playing, or is given (reading without audio).
+  // Leaving the page stores with keepalive; closing it stores right away,
+  // as a save waiting for an earlier one would never be sent.
   const persist = useCallback(
-    (chapterId: number, ms: number, segmentId?: number) => {
+    (chapterId: number, ms: number, segmentId?: number, leaving?: 'page' | 'tab') => {
       lastSaved.current = Date.now();
+      playedAt.current = null;
+      saves.current++;
       const seg =
         segmentId ??
         (chapterId === currentId && cuesRef.current ? segmentAt(cuesRef.current, ms) : undefined);
-      saveMutate({ chapterId, ms, segmentId: seg });
+      // The page starts from the cache when it is opened again.
+      queryClient.setQueryData(progressQuery(bookId).queryKey, (old) => ({
+        ...old,
+        chapterId,
+        positionMs: Math.max(0, Math.round(ms)),
+        segmentId: seg,
+      }));
+      if (leaving === 'tab') {
+        closedAt.current = saves.current;
+        // Failed (offline), and the page was kept: stored once it is back.
+        void saveProgress(bookId, chapterId, ms, seg, true).catch(() =>
+          saveMutate({ chapterId, ms, segmentId: seg, seq: ++saves.current }),
+        );
+      } else {
+        saveMutate({ chapterId, ms, segmentId: seg, keepalive: !!leaving, seq: saves.current });
+      }
     },
-    [saveMutate, currentId],
+    [saveMutate, currentId, queryClient, bookId],
   );
+  const persistRef = useRef(persist);
+  const currentRef = useRef(currentId);
+  useEffect(() => {
+    persistRef.current = persist;
+    currentRef.current = currentId;
+  }, [persist, currentId]);
+
+  // Leaving the page (or closing it) while listening stores where it was;
+  // the player's own saves come only every few seconds.
+  useEffect(() => {
+    const flush = (leaving: 'page' | 'tab') => {
+      const p = playedAt.current;
+      // A chapter left behind was stored when it was left.
+      if (p && p.chapter === currentRef.current) {
+        persistRef.current(p.chapter, p.ms, p.segment, leaving);
+      }
+    };
+    const hide = () => flush('tab');
+    window.addEventListener('pagehide', hide);
+    return () => {
+      window.removeEventListener('pagehide', hide);
+      flush('page');
+    };
+  }, []);
 
   const render = useMutation({
     mutationFn: (id: number) => renderChapter(id),
@@ -456,6 +553,7 @@ function Player({
           onTimeUpdate={(e) => {
             const ms = e.currentTarget.currentTime * 1000;
             setPosition(ms);
+            if (!e.currentTarget.paused) playedAt.current = { chapter: current.id, ms };
             if (Date.now() - lastSaved.current > SAVE_EVERY_MS) persist(current.id, ms);
           }}
           onPlay={() => {
@@ -662,6 +760,7 @@ function Player({
         position="right"
         title="Chapters"
         size="sm"
+        onEnterTransitionEnd={() => currentEntry.current?.scrollIntoView({ block: 'center' })}
       >
         <Stack gap={0}>
           {narrated.map((c, i) => (
@@ -669,13 +768,17 @@ function Player({
               key={c.id}
               onClick={() => {
                 setChaptersOpen(false);
-                goTo(c, playing);
+                // The playing chapter goes on where it is.
+                if (c.id !== current.id) goTo(c, playing);
               }}
               px="xs"
               py={8}
               bg={c.id === current.id ? 'var(--mantine-color-default-hover)' : undefined}
               style={{ borderRadius: 'var(--mantine-radius-sm)' }}
               aria-current={c.id === current.id ? 'true' : undefined}
+              // Selected when the list opens.
+              ref={c.id === current.id ? currentEntry : undefined}
+              data-autofocus={c.id === current.id ? true : undefined}
             >
               <Group justify="space-between" wrap="nowrap" gap="xs">
                 <Text size="sm" fw={c.id === current.id ? 600 : 400} truncate>

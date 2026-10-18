@@ -199,6 +199,8 @@ export const progressQuery = (bookId: number) =>
     queryFn: () => unwrap(api.GET('/books/{bookId}/progress', { params: { path: { bookId } } })),
     staleTime: Infinity,
   });
+/** Saves of the listening position: reads wait for them to land. */
+export const progressSaveKey = (bookId: number) => ['books', bookId, 'progress', 'save'];
 
 /** When each segment is spoken in a render (version: its audioVersion). */
 export const timingsQuery = (chapterId: number, version?: string) =>
@@ -391,16 +393,19 @@ export const renderBookChapters = (bookId: number, count: number, fromChapterId?
     }),
   );
 
+/** Stores the listening position; keepalive lets it outlive the page. */
 export const saveProgress = (
   bookId: number,
   chapterId: number,
   positionMs: number,
   segmentId?: number,
+  keepalive = false,
 ) =>
   unwrap(
     api.PUT('/books/{bookId}/progress', {
       params: { path: { bookId } },
       body: { chapterId, positionMs: Math.max(0, Math.round(positionMs)), segmentId },
+      keepalive,
     }),
   );
 
