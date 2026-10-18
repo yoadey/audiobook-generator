@@ -53,5 +53,5 @@
       "items": { "type": "integer" }
     }
   },
-  "required": ["moods", "pauses", "spoken", "pronunciations", "flows"]
+  "required": ["moods", "pauses", "spoken", "pronunciations"]
 }

@@ -389,7 +389,8 @@ A book can also do without **character voices** (`characterVoices`, on by
 default): the narrator then reads every quotation like narration (no
 speaker, no emotion of its own), renders wait for no speaker attribution,
 and an engine reads a dialogue paragraph in one go. Turning it on or off
-outdates the book's audio.
+outdates the book's audio; while it is off, speakers and character voices
+changing (analysis, casting, voice edits) outdate nothing.
 
 ### 3.7 Rendering and assembly
 

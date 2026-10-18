@@ -64,9 +64,12 @@ func TestCharacterAnalysisAndEditing(t *testing.T) {
 		assert.Equal(t, "character_analysis@v1", an.Prompt)
 
 		require.Equal(t, http.StatusAccepted, c.json(http.MethodPost, "/api/books/"+id+"/analysis", nil, &an))
+		// Until its job has finished too (it starts the casting after the
+		// status reads done): corrections are refused while it runs.
 		require.Eventually(t, func() bool {
+			an = api.Analysis{} // a job that is gone is left out of the answer
 			require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/books/"+id+"/analysis", nil, &an))
-			return an.Status == api.AnalysisStatusDone || an.Status == api.AnalysisStatusFailed
+			return (an.Status == api.AnalysisStatusDone || an.Status == api.AnalysisStatusFailed) && an.Job == nil
 		}, 10*time.Second, 20*time.Millisecond)
 		require.Equal(t, api.AnalysisStatusDone, an.Status, an.Error)
 		assert.Equal(t, 1, an.BatchesDone)

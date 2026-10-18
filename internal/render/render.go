@@ -323,12 +323,17 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			if i := strings.Index(s.Text, text); i > 0 {
 				lead = utf8.RuneCountInString(s.Text[:i])
 			}
-			// Speech the narrator reads without an emotion of its own (no
-			// character voices, an unknown speaker) is read like the
-			// narration around it.
+			// Speech in the narrator's voice without an emotion of its own
+			// (no character voices, an unknown speaker, a character cast
+			// with the narrator's voice) is read like the narration around
+			// it; a thought stays softer.
 			byNarrator := s.QuoteRef == 0 || voice == narrator && (s.Emotion == "" || s.Emotion == "neutral")
 			if m, ok := moods[mood]; ok && byNarrator {
 				pr = m // narration in the paragraph's mood
+				if s.Kind == store.SegmentThought {
+					pr.speed *= thoughtProsody.speed
+					pr.gain *= thoughtProsody.gain
+				}
 			}
 			if engines != nil && engines.Expressive(voice) {
 				// The engine acts itself; only loudness is ours.
@@ -379,7 +384,10 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			gapLast(gapHeading)
 		}
 	}
-	for _, p := range paras {
+	// spoken: the index of the last paragraph that was spoken (a flowing
+	// paragraph reads on only from the paragraph right before it).
+	spoken := -1
+	for pi, p := range paras {
 		switch p.Kind {
 		case store.ParagraphSceneBreak:
 			gapLast(gapScene)
@@ -393,9 +401,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			}
 			gapLast(gapHeading)
 		default:
-			if p.Flows && len(items) > 0 {
-				items[len(items)-1].flows = true
-			}
+			start := len(items)
 			// A paragraph of only speech: an exchange of lines.
 			dialogue := len(byPara[p.ID]) > 0
 			for _, s := range byPara[p.ID] {
@@ -409,6 +415,12 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 					voice, speed := voiceOf(s)
 					say(s, t, voice, speed, dialogue, p.Mood)
 				}
+			}
+			if len(items) > start {
+				if p.Flows && start > 0 && spoken == pi-1 {
+					items[start-1].flows = true
+				}
+				spoken = pi
 			}
 			gapLast(gapPara)
 		}
