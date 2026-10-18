@@ -99,6 +99,30 @@ func cues(items []item, pieceBytes []int64, words [][]tts.Word, textOf func(int6
 	at := leadIn
 	for i, it := range items {
 		d := pcmDuration(pieceBytes[i])
+		if it.parts != nil {
+			// Joined segments (no word timings): by their length.
+			flush()
+			total := 0
+			for _, p := range it.parts {
+				total += p.runes
+			}
+			from := at
+			for j, p := range it.parts {
+				to := from + time.Duration(float64(d)*float64(p.runes)/float64(max(total, 1)))
+				if j == len(it.parts)-1 {
+					to = at + d
+				}
+				// The first part may go on with a phrase of the item before.
+				if n := len(out); n > 0 && out[n-1].SegmentID == p.segmentID && (j > 0 || i > 0 && items[i-1].gap == gapPhrase) {
+					out[n-1].EndMs = to.Milliseconds()
+				} else {
+					out = append(out, Cue{SegmentID: p.segmentID, StartMs: from.Milliseconds(), EndMs: to.Milliseconds()})
+				}
+				from = to
+			}
+			at += d + it.pause
+			continue
+		}
 		// The phrases of a segment are one cue.
 		if n := len(out); n > 0 && out[n-1].SegmentID == it.segmentID && items[i-1].gap == gapPhrase {
 			out[n-1].EndMs = (at + d).Milliseconds()

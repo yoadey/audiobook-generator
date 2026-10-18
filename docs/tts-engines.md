@@ -51,8 +51,18 @@ instead of it.
   mood and whether it is a thought, and the render does not change its
   pace for them (it still makes whispers softer and shouts louder). An
   engine that does not take a speed is left at its own pace.
+- Each request to an engine is as long as the text allows: the pieces of
+  a paragraph that one voice speaks in one style (its sentences, a
+  dialogue tag between them before the speakers are known) go out
+  together, up to the engine's `maxChars`, so the engine reads them in
+  one flow instead of piece by piece. A pause that means something (after
+  a thought, a line trailing off, one the chapter preparation asks for),
+  another voice and every paragraph end still start a new request.
+  Chatterbox-TTS-Server splits text longer than 450 characters (about
+  30 s of speech) by sentences itself.
 - Engines report no word timings: the reader marks their lines by
-  sentence, the podcast transcript times them by segment.
+  sentence, the podcast transcript times them by segment (joined
+  segments by their length).
 - A Chatterbox engine that spoke nothing for `ABG_TTS_UNLOAD_IDLE`
   (chart `tts.unloadIdle`, default 10 minutes) has its model unloaded
   (`POST /api/unload`; Nano on CPU frees about 1.7 of 2.9 GiB). The next
@@ -92,6 +102,7 @@ and `tts.chatterbox`):
 | `gain` | Loudness factor (default 1; never clips) |
 | `speed` | Whether it takes a voice's speed (default: `openai` yes, `chatterbox` no) |
 | `voices` | Voices to offer in addition to those the server lists |
+| `maxChars` | Longest text sent in one request; the pieces of a paragraph in one voice are joined up to it (default: `chatterbox` 1000, `openai` 400) |
 | `defaultVoice` | Narrator when a book switches to this engine (default: Chatterbox `Emily.wav`, else the first of `voices`) |
 
 Voices are listed from the server: Chatterbox-TTS-Server's predefined

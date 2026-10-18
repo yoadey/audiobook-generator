@@ -3,6 +3,7 @@ package render
 import (
 	"encoding/binary"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +115,83 @@ func (e engines) Fingerprint(v string) string {
 		return string(e)
 	}
 	return ""
+}
+func (engines) JoinLimit(v string) int {
+	if v[:3] == "cb:" {
+		return 120
+	}
+	return 0
+}
+
+func TestJoin(t *testing.T) {
+	ps, ss := chapter(
+		// One voice: the whole paragraph in one request.
+		[]string{"q:“Are you open?”", "n:she asked.", "q:“I’ve been walking since dawn.”"},
+		// Two voices: each voice's run of pieces.
+		[]string{"q:“We’re open,”", "n:Erin said.", "n:She smiled."},
+		// A thought keeps its pause; a long paragraph splits at the limit.
+		[]string{"n:Rain fell.", "t:Not again,", "n:she thought."},
+		[]string{"n:" + strings.Repeat("Word ", 15) + "end.", "n:" + strings.Repeat("Word ", 15) + "end.",
+			"n:Last."},
+	)
+	ch := &store.Chapter{Title: "One"}
+	voiceOf := func(s *store.Segment) (string, float64) {
+		if s != nil && s.ParagraphID == 2 && s.QuoteRef > 0 {
+			return "cb:erin.wav", 1
+		}
+		return "cb:emily.wav", 1
+	}
+	items := plan(ch, ps, ss, voiceOf, lexicon.Compile(nil), engines("v1"))
+	var texts []string
+	for _, it := range items {
+		texts = append(texts, it.text)
+	}
+	assert.Equal(t, []string{
+		"One",
+		"Are you open? she asked. I’ve been walking since dawn.",
+		"We’re open,", "Erin said. She smiled.",
+		"Rain fell.", "Not again,", "she thought.",
+		strings.Repeat("Word ", 15) + "end.", strings.Repeat("Word ", 15) + "end. Last.",
+	}, texts)
+	assert.Equal(t, []part{{1, 13}, {2, 10}, {3, 29}}, items[1].parts)
+	assert.Equal(t, betweenParas, items[1].pause, "the paragraph's pause after it")
+	assert.Nil(t, items[2].parts)
+
+	// Kokoro's pieces are never joined.
+	kokoro := plan(ch, ps, ss, func(*store.Segment) (string, float64) { return "af_heart", 1 },
+		lexicon.Compile(nil), engines("v1"))
+	assert.Len(t, kokoro, len(ss)+1)
+
+	// Cues: one per segment, the joined item's time split by length.
+	bytes := make([]int64, len(items))
+	for i := range bytes {
+		bytes[i] = 2 * 24000 // one second each
+	}
+	cs := cues(items, bytes, nil, func(int64) string { return "" })
+	require.Len(t, cs, len(ss)+1)
+	assert.Equal(t, []int64{1, 2, 3}, []int64{cs[1].SegmentID, cs[2].SegmentID, cs[3].SegmentID})
+	assert.Equal(t, cs[1].EndMs, cs[2].StartMs)
+	assert.Equal(t, cs[2].EndMs, cs[3].StartMs)
+	assert.Equal(t, cs[1].StartMs+1000, cs[3].EndMs)
+	assert.InDelta(t, 1000*13/52, cs[1].EndMs-cs[1].StartMs, 1)
+	assert.InDelta(t, 1000*10/52, cs[2].EndMs-cs[2].StartMs, 1)
+	for i, c := range cs {
+		assert.Less(t, c.StartMs, c.EndMs, "cue %d", i)
+		if i > 0 {
+			assert.LessOrEqual(t, cs[i-1].EndMs, c.StartMs, "cue %d", i)
+		}
+	}
+
+	// A segment split at an ellipsis, its last phrase joined to the next
+	// segment: still one cue per segment.
+	ps, ss = chapter([]string{"n:I just… I don’t know.", "n:Then rain."})
+	items = plan(ch, ps, ss, voiceOf, lexicon.Compile(nil), engines("v1"))
+	require.Len(t, items, 3)
+	assert.Equal(t, "I don’t know. Then rain.", items[2].text)
+	cs = cues(items, bytes[:3], nil, func(int64) string { return "" })
+	require.Len(t, cs, 3)
+	assert.Equal(t, []int64{0, 1, 2}, []int64{cs[0].SegmentID, cs[1].SegmentID, cs[2].SegmentID})
+	assert.Equal(t, cs[1].EndMs, cs[2].StartMs)
 }
 
 func TestExpressiveEngine(t *testing.T) {

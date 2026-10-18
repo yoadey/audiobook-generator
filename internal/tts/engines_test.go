@@ -74,6 +74,7 @@ func TestEngineConfig(t *testing.T) {
 	assert.Equal(t, 1, es[0].Concurrency)
 	assert.Equal(t, Duration(90*time.Second), es[0].Timeout)
 	assert.False(t, *es[0].Speed, "Chatterbox paces itself")
+	assert.Equal(t, 1000, es[0].MaxChars)
 
 	for _, v := range []string{VariantTurbo, VariantNano} {
 		c := EngineConfig{Name: "x", Kind: KindChatterbox, URL: "http://x", Variant: v}
@@ -88,6 +89,7 @@ func TestEngineConfig(t *testing.T) {
 		"variant": {Name: "x", Kind: KindChatterbox, URL: "http://x", Variant: "flash"},
 		"voice":   {Name: "x", Kind: KindOpenAI, URL: "http://x", Voices: []string{"a b"}},
 		"kokoro":  {Name: "kokoro", Kind: KindOpenAI, URL: "http://x"},
+		"chars":   {Name: "x", Kind: KindOpenAI, URL: "http://x", MaxChars: -1},
 	} {
 		assert.Error(t, c.Validate(), name)
 	}
@@ -206,6 +208,9 @@ func TestRouterTurboAndOpenAI(t *testing.T) {
 	})
 	require.NoError(t, err)
 	ctx := context.Background()
+	assert.Equal(t, 1000, r.JoinLimit("turbo:Emily.wav"), "Chatterbox splits long text itself")
+	assert.Equal(t, 400, r.JoinLimit("orpheus:tara"))
+	assert.Zero(t, r.JoinLimit("af_heart"), "Kokoro's pieces are never joined")
 	assert.False(t, r.Expressive("turbo:Emily.wav"), "Turbo ignores exaggeration")
 	_, err = r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "turbo:Emily.wav", Emotion: "angry"})
 	require.NoError(t, err)

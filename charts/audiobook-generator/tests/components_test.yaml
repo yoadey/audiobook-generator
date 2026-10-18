@@ -246,7 +246,7 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: ABG_TTS_ENGINES
-            value: '[{"kind":"openai","name":"orpheus","url":"http://orpheus:5005"},{"concurrency":1,"gain":1,"kind":"chatterbox","name":"chatterbox","timeout":"10m","url":"http://abg-audiobook-generator-chatterbox:8004","variant":"original"}]'
+            value: '[{"kind":"openai","name":"orpheus","url":"http://orpheus:5005"},{"concurrency":1,"gain":1,"kind":"chatterbox","maxChars":1000,"name":"chatterbox","timeout":"10m","url":"http://abg-audiobook-generator-chatterbox:8004","variant":"original"}]'
 
   - it: renders a CNPG cluster only in cnpg mode
     template: templates/cnpg-cluster.yaml
