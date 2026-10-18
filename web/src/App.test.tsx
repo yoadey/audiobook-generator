@@ -444,6 +444,47 @@ describe('App', () => {
     });
   });
 
+  it('keeps a later chapter when the player is left after pausing', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': {
+        items: [
+          chapters[0],
+          { ...chapters[0], id: 12, idx: 2, title: 'Chapter 2', audioStatus: 'none' },
+        ],
+        total: 2,
+      },
+      '/api/voices': voices,
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 12, positionMs: 0 },
+    });
+    const { container } = renderAt('/books/1/listen');
+    await screen.findByTestId('player');
+    const audio = container.querySelector('audio')!;
+    let paused = false;
+    Object.defineProperty(audio, 'paused', { get: () => paused });
+    Object.defineProperty(audio, 'currentTime', { value: 42, writable: true });
+    fireEvent.timeUpdate(audio);
+    paused = true;
+    fireEvent.pause(audio);
+    fireEvent.click(screen.getByRole('button', { name: 'Next chapter' }));
+    await vi.waitFor(() => expect(container.querySelector('audio')).toBeNull());
+
+    fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+    await screen.findAllByTestId('chapter-row');
+    const puts = async () =>
+      Promise.all(
+        fetch.mock.calls
+          .map(([r]) => r)
+          .filter((r): r is Request => typeof r !== 'string' && r.method === 'PUT')
+          .map((r) => r.clone().json() as Promise<{ chapterId: number }>),
+      );
+    await vi.waitFor(async () => expect((await puts()).at(-1)).toMatchObject({ chapterId: 12 }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await puts()).at(-1)).toMatchObject({ chapterId: 12, positionMs: 0 });
+  });
+
   it('plays ready audio', async () => {
     stubApi({
       '/api/books/1': book,

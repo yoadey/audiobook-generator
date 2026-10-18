@@ -199,6 +199,8 @@ export const progressQuery = (bookId: number) =>
     queryFn: () => unwrap(api.GET('/books/{bookId}/progress', { params: { path: { bookId } } })),
     staleTime: Infinity,
   });
+/** Saves of the listening position: reads wait for them to land. */
+export const progressSaveKey = (bookId: number) => ['books', bookId, 'progress', 'save'];
 
 /** When each segment is spoken in a render (version: its audioVersion). */
 export const timingsQuery = (chapterId: number, version?: string) =>

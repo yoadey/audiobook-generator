@@ -29,7 +29,7 @@ import {
   IconTrash,
   IconWaveSine,
 } from '@tabler/icons-react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
@@ -39,6 +39,7 @@ import {
   exportUrl,
   deleteBook,
   progressQuery,
+  progressSaveKey,
   renderBookChapters,
   volumesQuery,
 } from '../api/client';
@@ -103,10 +104,12 @@ export function BookPage() {
   const imported = book.data !== undefined && book.data.status !== 'importing';
   const volumes = useQuery({ ...volumesQuery(bookId), enabled: imported });
   const chapters = useQuery({ ...chaptersQuery(bookId), enabled: imported });
-  // Where listening stopped: the chapter list opens at it.
+  // Where listening stopped: the chapter list opens at it. While the player
+  // still stores it (just left), its answer is the stored position.
+  const saving = useIsMutating({ mutationKey: progressSaveKey(bookId) }) > 0;
   const progress = useQuery({
     ...progressQuery(bookId),
-    enabled: imported,
+    enabled: imported && !saving,
     refetchOnMount: 'always',
   });
 
