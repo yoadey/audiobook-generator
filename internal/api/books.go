@@ -30,6 +30,7 @@ func (s *Server) toBook(b *store.Book) Book {
 		Id:              b.ID,
 		Title:           b.Title,
 		Author:          b.Author,
+		Description:     nonEmpty(deref(b.Description)),
 		Language:        b.Language,
 		Status:          BookStatus(b.Status),
 		Progress:        float32(b.Progress),

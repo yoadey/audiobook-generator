@@ -81,6 +81,41 @@ func OpenEPUB(p string) (*epub.Book, *os.File, error) {
 	return b, f, nil
 }
 
+// Description is a book description as stored: valid text of a bounded
+// length (a whole book's worth can hide in the metadata).
+func Description(d string) string {
+	const limit = 5000
+	if r := []rune(d); len(r) > limit {
+		d = string(r[:limit])
+	}
+	return store.CleanText(d)
+}
+
+// FillDescriptions reads the description of the books imported before it
+// was kept from their EPUB (none when the file is gone).
+func (im *Importer) FillDescriptions(ctx context.Context) error {
+	books, err := im.Store.BooksWithoutDescription(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range books {
+		desc := ""
+		if books[i].EpubPath != "" {
+			b, f, err := OpenEPUB(filepath.Join(im.DataDir, books[i].EpubPath))
+			if err != nil {
+				im.Log.Warn("read the book's description", "book", books[i].ID, "err", err)
+			} else {
+				desc = Description(b.Description)
+				_ = f.Close()
+			}
+		}
+		if err := im.Store.UpdateBook(ctx, books[i].ID, map[string]any{"Description": desc}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Import (re-)imports a book from scratch. It is idempotent, so a failed
 // attempt can simply be retried.
 func (im *Importer) Import(ctx context.Context, bookID int64, progress func(float64)) error {
@@ -146,6 +181,7 @@ func (im *Importer) Import(ctx context.Context, bookID int64, progress func(floa
 		"Progress":       1.0,
 		"Error":          "",
 		"Language":       b.Language,
+		"Description":    Description(b.Description),
 		"QuoteStyle":     style.String(),
 		"ChapterCount":   w.chapters,
 		"WordCount":      w.words,

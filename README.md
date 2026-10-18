@@ -92,7 +92,14 @@ URLs carry a token instead, so treat them like passwords.
 
 ### Reading along, podcast feeds, downloads, backup
 
-- **Reading along**: the listen page is a reader with a small player bar
+- **Library first**: a book's page is for reading: cover, description
+  (from the EPUB), the contents by volume (each chapter opens the reader
+  there; the one being read is marked) and *Read* / *Continue reading*.
+  Everything that makes the audiobook (characters, casting, narrator,
+  rendering, downloads, the podcast feed, pronunciations and the chapters
+  as they are narrated) is behind *Audiobook*; *Export* and *Delete* are
+  in the book's *⋯* menu.
+- **Reading along**: the reader has a small player bar
   at the bottom. It marks the sentence and the word being spoken (word
   times come from Kokoro-FastAPI; other TTS servers give sentences only)
   and follows the voice
@@ -132,8 +139,8 @@ URLs carry a token instead, so treat them like passwords.
 - **Speech engines**: Kokoro, Chatterbox (which acts emotions itself) and
   other OpenAI-compatible servers, beside each other or instead of Kokoro
   (`tts.kokoro.enabled: false` with `tts.chatterbox.enabled: true`). Each
-  book speaks with the engine of its narrator, chosen on the book page
-  (*Narrator*: engine and voice); its characters are cast from that
+  book speaks with the engine of its narrator, chosen on the audiobook
+  page (*Narrator*: engine and voice); its characters are cast from that
   engine's voices, and single characters can still be given a voice of
   another engine (voice editor). *Voices* lists and previews every
   engine's voices, *System* shows whether each is reachable. Chatterbox
@@ -145,7 +152,7 @@ URLs carry a token instead, so treat them like passwords.
   character's voice. It runs on CPU (minutes per voice) and only while
   designing: the app scales its Deployment up for a design and back to
   zero when idle. See [docs/tts-engines.md](docs/tts-engines.md).
-- **Podcast**: the book page shows a feed URL (button *Podcast*) that any
+- **Podcast**: the audiobook page shows a feed URL (button *Podcast*) that any
   podcast app can subscribe to; rendered chapters are its episodes, each
   with a WebVTT transcript (`podcast:transcript`) that apps such as Apple
   Podcasts, Pocket Casts or AntennaPod show along the audio. Chapters
@@ -160,7 +167,7 @@ URLs carry a token instead, so treat them like passwords.
   Secret with `access-key-id`/`secret-access-key`) keeps the database in
   S3 (Kubernetes 1.29+). Audio is not backed up: after a restore onto a
   new volume the app notices the missing files and renders them again.
-- **Export/import**: *Export* on the book page downloads a zip with the
+- **Export/import**: *Export* in the book page's *⋯* menu downloads a zip with the
   book, its characters, voices, speakers, chapter edits and pronunciations
   (no audio); *Import export* in the library restores it as a new book,
   also on another instance or database.

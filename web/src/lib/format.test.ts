@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatCompact, formatListeningTime, formatNumber, formatUntil } from './format';
+import {
+  formatCompact,
+  formatListeningTime,
+  formatNumber,
+  formatReadingTime,
+  formatUntil,
+} from './format';
 
 describe('format', () => {
   it('formats numbers', () => {
@@ -12,6 +18,7 @@ describe('format', () => {
     expect(formatListeningTime(155 * 120)).toBe('2 h');
     expect(formatListeningTime(155 * 125)).toBe('2 h 5 min');
     expect(formatListeningTime(5_000_000)).toBe('537 h 38 min');
+    expect(formatReadingTime(250 * 90)).toBe('1 h 30 min');
   });
   it('formats time until a moment', () => {
     const now = Date.parse('2026-10-15T12:00:00Z');

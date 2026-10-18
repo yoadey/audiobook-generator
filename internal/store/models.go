@@ -20,7 +20,10 @@ type Book struct {
 	Title    string `gorm:"not null"`
 	Author   string `gorm:"not null;default:''"`
 	Language string `gorm:"not null;default:''"`
-	Status   BookStatus
+	// Description is the EPUB's blurb as plain text; nil until it is read
+	// (books imported before it was kept get it from their EPUB).
+	Description *string
+	Status      BookStatus
 	// Paths are relative to the data directory.
 	EpubPath       string `gorm:"not null;default:''"`
 	CoverPath      string `gorm:"not null;default:''"`

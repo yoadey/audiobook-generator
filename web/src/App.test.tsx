@@ -271,12 +271,59 @@ describe('App', () => {
     renderAt('/library');
     expect(await screen.findByText('Pride and Prejudice')).toBeInTheDocument();
     expect(screen.getAllByText('Jane Austen')).toHaveLength(3);
-    expect(screen.getByText(/2 chapters · 122,000 words · ~13 h 7 min/)).toBeInTheDocument();
+    expect(screen.getByText('2 chapters · ~8 h 8 min to read')).toBeInTheDocument();
     expect(screen.getByText('not a valid EPUB')).toBeInTheDocument();
     expect(screen.getByText('importing')).toBeInTheDocument();
   });
 
-  it('shows a book with its chapters', async () => {
+  it('shows a book to read: description and contents', async () => {
+    stubApi({
+      '/api/books/1': { ...book, description: 'A novel of manners.\n\nSecond paragraph.' },
+      '/api/books/1/volumes': [
+        { id: 5, idx: 0, title: 'Volume One', chapterCount: 2, wordCount: 1240 },
+      ],
+      '/api/books/1/chapters': {
+        items: [...chapters, { ...chapters[0], id: 12, idx: 2, title: 'Chapter 2' }],
+        total: 3,
+      },
+      'GET /api/books/1/progress': { chapterId: 12, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 12, positionMs: 0 },
+    });
+    renderAt('/books/1');
+    expect(await screen.findByRole('heading', { name: 'Pride and Prejudice' })).toBeInTheDocument();
+    expect(screen.getByText(/A novel of manners\./)).toBeInTheDocument();
+    // No audiobook controls here: they are a page of their own.
+    expect(screen.queryByText('Narrator')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /render/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Audiobook' })).toHaveAttribute(
+      'href',
+      '/books/1/audiobook',
+    );
+
+    // The contents: the chapters to read (not the excluded ones), by volume.
+    const contents = await screen.findByRole('navigation', { name: 'Contents' });
+    expect(within(contents).getByText('Volume One')).toBeInTheDocument();
+    expect(within(contents).queryByText('Copyright')).not.toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(within(contents).getByRole('button', { name: /Chapter 2/ })).toHaveAttribute(
+        'aria-current',
+        'true',
+      ),
+    );
+    expect(screen.getByText('2 chapters · ~10 min to read')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Continue reading' })).toHaveAttribute(
+      'href',
+      '/books/1/listen',
+    );
+
+    // A chapter opens the reader at its start.
+    fireEvent.click(within(contents).getByRole('button', { name: /Chapter 1/ }));
+    const player = await screen.findByTestId('player');
+    expect(within(player).getByText('Chapter 1')).toBeInTheDocument();
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+  });
+
+  it('shows the audiobook of a book with its chapters', async () => {
     stubApi({
       '/api/voices': [
         { id: 'af_heart', language: 'en-US', gender: 'female', grade: 'A' },
@@ -288,8 +335,8 @@ describe('App', () => {
       ],
       '/api/books/1/chapters': { items: chapters, total: 2 },
     });
-    renderAt('/books/1');
-    expect(await screen.findByRole('heading', { name: 'Pride and Prejudice' })).toBeInTheDocument();
+    renderAt('/books/1/audiobook');
+    expect(await screen.findByRole('heading', { name: 'Audiobook' })).toBeInTheDocument();
     const rows = await screen.findAllByTestId('chapter-row');
     expect(rows).toHaveLength(2);
     expect(within(rows[0]!).getByText('Chapter 1')).toBeInTheDocument();
@@ -317,7 +364,7 @@ describe('App', () => {
         '/api/books/1/volumes': [],
         '/api/books/1/chapters': { items: chapters, total: 2 },
       });
-      renderAt('/books/1');
+      renderAt('/books/1/audiobook');
       const rows = await screen.findAllByTestId('chapter-row');
       // Title, audio, narrate and actions; no counts that widen the page.
       expect(within(rows[0]!).getByText('Chapter 1')).toBeInTheDocument();
@@ -406,12 +453,19 @@ describe('App', () => {
     routes['GET /api/books/1/progress'] = { chapterId: 12, positionMs: 0 };
 
     // To the book and back: the player starts where listening stopped,
-    // and the chapter list on the book page marks that chapter.
+    // and the contents on the book page mark that chapter.
     fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
-    const rows = await screen.findAllByTestId('chapter-row');
-    await vi.waitFor(() => expect(rows[1]).toHaveAttribute('aria-current', 'true'));
-    expect(rows[0]).not.toHaveAttribute('aria-current');
-    fireEvent.click(screen.getByRole('link', { name: /listen/i }));
+    const contents = await screen.findByRole('navigation', { name: 'Contents' });
+    await vi.waitFor(() =>
+      expect(within(contents).getByRole('button', { name: /Chapter 2/ })).toHaveAttribute(
+        'aria-current',
+        'true',
+      ),
+    );
+    expect(within(contents).getByRole('button', { name: /Chapter 1/ })).not.toHaveAttribute(
+      'aria-current',
+    );
+    fireEvent.click(screen.getByRole('link', { name: 'Continue reading' }));
     await screen.findByTestId('player');
     expect(screen.getByText('2 / 2')).toBeInTheDocument();
   });
@@ -433,7 +487,7 @@ describe('App', () => {
     fireEvent.timeUpdate(audio);
 
     fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
-    await screen.findAllByTestId('chapter-row');
+    await screen.findByRole('navigation', { name: 'Contents' });
     await vi.waitFor(async () => {
       const puts = fetch.mock.calls
         .map(([r]) => r)
@@ -472,7 +526,7 @@ describe('App', () => {
     await vi.waitFor(() => expect(container.querySelector('audio')).toBeNull());
 
     fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
-    await screen.findAllByTestId('chapter-row');
+    await screen.findByRole('navigation', { name: 'Contents' });
     const puts = async () =>
       Promise.all(
         fetch.mock.calls
@@ -543,7 +597,7 @@ describe('App', () => {
     await settle();
 
     fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
-    await screen.findAllByTestId('chapter-row');
+    await screen.findByRole('navigation', { name: 'Contents' });
     await settle();
     expect(held).toEqual([]);
   });
@@ -570,7 +624,7 @@ describe('App', () => {
     try {
       fireEvent.pause(audio);
       fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
-      fireEvent.click(await screen.findByRole('link', { name: 'Listen' }));
+      fireEvent.click(await screen.findByRole('link', { name: /^(Read|Continue reading)$/ }));
       expect(await screen.findByTestId('player')).toBeInTheDocument();
     } finally {
       onlineManager.setOnline(true);
@@ -931,7 +985,7 @@ describe('App', () => {
       '/api/voices': voices,
       'PATCH /api/books/1': { ...book, characterVoices: false },
     });
-    renderAt('/books/1');
+    renderAt('/books/1/audiobook');
     const voicesSwitch = await screen.findByRole('switch', { name: /Character voices/ });
     expect(voicesSwitch).toBeChecked();
     fireEvent.click(voicesSwitch);
@@ -1106,7 +1160,7 @@ describe('App', () => {
         { ...helmProvider, limits: { rpm: 10, tpm: 250000, rpd: 100, tpd: 0 } },
       ],
     });
-    renderAt('/books/1');
+    renderAt('/books/1/audiobook');
     const card = await screen.findByTestId('analysis-card');
     expect(await within(card).findByText(/≈ 190\s+LLM requests/)).toBeInTheDocument();
     expect(within(card).getByText(/about 2 days/)).toBeInTheDocument();
@@ -1148,7 +1202,7 @@ describe('App', () => {
       },
       '/api/llm/providers': [],
     });
-    renderAt('/books/1');
+    renderAt('/books/1/audiobook');
     const card = await screen.findByTestId('analysis-card');
     expect(await within(card).findByText(/40 of 160 requests/)).toBeInTheDocument();
     expect(within(card).getByText(/1.3M tokens used/)).toBeInTheDocument();
@@ -1254,7 +1308,7 @@ describe('App', () => {
       },
       'POST /api/books/1/casting': { ...castingBase, status: 'queued' },
     });
-    renderAt('/books/1');
+    renderAt('/books/1/audiobook');
     const card = await screen.findByTestId('casting-card');
     expect(
       within(card).getByText('40 of 40 main characters voiced · 300 with pool voices'),
@@ -1519,7 +1573,7 @@ describe('App', () => {
         outdated: false,
       },
     });
-    renderAt('/books/1');
+    renderAt('/books/1/audiobook');
     const card = await screen.findByTestId('downloads-card');
     expect(within(card).getByText(/1:02:05 · 300 MB/)).toBeInTheDocument();
     expect(within(card).getByRole('link', { name: 'Download Book One' })).toHaveAttribute(
@@ -1581,7 +1635,8 @@ describe('App', () => {
       '/api/books/1/chapters': { items: [], total: 0 },
     });
     renderAt('/books/1');
-    expect(await screen.findByRole('link', { name: 'Export' })).toHaveAttribute(
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }));
+    expect(await screen.findByRole('menuitem', { name: 'Export (without audio)' })).toHaveAttribute(
       'href',
       'http://localhost:3000/api/books/1/export',
     );
@@ -1593,7 +1648,7 @@ describe('App', () => {
       '/api/books/1/volumes': [],
       '/api/books/1/chapters': { items: [], total: 0 },
     });
-    renderAt('/books/1');
+    renderAt('/books/1/audiobook');
     fireEvent.click(await screen.findByRole('button', { name: 'Podcast' }));
     expect(await screen.findByLabelText('Feed URL')).toHaveValue(
       'http://localhost:3000/feed/tok/1.xml',

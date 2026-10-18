@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,6 +50,8 @@ func TestImport(t *testing.T) {
 		assert.Equal(t, store.BookImported, book.Status)
 		assert.Equal(t, "en", book.Language)
 		assert.Equal(t, "curly_double", book.QuoteStyle)
+		require.NotNil(t, book.Description)
+		assert.Equal(t, "Two mornings in a small town: will it rain?\n\nA sample book for the tests.", *book.Description)
 		assert.Equal(t, 4, book.ChapterCount)
 		assert.Equal(t, "image/png", book.CoverMediaType)
 		cover, err := os.ReadFile(filepath.Join(im.DataDir, book.CoverPath))
@@ -121,6 +124,42 @@ func TestImport(t *testing.T) {
 		require.NoError(t, err)
 		assert.EqualValues(t, 4, total)
 	})
+}
+
+// Books imported before descriptions were kept get theirs from the EPUB;
+// one whose EPUB is gone gets none and is not tried again.
+func TestFillDescriptions(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		im, b := setup(t, s, sample(t))
+		gone := &store.Book{Title: "gone", Status: store.BookReady, EpubPath: "books/99/source.epub"}
+		importing := &store.Book{Title: "importing", Status: store.BookImporting}
+		require.NoError(t, s.CreateBook(ctx, gone))
+		require.NoError(t, s.CreateBook(ctx, importing))
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"Status": store.BookImported}))
+
+		require.NoError(t, im.FillDescriptions(ctx))
+		book, err := s.GetBook(ctx, b.ID)
+		require.NoError(t, err)
+		require.NotNil(t, book.Description)
+		assert.Contains(t, *book.Description, "Two mornings")
+		g, err := s.GetBook(ctx, gone.ID)
+		require.NoError(t, err)
+		require.NotNil(t, g.Description)
+		assert.Empty(t, *g.Description)
+		i, err := s.GetBook(ctx, importing.ID)
+		require.NoError(t, err)
+		assert.Nil(t, i.Description, "the import sets it")
+
+		left, err := s.BooksWithoutDescription(ctx)
+		require.NoError(t, err)
+		assert.Empty(t, left)
+	})
+}
+
+func TestDescription(t *testing.T) {
+	assert.Equal(t, "ok\uFFFD", importer.Description("o\x00k\xff"))
+	assert.Equal(t, strings.Repeat("ä", 5000), importer.Description(strings.Repeat("ä", 5001)))
 }
 
 func TestMergeAndSplit(t *testing.T) {

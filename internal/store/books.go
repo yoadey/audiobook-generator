@@ -57,6 +57,16 @@ func (s *Store) UpdateBook(ctx context.Context, id int64, fields map[string]any)
 	return nil
 }
 
+// BooksWithoutDescription returns the imported books whose description
+// was never read.
+func (s *Store) BooksWithoutDescription(ctx context.Context) ([]Book, error) {
+	var books []Book
+	err := s.db.WithContext(ctx).
+		Where("description IS NULL AND status IN ?", []BookStatus{BookImported, BookReady}).
+		Order("id").Find(&books).Error
+	return books, err
+}
+
 // DeleteBook removes a book with its content and jobs.
 func (s *Store) DeleteBook(ctx context.Context, id int64) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

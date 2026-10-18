@@ -6,10 +6,20 @@ export function formatNumber(n: number): string {
 
 /** Narration speed used for estimates (Kokoro at speed 1.0). */
 const WORDS_PER_MINUTE = 155;
+/** An adult's silent reading speed. */
+const READ_WORDS_PER_MINUTE = 250;
 
 /** Estimated listening time, e.g. "41 min" or "12 h 5 min". */
 export function formatListeningTime(words: number): string {
-  const minutes = Math.round(words / WORDS_PER_MINUTE);
+  return formatMinutes(Math.round(words / WORDS_PER_MINUTE));
+}
+
+/** Estimated reading time, e.g. "26 min" or "7 h 30 min". */
+export function formatReadingTime(words: number): string {
+  return formatMinutes(Math.round(words / READ_WORDS_PER_MINUTE));
+}
+
+function formatMinutes(minutes: number): string {
   if (minutes < 1) {
     return '<1 min';
   }

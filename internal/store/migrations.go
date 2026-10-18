@@ -647,6 +647,17 @@ var migrations = []*gormigrate.Migration{
 			return tx.Migrator().DropColumn(&Paragraph{}, "Flows")
 		},
 	},
+	{
+		ID: "202610270001_book_description",
+		Migrate: func(tx *gorm.DB) error {
+			type Book struct{ Description *string }
+			return tx.Migrator().AddColumn(&Book{}, "Description")
+		},
+		Rollback: func(tx *gorm.DB) error {
+			type Book struct{ Description *string }
+			return tx.Migrator().DropColumn(&Book{}, "Description")
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

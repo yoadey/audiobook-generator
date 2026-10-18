@@ -33,7 +33,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import {
@@ -111,6 +111,14 @@ function typing(e: KeyboardEvent): boolean {
 export function ListenPage() {
   const { bookId: raw } = useParams({ from: '/books/$bookId/listen' });
   const bookId = Number(raw);
+  // A chapter chosen in the contents: the player starts at it (once; the
+  // address then forgets it, so a reload goes on where reading stopped).
+  const navigate = useNavigate();
+  const { chapter: chosen } = useSearch({ from: '/books/$bookId/listen' });
+  const [startAt] = useState(chosen);
+  useEffect(() => {
+    if (chosen !== undefined) void navigate({ to: '.', search: {}, replace: true });
+  }, [chosen, navigate]);
   const book = useQuery(bookQuery(bookId));
   const chapters = useQuery(chaptersQuery(bookId));
   // Always the stored position (another device, or this one in an earlier
@@ -148,7 +156,11 @@ export function ListenPage() {
   if (narrated.length === 0) {
     return <Alert title="Nothing to play">This book has no narrated chapters.</Alert>;
   }
-  return <Player book={book.data} narrated={narrated} progress={stored} />;
+  const start =
+    startAt !== undefined && startAt !== stored.chapterId && narrated.some((c) => c.id === startAt)
+      ? { ...stored, chapterId: startAt, positionMs: 0, segmentId: undefined }
+      : stored;
+  return <Player book={book.data} narrated={narrated} progress={start} />;
 }
 
 function Player({

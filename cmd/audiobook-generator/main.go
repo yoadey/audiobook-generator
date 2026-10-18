@@ -202,6 +202,11 @@ func run() error {
 			return on && err == nil
 		}, log)
 	}
+	go func() {
+		if err := imp.FillDescriptions(ctx); err != nil {
+			log.Warn("read the descriptions of earlier books", "err", err)
+		}
+	}()
 	runnerDone := make(chan struct{})
 	go func() {
 		defer close(runnerDone)

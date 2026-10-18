@@ -410,7 +410,8 @@ func restoredBook(b *store.Book) map[string]any {
 	}
 	return map[string]any{
 		"Title": b.Title, "Author": b.Author, "Language": b.Language, "QuoteStyle": b.QuoteStyle,
-		"WordCount": b.WordCount, "ChapterCount": b.ChapterCount,
+		"Description": description(b.Description),
+		"WordCount":   b.WordCount, "ChapterCount": b.ChapterCount,
 		"NarratorVoice": b.NarratorVoice, "NarratorSpeed": speed, "Lookahead": lookahead,
 		"CharacterVoices": b.CharacterVoices,
 		"PreviewText":     truncateRunes(store.CleanText(b.PreviewText), 500),
@@ -419,6 +420,16 @@ func restoredBook(b *store.Book) map[string]any {
 		"CastingStatus": casting, "CastingError": b.CastingError, "CastingFinishedAt": b.CastingFinishedAt,
 		"Status": status, "Progress": 1.0, "Error": "",
 	}
+}
+
+// description is an export's book description, cleaned; nil (read from
+// the EPUB) when the export has none.
+func description(d *string) *string {
+	if d == nil {
+		return nil
+	}
+	s := importer.Description(*d)
+	return &s
 }
 
 // maxExtract bounds a file taken from an export.
