@@ -308,7 +308,10 @@ function Player({
       }));
       if (leaving === 'tab') {
         closedAt.current = saves.current;
-        void saveProgress(bookId, chapterId, ms, seg, true).catch(() => {});
+        // Failed (offline), and the page was kept: stored once it is back.
+        void saveProgress(bookId, chapterId, ms, seg, true).catch(() =>
+          saveMutate({ chapterId, ms, segmentId: seg, seq: ++saves.current }),
+        );
       } else {
         saveMutate({ chapterId, ms, segmentId: seg, keepalive: !!leaving, seq: saves.current });
       }

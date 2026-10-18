@@ -596,6 +596,24 @@ describe('App', () => {
     expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 110000 }]);
   });
 
+  it('stores the closing position later when its save failed', async () => {
+    const fetch = oneChapter();
+    const { container } = renderAt('/books/1/listen');
+    const { held, audio, state } = await playerAt(fetch, container);
+    fireEvent.pause(audio);
+    await settle();
+    state.paused = false;
+    state.t = 110;
+    fireEvent.timeUpdate(audio);
+    window.dispatchEvent(new Event('pagehide'));
+    await settle();
+    held.pop()!.reject(new TypeError('offline'));
+    await settle();
+    held.shift()!.resolve();
+    await settle();
+    expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 110000 }]);
+  });
+
   it('plays ready audio', async () => {
     stubApi({
       '/api/books/1': book,
