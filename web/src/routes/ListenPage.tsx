@@ -26,7 +26,7 @@ import {
   IconRewindBackward15,
   IconRewindForward30,
 } from '@tabler/icons-react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -109,7 +109,13 @@ export function ListenPage() {
   const chapters = useQuery(chaptersQuery(bookId));
   // Always the stored position (another device, or this one in an earlier
   // visit, may have moved it), before the player starts from it.
-  const progress = useQuery({ ...progressQuery(bookId), refetchOnMount: 'always' });
+  // While a save is still on its way, its answer is the stored position.
+  const saving = useIsMutating({ mutationKey: progressSaveKey(bookId) }) > 0;
+  const progress = useQuery({
+    ...progressQuery(bookId),
+    enabled: !saving,
+    refetchOnMount: 'always',
+  });
 
   // Offline the refresh waits for the network; the cached position will do.
   const refreshing = !progress.isFetchedAfterMount && progress.fetchStatus !== 'paused';
@@ -190,8 +196,10 @@ function Player({
       : null,
   );
   const lastSaved = useRef(0);
-  // Where playback got to since the last save: stored when the page is left.
-  const playedAt = useRef<{ chapter: number; ms: number } | null>(null);
+  // Where playback got to since the last save (or a save that failed):
+  // stored when the page is left.
+  const playedAt = useRef<{ chapter: number; ms: number; segment?: number } | null>(null);
+  const saves = useRef(0);
 
   // The render being played (pinned) and when its segments are spoken.
   const version = pinned?.id === current?.id ? pinned?.version : current?.audioVersion;
@@ -246,22 +254,32 @@ function Player({
       ms: number;
       segmentId?: number;
       keepalive?: boolean;
+      seq: number;
     }) => saveProgress(bookId, chapterId, ms, segmentId, keepalive),
     onSuccess: (stored) => {
-      queryClient.setQueryData(progressQuery(bookId).queryKey, stored);
+      // An earlier save must not undo the position of a later one.
+      if (queryClient.isMutating({ mutationKey: progressSaveKey(bookId) }) === 1) {
+        queryClient.setQueryData(progressQuery(bookId).queryKey, stored);
+      }
       return queryClient.invalidateQueries({ queryKey: ['books', bookId, 'chapters'] });
     },
-    // Lost: stored when the page is left, unless playback moved on.
-    onError: (_err, { chapterId, ms }) => {
-      playedAt.current ??= { chapter: chapterId, ms };
+    onError: (_err, { chapterId, ms, segmentId, seq }) => {
+      // The latest one is stored again when the page is left, unless
+      // playback moved on.
+      if (seq === saves.current)
+        playedAt.current ??= { chapter: chapterId, ms, segment: segmentId };
+      return queryClient.invalidateQueries({ queryKey: progressQuery(bookId).queryKey });
     },
   });
   // Stores the position; the segment comes from the timings of the chapter
   // playing, or is given (reading without audio).
+  // Leaving the page stores with keepalive; closing it stores right away,
+  // as a save waiting for an earlier one would never be sent.
   const persist = useCallback(
-    (chapterId: number, ms: number, segmentId?: number, keepalive = false) => {
+    (chapterId: number, ms: number, segmentId?: number, leaving?: 'page' | 'tab') => {
       lastSaved.current = Date.now();
       playedAt.current = null;
+      saves.current++;
       const seg =
         segmentId ??
         (chapterId === currentId && cuesRef.current ? segmentAt(cuesRef.current, ms) : undefined);
@@ -272,7 +290,11 @@ function Player({
         positionMs: Math.max(0, Math.round(ms)),
         segmentId: seg,
       }));
-      saveMutate({ chapterId, ms, segmentId: seg, keepalive });
+      if (leaving === 'tab') {
+        void saveProgress(bookId, chapterId, ms, seg, true).catch(() => {});
+      } else {
+        saveMutate({ chapterId, ms, segmentId: seg, keepalive: !!leaving, seq: saves.current });
+      }
     },
     [saveMutate, currentId, queryClient, bookId],
   );
@@ -286,16 +308,18 @@ function Player({
   // Leaving the page (or closing it) while listening stores where it was;
   // the player's own saves come only every few seconds.
   useEffect(() => {
-    const flush = () => {
+    const flush = (leaving: 'page' | 'tab') => {
       const p = playedAt.current;
       // A chapter left behind was stored when it was left.
-      if (p && p.chapter === currentRef.current)
-        persistRef.current(p.chapter, p.ms, undefined, true);
+      if (p && p.chapter === currentRef.current) {
+        persistRef.current(p.chapter, p.ms, p.segment, leaving);
+      }
     };
-    window.addEventListener('pagehide', flush);
+    const hide = () => flush('tab');
+    window.addEventListener('pagehide', hide);
     return () => {
-      window.removeEventListener('pagehide', flush);
-      flush();
+      window.removeEventListener('pagehide', hide);
+      flush('page');
     };
   }, []);
 
