@@ -38,6 +38,7 @@ import {
   chaptersQuery,
   exportUrl,
   deleteBook,
+  progressQuery,
   renderBookChapters,
   volumesQuery,
 } from '../api/client';
@@ -102,6 +103,12 @@ export function BookPage() {
   const imported = book.data !== undefined && book.data.status !== 'importing';
   const volumes = useQuery({ ...volumesQuery(bookId), enabled: imported });
   const chapters = useQuery({ ...chaptersQuery(bookId), enabled: imported });
+  // Where listening stopped: the chapter list opens at it.
+  const progress = useQuery({
+    ...progressQuery(bookId),
+    enabled: imported,
+    refetchOnMount: 'always',
+  });
 
   const [volume, setVolume] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
@@ -302,7 +309,7 @@ export function BookPage() {
               <Loader />
             </Center>
           ) : (
-            <ChapterTable bookId={bookId} chapters={visible} />
+            <ChapterTable bookId={bookId} chapters={visible} currentId={progress.data?.chapterId} />
           )}
         </>
       )}

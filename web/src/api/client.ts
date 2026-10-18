@@ -391,16 +391,19 @@ export const renderBookChapters = (bookId: number, count: number, fromChapterId?
     }),
   );
 
+/** Stores the listening position; keepalive lets it outlive the page. */
 export const saveProgress = (
   bookId: number,
   chapterId: number,
   positionMs: number,
   segmentId?: number,
+  keepalive = false,
 ) =>
   unwrap(
     api.PUT('/books/{bookId}/progress', {
       params: { path: { bookId } },
       body: { chapterId, positionMs: Math.max(0, Math.round(positionMs)), segmentId },
+      keepalive,
     }),
   );
 

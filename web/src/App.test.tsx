@@ -366,6 +366,84 @@ describe('App', () => {
     );
   });
 
+  it('reopens the player at the chapter listened to last', async () => {
+    const two = {
+      items: [
+        chapters[0],
+        { ...chapters[0], id: 12, idx: 2, title: 'Chapter 2', audioStatus: 'none' },
+      ],
+      total: 2,
+    };
+    const routes: Record<string, unknown> = {
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': two,
+      '/api/voices': voices,
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 12, positionMs: 0 },
+    };
+    const fetch = stubApi(routes);
+    renderAt('/books/1/listen');
+    const player = await screen.findByTestId('player');
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+
+    // The chapter list opens at the chapter playing, selected.
+    fireEvent.click(within(player).getByRole('button', { name: 'Chapters' }));
+    const list = await screen.findByRole('dialog', { name: 'Chapters' });
+    const playingEntry = within(list).getByRole('button', { name: /Chapter 1/ });
+    expect(playingEntry).toHaveAttribute('aria-current', 'true');
+    await vi.waitFor(() => expect(playingEntry).toHaveFocus());
+    fireEvent.click(within(list).getByRole('button', { name: /Chapter 2/ }));
+    await vi.waitFor(() => expect(screen.getByText('2 / 2')).toBeInTheDocument());
+    await vi.waitFor(() =>
+      expect(
+        fetch.mock.calls.some(
+          ([r]) =>
+            typeof r !== 'string' && r.method === 'PUT' && r.url.endsWith('/api/books/1/progress'),
+        ),
+      ).toBe(true),
+    );
+    routes['GET /api/books/1/progress'] = { chapterId: 12, positionMs: 0 };
+
+    // To the book and back: the player starts where listening stopped,
+    // and the chapter list on the book page marks that chapter.
+    fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+    const rows = await screen.findAllByTestId('chapter-row');
+    await vi.waitFor(() => expect(rows[1]).toHaveAttribute('aria-current', 'true'));
+    expect(rows[0]).not.toHaveAttribute('aria-current');
+    fireEvent.click(screen.getByRole('link', { name: /listen/i }));
+    await screen.findByTestId('player');
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+  });
+
+  it('stores the position when the player is left while playing', async () => {
+    const fetch = stubApi({
+      '/api/books/1': book,
+      '/api/books/1/volumes': [],
+      '/api/books/1/chapters': { items: chapters, total: 2 },
+      '/api/voices': voices,
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+    });
+    const { container } = renderAt('/books/1/listen');
+    await screen.findByTestId('player');
+    const audio = container.querySelector('audio')!;
+    Object.defineProperty(audio, 'paused', { value: false });
+    Object.defineProperty(audio, 'currentTime', { value: 42, writable: true });
+    fireEvent.timeUpdate(audio);
+
+    fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+    await screen.findAllByTestId('chapter-row');
+    await vi.waitFor(async () => {
+      const puts = fetch.mock.calls
+        .map(([r]) => r)
+        .filter((r): r is Request => typeof r !== 'string' && r.method === 'PUT');
+      const last = puts[puts.length - 1]!;
+      expect(last.keepalive).toBe(true);
+      expect(await last.clone().json()).toMatchObject({ chapterId: 10, positionMs: 42000 });
+    });
+  });
+
   it('plays ready audio', async () => {
     stubApi({
       '/api/books/1': book,

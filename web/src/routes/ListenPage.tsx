@@ -106,16 +106,20 @@ export function ListenPage() {
   const bookId = Number(raw);
   const book = useQuery(bookQuery(bookId));
   const chapters = useQuery(chaptersQuery(bookId));
-  const progress = useQuery(progressQuery(bookId));
+  // Always the stored position (another device, or this one in an earlier
+  // visit, may have moved it), before the player starts from it.
+  const progress = useQuery({ ...progressQuery(bookId), refetchOnMount: 'always' });
 
-  if (book.isPending || chapters.isPending || progress.isPending) {
+  if (book.isPending || chapters.isPending || progress.isPending || !progress.isFetchedAfterMount) {
     return (
       <Center py="xl">
         <Loader />
       </Center>
     );
   }
-  if (book.error || chapters.error || progress.error) {
+  // A failed refresh still has the position from before.
+  const stored = progress.data;
+  if (book.error || chapters.error || !stored) {
     return (
       <Alert color="red" title="Could not load the book">
         {(book.error ?? chapters.error ?? progress.error)?.message}
@@ -126,7 +130,7 @@ export function ListenPage() {
   if (narrated.length === 0) {
     return <Alert title="Nothing to play">This book has no narrated chapters.</Alert>;
   }
-  return <Player book={book.data} narrated={narrated} progress={progress.data} />;
+  return <Player book={book.data} narrated={narrated} progress={stored} />;
 }
 
 function Player({
@@ -172,6 +176,8 @@ function Player({
   const [rate, setRate] = useState(() => stored(RATE_KEY, '1'));
   const [prefs, setPrefs] = useState<ReaderPrefs>(storedPrefs);
   const [chaptersOpen, setChaptersOpen] = useState(false);
+  // The playing chapter's entry in the chapter list (opened at it).
+  const currentEntry = useRef<HTMLButtonElement>(null);
   // The page's first chapter was left: its stored position is outdated.
   const [leftStart, setLeftStart] = useState(false);
   // Where reading stopped (the stored position, then the reader's).
@@ -181,6 +187,10 @@ function Player({
       : null,
   );
   const lastSaved = useRef(0);
+  // The chapter and position playing, and the last stored: what is left
+  // unstored when the page is left.
+  const playedAt = useRef<{ chapter: number; ms: number } | null>(null);
+  const savedAt = useRef<{ chapter: number; ms: number } | null>(null);
 
   // The render being played (pinned) and when its segments are spoken.
   const version = pinned?.id === current?.id ? pinned?.version : current?.audioVersion;
@@ -241,10 +251,44 @@ function Player({
       const seg =
         segmentId ??
         (chapterId === currentId && cuesRef.current ? segmentAt(cuesRef.current, ms) : undefined);
+      savedAt.current = { chapter: chapterId, ms };
+      // The page starts from the cache when it is opened again.
+      queryClient.setQueryData(progressQuery(bookId).queryKey, (old) => ({
+        ...old,
+        chapterId,
+        positionMs: Math.max(0, Math.round(ms)),
+        segmentId: seg,
+      }));
       saveMutate({ chapterId, ms, segmentId: seg });
     },
-    [saveMutate, currentId],
+    [saveMutate, currentId, queryClient, bookId],
   );
+
+  // Leaving the page (or closing it) while listening stores where it was;
+  // the player's own saves come only every few seconds.
+  useEffect(() => {
+    const flush = () => {
+      const p = playedAt.current;
+      const s = savedAt.current;
+      if (!p || (s && s.chapter === p.chapter && Math.abs(s.ms - p.ms) < 1000)) return;
+      savedAt.current = p;
+      const seg = cuesRef.current ? segmentAt(cuesRef.current, p.ms) : undefined;
+      queryClient.setQueryData(progressQuery(bookId).queryKey, (old) => ({
+        ...old,
+        chapterId: p.chapter,
+        positionMs: Math.max(0, Math.round(p.ms)),
+        segmentId: seg,
+      }));
+      void saveProgress(bookId, p.chapter, p.ms, seg, true).catch(() => {});
+    };
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
+    // Once: the refs carry what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const render = useMutation({
     mutationFn: (id: number) => renderChapter(id),
@@ -456,6 +500,7 @@ function Player({
           onTimeUpdate={(e) => {
             const ms = e.currentTarget.currentTime * 1000;
             setPosition(ms);
+            if (!e.currentTarget.paused) playedAt.current = { chapter: current.id, ms };
             if (Date.now() - lastSaved.current > SAVE_EVERY_MS) persist(current.id, ms);
           }}
           onPlay={() => {
@@ -662,6 +707,7 @@ function Player({
         position="right"
         title="Chapters"
         size="sm"
+        onEnterTransitionEnd={() => currentEntry.current?.scrollIntoView({ block: 'center' })}
       >
         <Stack gap={0}>
           {narrated.map((c, i) => (
@@ -669,13 +715,17 @@ function Player({
               key={c.id}
               onClick={() => {
                 setChaptersOpen(false);
-                goTo(c, playing);
+                // The playing chapter goes on where it is.
+                if (c.id !== current.id) goTo(c, playing);
               }}
               px="xs"
               py={8}
               bg={c.id === current.id ? 'var(--mantine-color-default-hover)' : undefined}
               style={{ borderRadius: 'var(--mantine-radius-sm)' }}
               aria-current={c.id === current.id ? 'true' : undefined}
+              // Selected when the list opens.
+              ref={c.id === current.id ? currentEntry : undefined}
+              data-autofocus={c.id === current.id ? true : undefined}
             >
               <Group justify="space-between" wrap="nowrap" gap="xs">
                 <Text size="sm" fw={c.id === current.id ? 600 : 400} truncate>
