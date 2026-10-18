@@ -1,5 +1,5 @@
 // Reading fonts shipped with the app (latin only: the books are English).
-// A face is only downloaded once a page uses it.
+// A face is only downloaded once the page or the font list shows it.
 import '@fontsource/literata/latin-400.css';
 import '@fontsource/literata/latin-400-italic.css';
 import '@fontsource/literata/latin-700.css';

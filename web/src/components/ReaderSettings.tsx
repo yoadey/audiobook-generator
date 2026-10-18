@@ -60,26 +60,27 @@ export function ReaderSettings({
       title="Reading settings"
       position={mobile ? 'bottom' : 'right'}
       size={mobile ? '60%' : 340}
-      overlayProps={{ backgroundOpacity: 0 }}
+      // The text stays usable beside it: scroll it, click a passage.
+      withOverlay={false}
+      lockScroll={false}
+      closeButtonProps={{ 'aria-label': 'Close' }}
     >
       <Stack gap="md" pb="md">
-        <Setting label="Font">
-          <Select
-            aria-label="Font"
-            value={prefs.font}
-            onChange={(v) => v && set('font', v as Font)}
-            allowDeselect={false}
-            comboboxProps={{ withinPortal: true }}
-            data={Object.entries(FONTS).map(([value, f]) => ({ value, label: f.label }))}
-            renderOption={({ option }) => (
-              <Text style={{ fontFamily: FONTS[option.value as Font].family }}>{option.label}</Text>
-            )}
-            styles={{ input: { fontFamily: FONTS[prefs.font].family } }}
-          />
-        </Setting>
+        <Select
+          label="Font"
+          value={prefs.font}
+          onChange={(v) => v && set('font', v as Font)}
+          allowDeselect={false}
+          comboboxProps={{ withinPortal: true }}
+          data={Object.entries(FONTS).map(([value, f]) => ({ value, label: f.label }))}
+          renderOption={({ option }) => (
+            <Text style={{ fontFamily: FONTS[option.value as Font].family }}>{option.label}</Text>
+          )}
+          styles={{ input: { fontFamily: FONTS[prefs.font].family } }}
+        />
         <Setting label={`Text size: ${prefs.size}px`}>
           <Slider
-            aria-label="Text size"
+            thumbLabel="Text size"
             min={SIZE.min}
             max={SIZE.max}
             step={1}
@@ -90,12 +91,12 @@ export function ReaderSettings({
         </Setting>
         <Setting label={`Line spacing: ${prefs.lineHeight.toFixed(2)}`}>
           <Slider
-            aria-label="Line spacing"
+            thumbLabel="Line spacing"
             min={LINE_HEIGHT.min}
             max={LINE_HEIGHT.max}
             step={0.05}
             value={prefs.lineHeight}
-            onChange={(v) => set('lineHeight', v)}
+            onChange={(v) => set('lineHeight', Math.round(v * 100) / 100)}
             label={(v) => v.toFixed(2)}
           />
         </Setting>
@@ -116,7 +117,7 @@ export function ReaderSettings({
         </Setting>
         <Setting label={`Side margins: ${prefs.margin}px`}>
           <Slider
-            aria-label="Side margins"
+            thumbLabel="Side margins"
             min={MARGIN.min}
             max={MARGIN.max}
             step={4}

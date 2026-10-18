@@ -32,7 +32,14 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
 import {
   audioUrl,
@@ -484,8 +491,8 @@ function Player({
   }, [togglePlay, seek]);
 
   useEffect(() => store(PREFS_KEY, JSON.stringify(prefs)), [prefs]);
-  // The page colour covers the whole page while reading.
-  useEffect(() => {
+  // The page colour covers the whole page while reading (before it shows).
+  useLayoutEffect(() => {
     document.documentElement.dataset.paper = prefs.paper;
     return () => {
       delete document.documentElement.dataset.paper;
@@ -747,6 +754,7 @@ function Player({
         position="right"
         title="Chapters"
         size="sm"
+        closeButtonProps={{ 'aria-label': 'Close' }}
         onEnterTransitionEnd={() => currentEntry.current?.scrollIntoView({ block: 'center' })}
       >
         <Stack gap={0}>

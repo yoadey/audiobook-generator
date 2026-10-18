@@ -154,6 +154,23 @@ export function Reader({
     placed.current = chapter.id;
   }, [text.data, settled, chapter.id, startSegment, active, scrollTo]);
 
+  // Text of another size or shape flows anew: keep the position in view
+  // (the browser cannot while a panel locks the page), as no reading.
+  const layout = [
+    prefs.font,
+    prefs.size,
+    prefs.lineHeight,
+    prefs.width,
+    prefs.margin,
+    prefs.paragraphs,
+  ].join();
+  const laidOut = useRef(layout);
+  useEffect(() => {
+    if (laidOut.current === layout) return;
+    laidOut.current = layout;
+    if (active !== undefined) scrollTo(active, false);
+  }, [layout, active, scrollTo]);
+
   // Keep the spoken segment in view.
   useEffect(() => {
     if (playing && follow && active !== undefined) scrollTo(active, true);
@@ -391,7 +408,7 @@ const ParagraphView = memo(function ParagraphView({
   ));
   if (p.kind === 'heading') {
     return (
-      <Title order={2} ff="inherit" fw={600} mt="md" mb="xs">
+      <Title order={2} ff="inherit" fw={600} mt="md" mb="xs" style={{ textAlign: 'start' }}>
         {spans.length > 0 ? spans : p.text}
       </Title>
     );

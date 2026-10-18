@@ -65,7 +65,7 @@ function setup() {
     </MantineProvider>
   );
   const r = render(view({}));
-  return { scrollTo, rerender: (p: Partial<typeof props>) => r.rerender(view(p)) };
+  return { scrollTo, props, rerender: (p: Partial<typeof props>) => r.rerender(view(p)) };
 }
 
 describe('Reader', () => {
@@ -117,6 +117,21 @@ describe('Reader', () => {
     await screen.findByText('Sentence number 1.');
     rerender({ positionMs: 2100, playing: true, prefs: { ...DEFAULT_PREFS, highlight: 'off' } });
     expect(marked()).toBe(0);
+  });
+
+  it('keeps the position in view when the text is laid out anew', async () => {
+    const { scrollTo, props, rerender } = setup();
+    await screen.findByText('Sentence number 1.');
+    rerender({ positionMs: 2100 });
+    scrollTo.mockClear();
+    rerender({ positionMs: 2100, prefs: { ...DEFAULT_PREFS, size: 26, width: 'narrow' } });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    // Its own scroll: not the reader moving the position.
+    act(() => {
+      window.dispatchEvent(new Event('scroll'));
+    });
+    await new Promise((r) => setTimeout(r, 800));
+    expect(props.onRead).not.toHaveBeenCalled();
   });
 
   it('lays the text out as chosen', async () => {
