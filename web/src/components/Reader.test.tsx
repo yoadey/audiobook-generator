@@ -2,7 +2,7 @@ import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ComponentProps } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { DEFAULT_PREFS } from '../lib/readerPrefs';
 import { Reader } from './Reader';
@@ -135,12 +135,20 @@ describe('Reader', () => {
   });
 
   it('turns pages with the arrows; past the last one comes the next chapter', async () => {
+    // A page of 600 by 400 (jsdom lays nothing out).
+    const rect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ width: 600, height: 400, left: 0, top: 0 } as DOMRect);
+    onTestFinished(() => rect.mockRestore());
     const { props, rerender } = setup();
     await screen.findByText('Sentence number 1.');
     const pages = { ...DEFAULT_PREFS, turning: 'pages' as const };
     rerender({ prefs: pages, next: { ...chapter, id: 11, title: 'Two' } as never });
     expect(screen.getByText('Page 1 of 1')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+    // A held key does not run on into the next chapter.
+    fireEvent.keyDown(window, { key: 'ArrowRight', repeat: true });
+    expect(props.onNext).not.toHaveBeenCalled();
     fireEvent.keyDown(window, { key: 'ArrowRight' });
     expect(props.onNext).toHaveBeenCalledTimes(1);
   });

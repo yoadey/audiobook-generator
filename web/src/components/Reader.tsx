@@ -29,8 +29,9 @@ const READ_DELAY_MS = 700;
 /** Where the reading position is looked for: below the fixed page header. */
 const TOP_OFFSET = 72;
 
-/** How long a wheel turn waits before the next one (a trackpad keeps on). */
-const WHEEL_TURN_MS = 600;
+/** A pause in wheel events that ends a gesture (a trackpad's momentum
+ * keeps sending them): one turn per gesture. */
+const WHEEL_GAP_MS = 200;
 /** How far a swipe must go to turn the page (px). */
 const SWIPE_PX = 50;
 
@@ -83,6 +84,11 @@ export function Reader({
   const [follow, setFollow] = useState(true);
   // Without audio, the segment the reader marked last.
   const [marked, setMarked] = useState<number | undefined>(startSegment);
+  // Where reading is while paused (placed, turned, scrolled or clicked to):
+  // what stays in view when the text flows anew.
+  const readAt = useRef<number | undefined>(startSegment);
+  const anchor = () =>
+    latest.current.playing ? latest.current.active : (readAt.current ?? latest.current.active);
   // Scroll events until then come from a scroll this component started.
   const ownScroll = useRef(false);
   // When the reader's last own scroll started.
@@ -92,12 +98,11 @@ export function Reader({
   const placed = useRef<number | null>(null);
   // The latest values for the window's scroll handler and the paragraphs'
   // click handler, which stay the same while the position moves.
-  const latest = useRef({ onSeek, onRead, playing, paged });
-  useEffect(() => {
-    latest.current = { onSeek, onRead, playing, paged };
-  }, [onSeek, onRead, playing, paged]);
-
   const active = cues ? segmentAt(cues, positionMs) : marked;
+  const latest = useRef({ onSeek, onRead, playing, paged, active });
+  useEffect(() => {
+    latest.current = { onSeek, onRead, playing, paged, active };
+  }, [onSeek, onRead, playing, paged, active]);
 
   // Playing again follows the voice.
   const [wasPlaying, setWasPlaying] = useState(playing);
@@ -195,14 +200,23 @@ export function Reader({
   const showPage = useCallback((page: number, smooth: boolean) => {
     setView((v) => (v.page === page ? v : { page, smooth }));
   }, []);
+  const pageNow = useRef(0);
+  useEffect(() => {
+    pageNow.current = view.page;
+  }, [view.page]);
 
-  // Brings a segment into view: scrolls to it, or turns to its page.
+  // Brings a segment into view: scrolls to it, or turns to its page. A
+  // segment running over a page break: the page of the word spoken (or
+  // the sentence marked), and no turn while that is on the page shown.
   const show = useCallback(
     (segmentId: number, smooth: boolean) => {
       if (!paged) return scrollTo(segmentId, smooth);
       const el = content.current?.querySelector(`[data-seg="${segmentId}"]`);
       if (!el || !box.w) return false;
-      showPage(pageOf(el), smooth);
+      const spot = el.querySelector('[data-word]') ?? el.querySelector('[data-mark]') ?? el;
+      const first = pageOf(spot);
+      const now = pageNow.current;
+      showPage(now >= first && now <= pageOf(spot, true) ? now : first, smooth);
       return true;
     },
     [paged, scrollTo, box.w, pageOf, showPage],
@@ -212,7 +226,11 @@ export function Reader({
   useLayoutEffect(() => {
     const vp = viewport.current;
     if (!paged || !vp) return;
-    const measure = () => setBox({ w: vp.clientWidth, h: vp.clientHeight });
+    // Its exact width (zoom makes it fractional): the columns' pitch.
+    const measure = () => {
+      const r = vp.getBoundingClientRect();
+      setBox({ w: r.width, h: r.height });
+    };
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(measure);
@@ -221,17 +239,30 @@ export function Reader({
   }, [paged, text.data]);
   const count = useCallback(() => {
     const c = content.current;
-    if (c && box.w) setPageCount(Math.max(1, Math.ceil((c.scrollWidth - 1) / box.w)));
+    if (!c || !box.w) return;
+    const n = Math.max(1, Math.ceil((c.scrollWidth - 1) / box.w));
+    setPageCount(n);
+    setView((v) => (v.page < n ? v : { page: n - 1, smooth: false }));
   }, [box.w]);
-  // A font arriving late flows the text anew.
+  // A font arriving late (or a face first used) flows the text anew: the
+  // position stays in view.
   useEffect(() => {
-    if (!paged) return;
+    const fonts = document.fonts;
+    if (!paged || !fonts) return;
     let live = true;
-    void document.fonts?.ready.then(() => live && count());
+    const reflow = () => {
+      if (!live) return;
+      count();
+      const a = anchor();
+      if (a !== undefined) show(a, false);
+    };
+    fonts.addEventListener('loadingdone', reflow);
+    void fonts.ready.then(reflow);
     return () => {
       live = false;
+      fonts.removeEventListener('loadingdone', reflow);
     };
-  }, [paged, count, prefs.font]);
+  }, [paged, count, show]);
 
   // A new chapter starts at the top, or where reading stopped.
   useEffect(() => {
@@ -239,6 +270,7 @@ export function Reader({
     // Where reading stopped wins: the audio's position may not be
     // restored yet (it still says 0, the chapter's heading).
     const target = startSegment ?? active;
+    readAt.current = target;
     if (target === undefined || !show(target, false)) {
       ownScroll.current = true;
       ownStart.current = Date.now();
@@ -247,6 +279,11 @@ export function Reader({
     }
     placed.current = chapter.id;
   }, [text.data, settled, chapter.id, startSegment, active, show, paged, box.w]);
+
+  // The voice moved (skipping, a seek while paused): reading is there.
+  useEffect(() => {
+    if (active !== undefined && placed.current === chapter.id) readAt.current = active;
+  }, [active, chapter.id]);
 
   // Text of another size or shape flows anew: keep the position in view
   // (the browser cannot while a panel locks the page), as no reading.
@@ -267,22 +304,28 @@ export function Reader({
     if (paged) count();
     if (laidOut.current === layout) return;
     laidOut.current = layout;
-    if (active !== undefined) show(active, false);
+    const a = anchor();
+    if (a !== undefined) show(a, false);
   }, [layout, active, show, paged, count, text.data]);
 
-  // Keep the spoken segment in view.
+  // Keep the spoken segment in view (with pages, also the word spoken: a
+  // segment can run over a page break).
+  const voiceAt = paged ? `${active}:${word?.[0]}:${mark?.[0]}` : String(active);
   useEffect(() => {
     if (playing && follow && active !== undefined) show(active, true);
-  }, [playing, follow, active, show]);
+  }, [playing, follow, active, show, voiceAt]);
 
   // Turning a page: while playing, the voice is left behind (unless it is
   // on that page); while paused, the page's first segment becomes the
   // position. Past the last page comes the next chapter.
-  const turnBy = (delta: number) => {
+  const turnBy = (delta: number, repeat = false) => {
+    // Nothing laid out yet (the text still loading): nothing to turn.
+    if (!text.data || !box.w) return;
     const page = view.page + delta;
     if (page < 0) return;
     if (page >= pageCount) {
-      if (delta > 0 && next) onNext();
+      // A held key does not run on through the chapters.
+      if (delta > 0 && next && !repeat) onNext();
       return;
     }
     showPage(page, true);
@@ -296,6 +339,7 @@ export function Reader({
     if (first !== undefined) {
       const id = spoken(first);
       setMarked(id);
+      readAt.current = id;
       latest.current.onRead(id);
     }
   };
@@ -303,7 +347,7 @@ export function Reader({
   useEffect(() => {
     turn.current = turnBy;
   });
-  const wheelAt = useRef(0);
+  const wheel = useRef({ at: 0, armed: true });
   const touch = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => {
     if (!paged) return;
@@ -311,10 +355,10 @@ export function Reader({
       if (typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'ArrowRight' || e.key === 'PageDown') {
         e.preventDefault();
-        turn.current(1);
+        turn.current(1, e.repeat);
       } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
         e.preventDefault();
-        turn.current(-1);
+        turn.current(-1, e.repeat);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -352,10 +396,12 @@ export function Reader({
       }
       clearTimeout(readTimer.current);
       readTimer.current = setTimeout(() => {
+        if (latest.current.paged) return; // switched to pages meanwhile
         for (const el of root.current?.querySelectorAll<HTMLElement>('[data-seg]') ?? []) {
           if (el.getBoundingClientRect().bottom > TOP_OFFSET) {
             const id = spoken(Number(el.dataset.seg));
             setMarked(id);
+            readAt.current = id;
             latest.current.onRead(id);
             return;
           }
@@ -388,6 +434,7 @@ export function Reader({
         latest.current.onSeek(start);
       } else {
         setMarked(segmentId);
+        readAt.current = segmentId;
         latest.current.onRead(segmentId);
       }
     },
@@ -447,20 +494,23 @@ export function Reader({
       )}
     </>
   );
-  const backToVoice = playing && !follow && active !== undefined && (
+  const backButton = playing && !follow && active !== undefined && (
+    <Button
+      size="xs"
+      radius="xl"
+      variant="default"
+      leftSection={<IconFocus2 size={14} />}
+      onClick={() => {
+        setFollow(true);
+        show(active, true);
+      }}
+    >
+      Back to the voice
+    </Button>
+  );
+  const backToVoice = backButton && (
     <Box pos="fixed" bottom={128} left="50%" style={{ transform: 'translateX(-50%)', zIndex: 3 }}>
-      <Button
-        size="xs"
-        radius="xl"
-        variant="default"
-        leftSection={<IconFocus2 size={14} />}
-        onClick={() => {
-          setFollow(true);
-          show(active, true);
-        }}
-      >
-        Back to the voice
-      </Button>
+      {backButton}
     </Box>
   );
   const font = {
@@ -499,17 +549,29 @@ export function Reader({
       mx="auto"
       w="100%"
       h="100%"
+      pos="relative"
       style={{ ...font, display: 'flex', flexDirection: 'column' }}
       data-testid="reader"
       aria-label="Chapter text"
     >
       <Box
         ref={viewport}
-        style={{ flex: 1, minHeight: 0, overflow: 'hidden', touchAction: 'pan-y' }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: 'hidden',
+          touchAction: 'pan-y',
+          overscrollBehaviorX: 'none',
+        }}
         onWheel={(e) => {
+          if (e.ctrlKey) return; // zooming
+          const w = wheel.current;
+          const now = Date.now();
+          if (now - w.at > WHEEL_GAP_MS) w.armed = true;
+          w.at = now;
           const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
-          if (Math.abs(d) < 20 || Date.now() - wheelAt.current < WHEEL_TURN_MS) return;
-          wheelAt.current = Date.now();
+          if (!w.armed || Math.abs(d) < 20) return;
+          w.armed = false;
           turnBy(d > 0 ? 1 : -1);
         }}
         onTouchStart={(e) => {
@@ -566,7 +628,17 @@ export function Reader({
           <IconChevronRight size={18} />
         </ActionIcon>
       </Group>
-      {backToVoice}
+      {backButton && (
+        // Above the page controls, over the end of the page.
+        <Box
+          pos="absolute"
+          bottom={44}
+          left="50%"
+          style={{ transform: 'translateX(-50%)', zIndex: 3 }}
+        >
+          {backButton}
+        </Box>
+      )}
     </Box>
   );
 }
@@ -625,6 +697,9 @@ const ParagraphView = memo(function ParagraphView({
         ).map((piece, k) => (
           <span
             key={k}
+            // Where the voice is (for turning to its page).
+            data-word={piece.word || undefined}
+            data-mark={piece.marked || undefined}
             style={{
               fontStyle: piece.italic ? 'italic' : undefined,
               background: piece.word
