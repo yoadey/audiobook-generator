@@ -26,9 +26,15 @@ import {
   IconRewindBackward15,
   IconRewindForward30,
 } from '@tabler/icons-react';
-import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  onlineManager,
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import {
   audioUrl,
@@ -117,8 +123,11 @@ export function ListenPage() {
     refetchOnMount: 'always',
   });
 
-  // Offline the refresh waits for the network; the cached position will do.
-  const refreshing = !progress.isFetchedAfterMount && progress.fetchStatus !== 'paused';
+  // Offline the refresh (or the save it waits for) waits for the network;
+  // the cached position will do.
+  const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline());
+  const refreshing =
+    !progress.isFetchedAfterMount && progress.fetchStatus !== 'paused' && (online || !saving);
   if (book.isPending || chapters.isPending || progress.isPending || refreshing) {
     return (
       <Center py="xl">
@@ -200,6 +209,7 @@ function Player({
   // stored when the page is left.
   const playedAt = useRef<{ chapter: number; ms: number; segment?: number } | null>(null);
   const saves = useRef(0);
+  const closedAt = useRef(0);
 
   // The render being played (pinned) and when its segments are spoken.
   const version = pinned?.id === current?.id ? pinned?.version : current?.audioVersion;
@@ -249,16 +259,22 @@ function Player({
       ms,
       segmentId,
       keepalive,
+      seq,
     }: {
       chapterId: number;
       ms: number;
       segmentId?: number;
       keepalive?: boolean;
       seq: number;
-    }) => saveProgress(bookId, chapterId, ms, segmentId, keepalive),
+    }) =>
+      // Still waiting when the tab was closed (and kept for going back):
+      // the position stored then is newer.
+      seq <= closedAt.current
+        ? Promise.resolve(undefined)
+        : saveProgress(bookId, chapterId, ms, segmentId, keepalive),
     onSuccess: (stored) => {
       // An earlier save must not undo the position of a later one.
-      if (queryClient.isMutating({ mutationKey: progressSaveKey(bookId) }) === 1) {
+      if (stored && queryClient.isMutating({ mutationKey: progressSaveKey(bookId) }) === 1) {
         queryClient.setQueryData(progressQuery(bookId).queryKey, stored);
       }
       return queryClient.invalidateQueries({ queryKey: ['books', bookId, 'chapters'] });
@@ -291,6 +307,7 @@ function Player({
         segmentId: seg,
       }));
       if (leaving === 'tab') {
+        closedAt.current = saves.current;
         void saveProgress(bookId, chapterId, ms, seg, true).catch(() => {});
       } else {
         saveMutate({ chapterId, ms, segmentId: seg, keepalive: !!leaving, seq: saves.current });

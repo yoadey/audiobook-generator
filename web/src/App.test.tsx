@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query';
+import { onlineManager, QueryClient } from '@tanstack/react-query';
 import { createMemoryHistory } from '@tanstack/react-router';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -560,6 +560,40 @@ describe('App', () => {
     window.dispatchEvent(new Event('pagehide'));
     await settle();
     expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 100000 }, { positionMs: 110000 }]);
+  });
+
+  it('opens the player offline while a save waits for the network', async () => {
+    const fetch = oneChapter();
+    const { container } = renderAt('/books/1/listen');
+    const { audio } = await playerAt(fetch, container);
+    onlineManager.setOnline(false);
+    try {
+      fireEvent.pause(audio);
+      fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+      fireEvent.click(await screen.findByRole('link', { name: 'Listen' }));
+      expect(await screen.findByTestId('player')).toBeInTheDocument();
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it('does not send a waiting save after the tab was closed and kept', async () => {
+    const fetch = oneChapter();
+    const { container } = renderAt('/books/1/listen');
+    const { held, audio, state } = await playerAt(fetch, container);
+    fireEvent.pause(audio);
+    await settle();
+    state.t = 105;
+    fireEvent.pause(audio);
+    state.paused = false;
+    state.t = 110;
+    fireEvent.timeUpdate(audio);
+    window.dispatchEvent(new Event('pagehide'));
+    await settle();
+    expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 100000 }, { positionMs: 110000 }]);
+    held.shift()!.resolve();
+    await settle();
+    expect(held.map((h) => h.body)).toMatchObject([{ positionMs: 110000 }]);
   });
 
   it('plays ready audio', async () => {
