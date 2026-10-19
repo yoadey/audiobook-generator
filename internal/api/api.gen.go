@@ -821,6 +821,9 @@ type Book struct {
 	CharacterVoices bool      `json:"characterVoices"`
 	CreatedAt       time.Time `json:"createdAt"`
 
+	// Description The book's description from its EPUB (plain text, paragraphs separated by blank lines)
+	Description *string `json:"description,omitempty"`
+
 	// Engine The engine the book speaks with, that of its narrator ("kokoro" or another engine's name); its characters are cast from its voices
 	Engine string `json:"engine"`
 

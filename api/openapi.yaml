@@ -1601,6 +1601,9 @@ components:
           type: string
         author:
           type: string
+        description:
+          type: string
+          description: The book's description from its EPUB (plain text, paragraphs separated by blank lines)
         language:
           type: string
         status:

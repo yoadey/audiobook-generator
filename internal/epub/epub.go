@@ -21,6 +21,9 @@ type Book struct {
 	Title    string
 	Author   string
 	Language string
+	// Description is the publisher's blurb as plain text: paragraphs
+	// separated by blank lines ("" when none).
+	Description string
 
 	// CoverHref is the zip path of the cover image ("" when none).
 	CoverHref      string
@@ -120,10 +123,11 @@ func (b *Book) rootfile() (string, error) {
 
 type opfPackage struct {
 	Metadata struct {
-		Titles    []string `xml:"title"`
-		Creators  []string `xml:"creator"`
-		Languages []string `xml:"language"`
-		Metas     []struct {
+		Titles       []string  `xml:"title"`
+		Creators     []string  `xml:"creator"`
+		Languages    []string  `xml:"language"`
+		Descriptions []xmlText `xml:"description"`
+		Metas        []struct {
 			Name    string `xml:"name,attr"`
 			Content string `xml:"content,attr"`
 		} `xml:"meta"`
@@ -153,6 +157,11 @@ func (b *Book) readPackage(opfPath string) error {
 	b.Title = firstNonEmpty(p.Metadata.Titles)
 	b.Author = strings.Join(trimAll(p.Metadata.Creators), ", ")
 	b.Language = firstNonEmpty(p.Metadata.Languages)
+	for _, d := range p.Metadata.Descriptions {
+		if b.Description = plainText(d.source()); b.Description != "" {
+			break
+		}
+	}
 
 	type item struct{ href, mediaType, props string }
 	items := make(map[string]item, len(p.Manifest))

@@ -33,6 +33,9 @@ type Options struct {
 	Version int
 	// Cover, when set, is stored as a PNG cover image.
 	Cover []byte
+	// Description, when set, is the dc:description (HTML is kept as text,
+	// escaped, the way publishers write it).
+	Description string
 }
 
 // Build returns the EPUB file bytes.
@@ -116,14 +119,15 @@ func Build(o Options) ([]byte, error) {
     <dc:title>%s</dc:title>
     <dc:creator>%s</dc:creator>
     <dc:language>%s</dc:language>
-    %s
+    %s%s
   </metadata>
   <manifest>
 %s  </manifest>
   <spine%s>
 %s  </spine>
 </package>`, o.Version, html.EscapeString(o.Title), html.EscapeString(o.Author),
-		html.EscapeString(o.Language), metaCover, manifest.String(), spineAttr, spine.String())
+		html.EscapeString(o.Language), metaCover, description(o.Description), manifest.String(),
+		spineAttr, spine.String())
 	if err := write("OEBPS/content.opf", opf, false); err != nil {
 		return nil, err
 	}
@@ -131,6 +135,13 @@ func Build(o Options) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func description(d string) string {
+	if d == "" {
+		return ""
+	}
+	return "\n    <dc:description>" + html.EscapeString(d) + "</dc:description>"
 }
 
 func navDoc(toc []Entry) string {
@@ -198,6 +209,8 @@ func Sample() ([]byte, error) {
 	return Build(Options{
 		Title: "The Sample", Author: "A. Writer", Language: "en",
 		Cover: TinyPNG,
+		Description: "<p>Two mornings in a small town: <i>will it rain?</i></p>" +
+			"<p>A sample book for the tests.</p>",
 		Docs: []Doc{
 			{Name: "copyright.xhtml", Body: p("Copyright 2026 A. Writer.")},
 			{Name: "v1.xhtml", Body: `<h1 id="v1">Book One</h1>` +

@@ -6,6 +6,7 @@ import {
   type RouterHistory,
 } from '@tanstack/react-router';
 
+import { AudiobookPage } from './routes/AudiobookPage';
 import { BookPage } from './routes/BookPage';
 import { ChapterPage } from './routes/ChapterPage';
 import { CharacterPage } from './routes/CharacterPage';
@@ -73,10 +74,21 @@ const characterRoute = createRoute({
   component: CharacterPage,
 });
 
+const audiobookRoute = createRoute({
+  getParentRoute: () => bookRoute,
+  path: '/audiobook',
+  component: AudiobookPage,
+});
+
+/** Reading (and listening); `chapter` opens that chapter at its start. */
 const listenRoute = createRoute({
   getParentRoute: () => bookRoute,
   path: '/listen',
   component: ListenPage,
+  validateSearch: (search: Record<string, unknown>): { chapter?: number } => {
+    const chapter = Number(search.chapter);
+    return Number.isInteger(chapter) && chapter > 0 ? { chapter } : {};
+  },
 });
 
 const lexiconRoute = createRoute({
@@ -116,6 +128,7 @@ const routeTree = rootRoute.addChildren([
     bookIndexRoute,
     chapterRoute,
     charactersRoute.addChildren([charactersIndexRoute, characterRoute]),
+    audiobookRoute,
     listenRoute,
     lexiconRoute,
   ]),

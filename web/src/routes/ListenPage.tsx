@@ -31,7 +31,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import {
   useCallback,
   useEffect,
@@ -93,6 +93,14 @@ function storedPrefs(): ReaderPrefs {
 export function ListenPage() {
   const { bookId: raw } = useParams({ from: '/books/$bookId/listen' });
   const bookId = Number(raw);
+  // A chapter chosen in the contents: the player starts at it (once; the
+  // address then forgets it, so a reload goes on where reading stopped).
+  const navigate = useNavigate();
+  const { chapter: chosen } = useSearch({ from: '/books/$bookId/listen' });
+  const [startAt, setStartAt] = useState(chosen);
+  useEffect(() => {
+    if (chosen !== undefined) void navigate({ to: '.', search: {}, replace: true });
+  }, [chosen, navigate]);
   const book = useQuery(bookQuery(bookId));
   const chapters = useQuery(chaptersQuery(bookId));
   // Always the stored position (another device, or this one in an earlier
@@ -130,17 +138,33 @@ export function ListenPage() {
   if (narrated.length === 0) {
     return <Alert title="Nothing to play">This book has no narrated chapters.</Alert>;
   }
-  return <Player book={book.data} narrated={narrated} progress={stored} />;
+  const start =
+    startAt !== undefined && startAt !== stored.chapterId && narrated.some((c) => c.id === startAt)
+      ? { ...stored, chapterId: startAt, positionMs: 0, segmentId: undefined }
+      : stored;
+  return (
+    <Player
+      book={book.data}
+      narrated={narrated}
+      progress={start}
+      // Used once: a player shown again (after an error) goes on where
+      // reading is now.
+      onStarted={() => setStartAt(undefined)}
+    />
+  );
 }
 
 function Player({
   book,
   narrated,
   progress,
+  onStarted,
 }: {
   book: Book;
   narrated: Chapter[];
   progress: Progress;
+  /** The player took up the position it was given. */
+  onStarted: () => void;
 }) {
   const bookId = book.id;
   const queryClient = useQueryClient();
@@ -337,10 +361,11 @@ function Player({
   const savedFor = useRef<number | null>(null);
   useEffect(() => {
     if (current && savedFor.current !== current.id) {
+      if (savedFor.current === null) onStarted();
       savedFor.current = current.id;
       persist(current.id, resumeAt.current ?? 0, resumeSegment.current ?? undefined);
     }
-  }, [current, persist]);
+  }, [current, persist, onStarted]);
 
   const goTo = useCallback(
     (c: Chapter | undefined, play: boolean) => {

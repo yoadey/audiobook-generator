@@ -181,6 +181,13 @@ func page(offset *int32, limit *int32, def, maxLimit int) (int, int) {
 	return o, l
 }
 
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func nonEmpty(s string) *string {
 	if s == "" {
 		return nil

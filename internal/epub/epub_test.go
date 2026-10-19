@@ -62,6 +62,22 @@ func TestMetadataAndCover(t *testing.T) {
 	assert.Equal(t, "\x89PNG fake", string(data))
 }
 
+func TestDescription(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{"A plain blurb.", "A plain blurb."},
+		{"<p>One <i>two</i>\n three.</p><p>Four &amp; five.</p>", "One two three.\n\nFour & five."},
+		{"Line one<br/>line two<script>x()</script>", "Line one\n\nline two"},
+		{"<div><p>Nested</p> tail</div>", "Nested\n\ntail"},
+	} {
+		b := open(t, epubtest.Options{
+			Title: "T", Language: "en", Description: tc.in,
+			Docs: []epubtest.Doc{{Name: "a.xhtml", Body: p("Hi.")}},
+		})
+		assert.Equal(t, tc.want, b.Description, tc.in)
+	}
+}
+
 func TestNotAnEPUB(t *testing.T) {
 	_, err := epub.Open(strings.NewReader("hello"), 5)
 	assert.ErrorIs(t, err, epub.ErrNotEPUB)

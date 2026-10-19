@@ -10,7 +10,7 @@ instead of it.
 - The deployment decides which engines exist: Kokoro (the chart's or an
   external one; `ABG_TTS_KOKORO=false` without), the chart's Chatterbox,
   further engines (`tts.engines`), in any combination with at least one.
-- A book speaks with the engine of its narrator. The book page
+- A book speaks with the engine of its narrator. The audiobook page
   (*Narrator*) offers each engine of the deployment; switching starts from
   the engine's default voice, and saving casts the characters again from
   that engine's voices (voices you chose for characters stay).

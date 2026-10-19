@@ -91,6 +91,7 @@ func TestExportRestore(t *testing.T) {
 		}}))
 		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{
 			"NarratorVoice": "bm_george", "NarratorSpeed": 1.1, "Lookahead": 5,
+			"Description":    strings.Repeat("ö", 6000),
 			"AnalysisStatus": store.AnalysisRunning, "CastingStatus": store.CastingDone,
 		}))
 		before := speakers(t, s, b.ID)
@@ -130,6 +131,8 @@ func TestExportRestore(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, store.BookImported, got.Status)
 		assert.Equal(t, "bm_george", got.NarratorVoice)
+		require.NotNil(t, got.Description)
+		assert.Equal(t, strings.Repeat("ö", 5000), *got.Description, "kept, within bounds")
 		assert.InDelta(t, 1.1, got.NarratorSpeed, 0.001)
 		assert.Equal(t, 5, got.Lookahead)
 		assert.Equal(t, store.AnalysisPaused, got.AnalysisStatus, "a running analysis resumes later")
@@ -237,3 +240,28 @@ func TestReadHeaderRejects(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// An export from before descriptions were kept: the restore reads it from
+// the book's EPUB.
+func TestRestoreReadsMissingDescription(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir := t.TempDir()
+		b, _ := setup(t, s, dir)
+		require.NoError(t, s.UpdateBook(ctx, b.ID, map[string]any{"Description": (*string)(nil)}))
+		var buf bytes.Buffer
+		require.NoError(t, transfer.Export(ctx, s, dir, b.ID, &buf))
+
+		nb := &store.Book{Title: "restored", Status: store.BookImporting}
+		require.NoError(t, s.CreateBook(ctx, nb))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, importer.BookDir(nb.ID)), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, transfer.RestorePath(nb.ID)), buf.Bytes(), 0o600))
+		r := &transfer.Restorer{Store: s, DataDir: dir, Log: slog.New(slog.DiscardHandler)}
+		require.NoError(t, r.Restore(ctx, nb.ID, func(float64) {}))
+
+		got, err := s.GetBook(ctx, nb.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.Description)
+		assert.Contains(t, *got.Description, "Two mornings")
+	})
+}

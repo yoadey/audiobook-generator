@@ -947,6 +947,8 @@ export interface components {
       id: number;
       title: string;
       author: string;
+      /** @description The book's description from its EPUB (plain text, paragraphs separated by blank lines) */
+      description?: string;
       language: string;
       status: components['schemas']['BookStatus'];
       /** @description Progress of the running import (0..1) */
