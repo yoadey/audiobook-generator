@@ -1423,6 +1423,10 @@ export interface components {
       quota?: components['schemas']['TTSEngineQuota'];
       requests: components['schemas']['TTSEngineRequests'];
       defaults: components['schemas']['TTSEngineRequests'];
+      /** @description The request options were changed in the UI (else they follow the configuration) */
+      requestsCustom: boolean;
+      /** @description The most maxChars may be set to for this engine */
+      maxChars: number;
     };
     /** @description How long an engine's requests get */
     TTSEngineRequests: {
@@ -1432,6 +1436,7 @@ export interface components {
       joinParagraphs: boolean;
     };
     TTSEngineUpdate: {
+      /** @description Between 100 and the engine's maxChars */
       maxChars?: number;
       joinParagraphs?: boolean;
       /** @description Back to the engine's configuration (other fields are ignored) */

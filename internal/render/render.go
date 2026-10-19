@@ -161,8 +161,9 @@ func (r *Renderer) keepVersions(bookID, chapterID int64, keep ...string) {
 	}
 }
 
-// CacheDir holds the synthesized pieces of a chapter while it renders
-// (absolute; removed when the render finishes or fails for good).
+// CacheDir holds the synthesized pieces of a chapter until it is rendered
+// (absolute; also kept when a render fails, removed once the chapter is
+// rendered or its text changes).
 func CacheDir(dataDir string, chapterID int64) string {
 	return filepath.Join(dataDir, "cache", "render", strconv.FormatInt(chapterID, 10))
 }

@@ -260,7 +260,7 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: ABG_TTS_ENGINES
-            value: '[{"apiKeyEnv":"ABG_TTS_GEMINI_API_KEY","concurrency":1,"defaultVoice":"Kore","emotions":false,"gain":1,"joinParagraphs":true,"kind":"gemini","limits":{"rpd":100,"rpm":0,"tpd":0,"tpm":0},"maxChars":4000,"model":"gemini-3.1-flash-tts-preview","name":"gemini","quotaTimezone":"America/Los_Angeles","timeout":"5m"}]'
+            value: '[{"apiKeyEnv":"ABG_TTS_GEMINI_API_KEY","concurrency":1,"defaultVoice":"Kore","emotions":false,"gain":1,"joinParagraphs":true,"kind":"gemini","limits":{"rpd":100,"rpm":0,"tpd":0,"tpm":0},"maxChars":4000,"model":"gemini-3.1-flash-tts-preview","name":"gemini","quotaTimezone":"America/Los_Angeles","timeout":"10m"}]'
       - contains:
           path: spec.template.spec.containers[0].env
           content:

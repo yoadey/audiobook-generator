@@ -1684,6 +1684,9 @@ type TTSEngine struct {
 	Error *string       `json:"error,omitempty"`
 	Kind  TTSEngineKind `json:"kind"`
 
+	// MaxChars The most maxChars may be set to for this engine
+	MaxChars int `json:"maxChars"`
+
 	// Model The model a Gemini engine speaks with
 	Model *string `json:"model,omitempty"`
 	Name  string  `json:"name"`
@@ -1693,6 +1696,9 @@ type TTSEngine struct {
 
 	// Requests How long an engine's requests get
 	Requests TTSEngineRequests `json:"requests"`
+
+	// RequestsCustom The request options were changed in the UI (else they follow the configuration)
+	RequestsCustom bool `json:"requestsCustom"`
 
 	// Speed Takes a voice's speed
 	Speed bool `json:"speed"`
@@ -1741,7 +1747,9 @@ type TTSEngineRequests struct {
 // TTSEngineUpdate defines model for TTSEngineUpdate.
 type TTSEngineUpdate struct {
 	JoinParagraphs *bool `json:"joinParagraphs,omitempty"`
-	MaxChars       *int  `json:"maxChars,omitempty"`
+
+	// MaxChars Between 100 and the engine's maxChars
+	MaxChars *int `json:"maxChars,omitempty"`
 
 	// Reset Back to the engine's configuration (other fields are ignored)
 	Reset *bool `json:"reset,omitempty"`

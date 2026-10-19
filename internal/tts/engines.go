@@ -1,7 +1,6 @@
 package tts
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -90,11 +89,23 @@ type EngineConfig struct {
 	JoinParagraphs *bool `json:"joinParagraphs,omitempty"`
 }
 
-// MaxRequestChars bounds MaxChars as set at runtime.
-const MaxRequestChars = 10000
+// MaxRequestChars bounds MaxChars as set at runtime, by kind: a Gemini
+// answer must stay within its audio limit, OpenAI-compatible servers
+// often take at most 4096 characters, Chatterbox splits long text itself.
+func MaxRequestChars(kind string) int {
+	switch kind {
+	case KindGemini:
+		return 5000
+	case KindOpenAI:
+		return 4000
+	}
+	return 10000
+}
 
-// RequestOptions are how long an engine's requests get; they can be
-// changed while running (Router.SetRequestOptions).
+// MinRequestChars bounds MaxChars as set at runtime from below.
+const MinRequestChars = 100
+
+// RequestOptions are how long an engine's requests get.
 type RequestOptions struct {
 	MaxChars       int
 	JoinParagraphs bool
@@ -255,8 +266,9 @@ type Engine struct {
 	// Quota of a cloud engine (nil for others).
 	Quota *Quota
 	// Requests: how long its requests get (as set now), and Defaults: as
-	// configured.
+	// configured; MaxChars is the most a request may be set to.
 	Requests, Defaults RequestOptions
+	MaxChars           int
 }
 
 // Router sends a request to Kokoro or, for "<engine>:<voice>" voices, to
@@ -524,17 +536,54 @@ func (r *Router) JoinParagraphs(voice string) bool {
 	return err == nil && e != nil && e.requestOptions().JoinParagraphs
 }
 
-// SetRequestOptions changes how long an engine's requests get (nil: back
-// to its configuration).
-func (r *Router) SetRequestOptions(engine string, o *RequestOptions) error {
+// RequestOverride changes some of an engine's request options while
+// running (nil fields keep the configuration).
+type RequestOverride struct {
+	MaxChars       *int
+	JoinParagraphs *bool
+}
+
+// overridden applies an override to the configured options and checks
+// the result.
+func (e *remote) overridden(o *RequestOverride) (RequestOptions, error) {
+	opts := e.defaultOptions()
+	if o == nil {
+		return opts, nil
+	}
+	if o.MaxChars != nil {
+		if limit := MaxRequestChars(e.cfg.Kind); *o.MaxChars < MinRequestChars || *o.MaxChars > limit {
+			return opts, fmt.Errorf("maxChars must be between %d and %d for %s", MinRequestChars, limit, e.cfg.Name)
+		}
+		opts.MaxChars = *o.MaxChars
+	}
+	if o.JoinParagraphs != nil {
+		opts.JoinParagraphs = *o.JoinParagraphs
+	}
+	return opts, nil
+}
+
+// CheckRequestOverride reports whether an override can be applied.
+func (r *Router) CheckRequestOverride(engine string, o *RequestOverride) error {
 	e := r.engines[engine]
 	if e == nil {
 		return fmt.Errorf("%w: %q", ErrUnknownEngine, engine)
 	}
-	if o != nil && (o.MaxChars < 100 || o.MaxChars > MaxRequestChars) {
-		return fmt.Errorf("maxChars must be between 100 and %d", MaxRequestChars)
+	_, err := e.overridden(o)
+	return err
+}
+
+// SetRequestOverride changes how long an engine's requests get (nil:
+// back to its configuration).
+func (r *Router) SetRequestOverride(engine string, o *RequestOverride) error {
+	e := r.engines[engine]
+	if e == nil {
+		return fmt.Errorf("%w: %q", ErrUnknownEngine, engine)
 	}
-	e.options.Store(o)
+	opts, err := e.overridden(o)
+	if err != nil {
+		return err
+	}
+	e.options.Store(&opts)
 	return nil
 }
 
@@ -548,16 +597,17 @@ func (r *Router) Engines(ctx context.Context) []Engine {
 		if e.gemini != nil {
 			info.Model = e.cfg.Model
 		}
-		info.Requests, info.Defaults = e.requestOptions(), e.defaultOptions()
+		info.Requests, info.Defaults, info.MaxChars = e.requestOptions(), e.defaultOptions(), MaxRequestChars(e.cfg.Kind)
 		vs, err := e.voices(ctx, false)
 		if err != nil {
 			info.Err = err.Error()
 		}
 		info.Voices = vs
 		if e.gemini != nil {
+			// A usage that cannot be read shows as none, with the error.
 			q, err := e.quotaStatus(ctx)
 			if err != nil {
-				info.Err = cmp.Or(info.Err, err.Error())
+				q.LastError = "today's usage could not be read: " + err.Error()
 			}
 			info.Quota = q
 		}

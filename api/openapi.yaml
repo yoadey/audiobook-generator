@@ -2389,7 +2389,7 @@ components:
     TTSEngine:
       type: object
       description: A speech engine besides Kokoro; its voices are written "<name>:<voice>"
-      required: [name, kind, emotions, speed, voices, requests, defaults]
+      required: [name, kind, emotions, speed, voices, requests, defaults, requestsCustom, maxChars]
       properties:
         name:
           type: string
@@ -2424,6 +2424,12 @@ components:
           $ref: "#/components/schemas/TTSEngineRequests"
         defaults:
           $ref: "#/components/schemas/TTSEngineRequests"
+        requestsCustom:
+          type: boolean
+          description: The request options were changed in the UI (else they follow the configuration)
+        maxChars:
+          type: integer
+          description: The most maxChars may be set to for this engine
     TTSEngineRequests:
       type: object
       description: How long an engine's requests get
@@ -2443,8 +2449,7 @@ components:
       properties:
         maxChars:
           type: integer
-          minimum: 100
-          maximum: 10000
+          description: Between 100 and the engine's maxChars
         joinParagraphs:
           type: boolean
         reset:

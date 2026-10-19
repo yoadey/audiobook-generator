@@ -24,10 +24,10 @@ const (
 const settingEngineRequests = "tts_requests_"
 
 // EngineRequests are how long a speech engine's requests get, as set in
-// the UI.
+// the UI (nil fields: as configured).
 type EngineRequests struct {
-	MaxChars       int  `json:"maxChars"`
-	JoinParagraphs bool `json:"joinParagraphs"`
+	MaxChars       *int  `json:"maxChars,omitempty"`
+	JoinParagraphs *bool `json:"joinParagraphs,omitempty"`
 }
 
 // EngineRequests returns the request options set for an engine (nil:

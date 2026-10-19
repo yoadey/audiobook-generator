@@ -196,21 +196,35 @@ func TestEngineVoices(t *testing.T) {
 		assert.Equal(t, api.TTSEngineRequests{MaxChars: 4000, JoinParagraphs: true}, gem.Requests)
 
 		// The request options are changed, stored, and reset.
+		assert.False(t, gem.RequestsCustom)
+		assert.Equal(t, 5000, gem.MaxChars)
 		var changed api.TTSEngine
 		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/tts/engines/gem",
-			map[string]any{"maxChars": 2500, "joinParagraphs": false}, &changed))
-		assert.Equal(t, api.TTSEngineRequests{MaxChars: 2500}, changed.Requests)
+			map[string]any{"joinParagraphs": false}, &changed))
+		assert.Equal(t, api.TTSEngineRequests{MaxChars: 4000}, changed.Requests)
+		assert.True(t, changed.RequestsCustom)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/tts/engines/gem",
+			map[string]any{"maxChars": 2500}, &changed))
+		assert.Equal(t, api.TTSEngineRequests{MaxChars: 2500}, changed.Requests, "the earlier change stays")
 		assert.Equal(t, api.TTSEngineRequests{MaxChars: 4000, JoinParagraphs: true}, changed.Defaults)
 		stored, err := s.EngineRequests(context.Background(), "gem")
 		require.NoError(t, err)
-		assert.Equal(t, &store.EngineRequests{MaxChars: 2500}, stored, "applied again after a restart")
+		require.NotNil(t, stored, "applied again after a restart")
+		assert.Equal(t, 2500, *stored.MaxChars)
+		assert.False(t, *stored.JoinParagraphs)
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/tts/engines", nil, &engines))
+		assert.True(t, engines[1].RequestsCustom)
 		require.Equal(t, http.StatusBadRequest, c.json(http.MethodPatch, "/api/tts/engines/gem",
-			map[string]any{"maxChars": 20}, nil))
+			map[string]any{"maxChars": 6000}, nil))
+		stored, err = s.EngineRequests(context.Background(), "gem")
+		require.NoError(t, err)
+		assert.Equal(t, 2500, *stored.MaxChars, "a refused change is not stored")
 		require.Equal(t, http.StatusNotFound, c.json(http.MethodPatch, "/api/tts/engines/nope",
 			map[string]any{"maxChars": 2000}, nil))
 		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/tts/engines/gem",
 			map[string]any{"reset": true}, &changed))
 		assert.Equal(t, changed.Defaults, changed.Requests)
+		assert.False(t, changed.RequestsCustom)
 		stored, err = s.EngineRequests(context.Background(), "gem")
 		require.NoError(t, err)
 		assert.Nil(t, stored)

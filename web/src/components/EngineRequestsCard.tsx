@@ -19,10 +19,8 @@ function EngineRequests({ engine: e }: { engine: TTSEngine }) {
     },
     onError: (err) => notifyError('Could not save the setting', err),
   });
-  const custom =
-    e.requests.maxChars !== e.defaults.maxChars ||
-    e.requests.joinParagraphs !== e.defaults.joinParagraphs;
-  const changed = typeof maxChars === 'number' && maxChars !== e.requests.maxChars;
+  const valid = typeof maxChars === 'number' && maxChars >= 100 && maxChars <= e.maxChars;
+  const changed = valid && maxChars !== e.requests.maxChars;
   return (
     <Stack gap="xs" data-testid={`engine-requests-${e.name}`}>
       <Text fw={500}>
@@ -46,21 +44,22 @@ function EngineRequests({ engine: e }: { engine: TTSEngine }) {
           label="Longest request"
           description="characters of text in one request"
           min={100}
-          max={10000}
+          max={e.maxChars}
           step={500}
           value={maxChars}
           onChange={setMaxChars}
+          error={!valid && `100 to ${e.maxChars}`}
           w={220}
         />
         <Button
           variant="light"
           disabled={!changed}
           loading={save.isPending}
-          onClick={() => typeof maxChars === 'number' && save.mutate({ maxChars })}
+          onClick={() => valid && save.mutate({ maxChars })}
         >
           Save
         </Button>
-        {custom && (
+        {e.requestsCustom && (
           <Button
             variant="subtle"
             disabled={save.isPending}
@@ -93,7 +92,8 @@ export function EngineRequestsCard() {
           <Text size="sm" c="dimmed">
             The text of a voice is sent in pieces of up to this length. Longer pieces need fewer
             requests. Every change of voice or emotion still starts a new request, so a book without
-            character voices needs the fewest. Applies to chapters rendered from now on.
+            character voices needs the fewest. Applies to chapters rendered from now on; a chapter
+            in the middle of rendering speaks its remaining text anew.
           </Text>
         </Stack>
         {engines.data.map((e) => (

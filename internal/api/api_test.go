@@ -72,11 +72,11 @@ func (fakeTTS) EngineVoices(_ context.Context, engine string) ([]string, error) 
 // geminiReset is when the fake Gemini engine's daily quota resets.
 var geminiReset = time.Date(2026, 10, 29, 7, 0, 0, 0, time.UTC)
 
-// fakeRequests are the request options set on the fake's engines.
+// fakeRequests are the request overrides set on the fake's engines.
 var fakeRequests = struct {
 	sync.Mutex
-	m map[string]*tts.RequestOptions
-}{m: map[string]*tts.RequestOptions{}}
+	m map[string]*tts.RequestOverride
+}{m: map[string]*tts.RequestOverride{}}
 
 var geminiDefaults = tts.RequestOptions{MaxChars: 4000, JoinParagraphs: true}
 
@@ -85,7 +85,12 @@ func (fakeTTS) Engines(context.Context) []tts.Engine {
 	defer fakeRequests.Unlock()
 	gem := geminiDefaults
 	if o := fakeRequests.m["gem"]; o != nil {
-		gem = *o
+		if o.MaxChars != nil {
+			gem.MaxChars = *o.MaxChars
+		}
+		if o.JoinParagraphs != nil {
+			gem.JoinParagraphs = *o.JoinParagraphs
+		}
 	}
 	return []tts.Engine{
 		{Name: "cb", Kind: tts.KindChatterbox, Emotions: true, Voices: []string{"Emily.wav"}},
@@ -93,16 +98,23 @@ func (fakeTTS) Engines(context.Context) []tts.Engine {
 			Quota: &tts.Quota{Day: "2026-10-28", Today: tts.Usage{Requests: 12, InputTokens: 900, OutputTokens: 30000},
 				Limits: tts.EngineLimits{RPD: 100}, Learned: true, ResetAt: geminiReset,
 				Timezone: "America/Los_Angeles", State: tts.QuotaReady},
-			Requests: gem, Defaults: geminiDefaults},
+			Requests: gem, Defaults: geminiDefaults, MaxChars: 5000},
 	}
 }
 
-func (fakeTTS) SetRequestOptions(engine string, o *tts.RequestOptions) error {
+func (fakeTTS) CheckRequestOverride(engine string, o *tts.RequestOverride) error {
 	if engine != "gem" && engine != "cb" {
 		return tts.ErrUnknownEngine
 	}
-	if o != nil && (o.MaxChars < 100 || o.MaxChars > tts.MaxRequestChars) {
-		return errors.New("maxChars must be between 100 and 10000")
+	if o != nil && o.MaxChars != nil && (*o.MaxChars < 100 || *o.MaxChars > 5000) {
+		return errors.New("maxChars must be between 100 and 5000")
+	}
+	return nil
+}
+
+func (f fakeTTS) SetRequestOverride(engine string, o *tts.RequestOverride) error {
+	if err := f.CheckRequestOverride(engine, o); err != nil {
+		return err
 	}
 	fakeRequests.Lock()
 	defer fakeRequests.Unlock()

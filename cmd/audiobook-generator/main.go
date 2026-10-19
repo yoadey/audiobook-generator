@@ -100,14 +100,11 @@ func run() error {
 	// Request options set in the UI.
 	for _, name := range speech.EngineNames() {
 		o, err := st.EngineRequests(ctx, name)
-		if err != nil || o == nil {
-			if err != nil {
-				log.Warn("read the request options of a speech engine", "engine", name, "err", err)
-			}
-			continue
+		if err == nil {
+			err = speech.SetRequestOverride(name, api.RequestOverride(o))
 		}
-		if err := speech.SetRequestOptions(name, &tts.RequestOptions{MaxChars: o.MaxChars, JoinParagraphs: o.JoinParagraphs}); err != nil {
-			log.Warn("apply the request options of a speech engine", "engine", name, "err", err)
+		if err != nil {
+			log.Warn("apply the request options set for a speech engine", "engine", name, "err", err)
 		}
 	}
 	// Books without a voice of their own speak with the default engine.

@@ -255,35 +255,46 @@ func (r *remote) geminiOnce(ctx context.Context, voice, text string, preview boo
 			}
 			continue
 		}
-		if !preview {
-			select {
-			case r.sem <- struct{}{}:
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
+		pcm, sent, err := r.geminiSlot(ctx, voice, text, est, preview)
+		if sent {
+			return pcm, err
 		}
-		// Another request may have taken the window meanwhile.
-		now = time.Now()
-		release, _, ok := g.limiter.Reserve(now, est)
-		if !ok {
-			if !preview {
-				<-r.sem
-			}
-			continue
+		if err != nil {
+			return nil, err
 		}
-		pcm, err := r.geminiSend(ctx, voice, text, now, release)
-		if !preview {
-			<-r.sem
-		}
-		return pcm, err
 	}
+}
+
+// geminiSlot sends the request in one of the engine's slots (a preview
+// takes none) if the quota's window is still free; sent is false when
+// another request took the window meanwhile.
+func (r *remote) geminiSlot(ctx context.Context, voice, text string, est int, preview bool) ([]byte, bool, error) {
+	if !preview {
+		select {
+		case r.sem <- struct{}{}:
+			defer func() { <-r.sem }()
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+	}
+	now := time.Now()
+	release, _, ok := r.gemini.limiter.Reserve(now, est)
+	if !ok {
+		return nil, false, nil
+	}
+	pcm, err := r.geminiSend(ctx, voice, text, now, release)
+	return pcm, true, err
 }
 
 // errNoAudio: the model answered without audio (now and then it does;
 // asking again helps).
 var errNoAudio = errors.New("no audio in the answer")
 
-// geminiRetry defers a job after a server error of the engine.
+// geminiMaxAudio bounds the PCM of one answer (about 11 minutes; a
+// request of the longest allowed text is about 6).
+const geminiMaxAudio = 32 << 20
+
+// geminiRetry defers a job while the engine is overloaded.
 const geminiRetry = 2 * time.Minute
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -336,9 +347,8 @@ func (r *remote) geminiSend(ctx context.Context, voice, text string, start time.
 	data, status, header, err := r.geminiPost(ctx, voice, text)
 	if err != nil {
 		release(0)
-		// No answer: most likely not counted by the quota either.
-		usage.Requests, usage.Errors = 0, 1
-		g.limiter.Refund(start)
+		// The request may have reached the engine: it stays counted.
+		usage.Errors = 1
 		if ctx.Err() == nil {
 			g.limiter.Failed(time.Now(), 0, err.Error())
 		}
@@ -347,7 +357,7 @@ func (r *remote) geminiSend(ctx context.Context, voice, text string, start time.
 	if status != http.StatusOK {
 		release(0)
 		usage.Errors = 1
-		return nil, r.geminiFailed(status, header, data, &usage)
+		return nil, r.geminiFailed(status, header, data, start, &usage)
 	}
 	var ans geminiAnswer
 	if err := json.Unmarshal(data, &ans); err != nil {
@@ -426,19 +436,21 @@ func (r *remote) geminiPost(ctx context.Context, voice, text string) ([]byte, in
 	}
 	defer func() { _ = resp.Body.Close() }()
 	// The audio comes base64-encoded in JSON.
-	limit := int64(MaxResponseBytes/3*4 + (1 << 20))
+	limit := int64(geminiMaxAudio/3*4 + (1 << 20))
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, 0, nil, err
 	}
 	if int64(len(data)) > limit {
-		return nil, 0, nil, errors.New("synthesis response too large")
+		// The same text gives as much audio again: never asked again.
+		return nil, 0, nil, &HTTPError{Status: http.StatusRequestEntityTooLarge,
+			Body: r.cfg.Name + ": the answer is too long; lower the longest request (maxChars)"}
 	}
 	return data, resp.StatusCode, resp.Header, nil
 }
 
 // geminiFailed turns an error answer into an error, and tells the limiter.
-func (r *remote) geminiFailed(status int, header http.Header, data []byte, usage *Usage) error {
+func (r *remote) geminiFailed(status int, header http.Header, data []byte, start time.Time, usage *Usage) error {
 	g := r.gemini
 	now := time.Now()
 	info := parseGeminiError(data)
@@ -449,7 +461,7 @@ func (r *remote) geminiFailed(status int, header http.Header, data []byte, usage
 	case status == http.StatusTooManyRequests:
 		// A refused request does not count against the daily quota.
 		usage.RateLimited, usage.Requests = 1, 0
-		g.limiter.Refund(now)
+		g.limiter.Refund(start)
 		g.learn(info.limits, r.cfg.Limits)
 		g.limiter.RateLimited(now, cmp.Or(retryAfter(header.Get("Retry-After"), now), info.retryDelay), info.daily, msg)
 		until := now.Add(geminiMaxWait)
@@ -466,9 +478,10 @@ func (r *remote) geminiFailed(status int, header http.Header, data []byte, usage
 		// A wrong key or model: wait for the configuration to be fixed.
 		g.limiter.Failed(now, geminiKeyWait, msg)
 		return &UnavailableError{Engine: r.cfg.Name, Until: now.Add(geminiKeyWait), Reason: detail}
-	case status >= 500:
-		// The engine has trouble: wait a little, without using up the
-		// job's attempts.
+	case status == http.StatusServiceUnavailable:
+		// The engine is overloaded: wait a little, without using up the
+		// job's attempts (an error that stays, such as a 500 for one
+		// text, uses them up instead of being asked for forever).
 		g.limiter.Failed(now, 0, msg)
 		return &UnavailableError{Engine: r.cfg.Name, Until: now.Add(geminiRetry), Reason: detail}
 	default:

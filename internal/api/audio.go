@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -308,7 +309,13 @@ func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObje
 	out := []TTSEngine{}
 	if l, ok := s.TTS.(EngineLister); ok {
 		for _, e := range l.Engines(ctx) {
-			out = append(out, toTTSEngine(e))
+			v := toTTSEngine(e)
+			stored, err := s.Store.EngineRequests(ctx, e.Name)
+			if err != nil {
+				return nil, err
+			}
+			v.RequestsCustom = stored != nil
+			out = append(out, v)
 		}
 	}
 	return ListTTSEngines200JSONResponse(out), nil
@@ -325,56 +332,67 @@ func toTTSEngine(e tts.Engine) TTSEngine {
 		Error: nonEmpty(e.Err), Quota: toEngineQuota(e.Quota),
 		Requests: TTSEngineRequests{MaxChars: e.Requests.MaxChars, JoinParagraphs: e.Requests.JoinParagraphs},
 		Defaults: TTSEngineRequests{MaxChars: e.Defaults.MaxChars, JoinParagraphs: e.Defaults.JoinParagraphs},
+		MaxChars: e.MaxChars,
 	}
 }
 
 // EngineRequestSetter changes how long an engine's requests get.
 type EngineRequestSetter interface {
-	SetRequestOptions(engine string, o *tts.RequestOptions) error
+	CheckRequestOverride(engine string, o *tts.RequestOverride) error
+	SetRequestOverride(engine string, o *tts.RequestOverride) error
 }
 
-// UpdateTTSEngine changes how long an engine's requests get; the change
-// is stored and applied again after a restart.
+// RequestOverride is a stored override of an engine's request options.
+func RequestOverride(o *store.EngineRequests) *tts.RequestOverride {
+	if o == nil {
+		return nil
+	}
+	return &tts.RequestOverride{MaxChars: o.MaxChars, JoinParagraphs: o.JoinParagraphs}
+}
+
+// UpdateTTSEngine changes how long an engine's requests get: only the
+// fields given are overridden (the others follow the configuration); the
+// override is stored and applied again after a restart.
 func (s *Server) UpdateTTSEngine(ctx context.Context, req UpdateTTSEngineRequestObject) (UpdateTTSEngineResponseObject, error) {
 	l, ok := s.TTS.(EngineLister)
 	setter, ok2 := s.TTS.(EngineRequestSetter)
-	if !ok || !ok2 {
+	if !ok || !ok2 || !slices.ContainsFunc(l.Engines(ctx), func(e tts.Engine) bool { return e.Name == req.Name }) {
 		return UpdateTTSEngine404JSONResponse(errMsg("engine not configured")), nil
 	}
-	find := func() *tts.Engine {
-		for _, e := range l.Engines(ctx) {
-			if e.Name == req.Name {
-				return &e
-			}
+	stored, err := s.Store.EngineRequests(ctx, req.Name)
+	if err != nil {
+		return nil, err
+	}
+	if b := req.Body; b.Reset != nil && *b.Reset {
+		stored = nil
+	} else {
+		if stored == nil {
+			stored = &store.EngineRequests{}
 		}
-		return nil
-	}
-	e := find()
-	if e == nil {
-		return UpdateTTSEngine404JSONResponse(errMsg("engine not configured")), nil
-	}
-	var opts *tts.RequestOptions
-	if b := req.Body; b.Reset == nil || !*b.Reset {
-		o := e.Requests
 		if b.MaxChars != nil {
-			o.MaxChars = *b.MaxChars
+			stored.MaxChars = b.MaxChars
 		}
 		if b.JoinParagraphs != nil {
-			o.JoinParagraphs = *b.JoinParagraphs
+			stored.JoinParagraphs = b.JoinParagraphs
 		}
-		opts = &o
 	}
-	if err := setter.SetRequestOptions(req.Name, opts); err != nil {
+	if err := setter.CheckRequestOverride(req.Name, RequestOverride(stored)); err != nil {
 		return UpdateTTSEngine400JSONResponse{ErrorJSONResponse(errMsg(err.Error()))}, nil
-	}
-	var stored *store.EngineRequests
-	if opts != nil {
-		stored = &store.EngineRequests{MaxChars: opts.MaxChars, JoinParagraphs: opts.JoinParagraphs}
 	}
 	if err := s.Store.SetEngineRequests(ctx, req.Name, stored); err != nil {
 		return nil, err
 	}
-	return UpdateTTSEngine200JSONResponse(toTTSEngine(*find())), nil
+	if err := setter.SetRequestOverride(req.Name, RequestOverride(stored)); err != nil {
+		return nil, err
+	}
+	for _, e := range l.Engines(ctx) {
+		if e.Name == req.Name {
+			out := toTTSEngine(e)
+			out.RequestsCustom = stored != nil
+			return UpdateTTSEngine200JSONResponse(out), nil
+		}
+	}
+	return UpdateTTSEngine404JSONResponse(errMsg("engine not configured")), nil
 }
 
 // toEngineQuota is the API view of a cloud engine's quota (nil for none).

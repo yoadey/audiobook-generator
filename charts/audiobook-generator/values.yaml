@@ -293,12 +293,13 @@ tts:
     # Google's daily quotas reset at midnight Pacific time.
     quotaTimezone: America/Los_Angeles
     concurrency: 1
-    timeout: 5m
+    # Per request: the longest ones speak about five minutes.
+    timeout: 10m
     # Evens out its loudness against Kokoro's.
     gain: 1
-    # Longest text sent at once: the pieces in one voice are joined up to
-    # it (fewer, longer requests save quota). Both can be changed in the UI
-    # (Settings, Speech requests).
+    # Longest text sent at once (at most 5000): the pieces in one voice are
+    # joined up to it (fewer, longer requests save quota). Both can be
+    # changed in the UI (Settings, Speech requests).
     maxChars: 4000
     # Read consecutive paragraphs in one voice in one request, not only
     # those the chapter preparation found to flow on.

@@ -1632,6 +1632,8 @@ describe('App', () => {
       voices: ['Kore'],
       requests: { maxChars: 4000, joinParagraphs: true },
       defaults: { maxChars: 4000, joinParagraphs: true },
+      requestsCustom: false,
+      maxChars: 5000,
     };
     const fetch = stubApi({
       '/api/llm/providers': [],
@@ -1639,6 +1641,7 @@ describe('App', () => {
       'PATCH /api/tts/engines/gemini': {
         ...gemini,
         requests: { maxChars: 4000, joinParagraphs: false },
+        requestsCustom: true,
       },
     });
     renderAt('/settings');
@@ -1653,6 +1656,12 @@ describe('App', () => {
       .map(([r]) => r)
       .find((r): r is Request => typeof r !== 'string' && r.method === 'PATCH');
     expect(await patch?.json()).toEqual({ joinParagraphs: false });
+
+    // Beyond what the engine takes: not sent.
+    const input = within(card).getByRole('textbox', { name: /Longest request/ });
+    fireEvent.change(input, { target: { value: '6000' } });
+    expect(within(card).getByText('100 to 5000')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 
   it('says when a cloud engine waits for its quota', async () => {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -225,16 +226,24 @@ func TestGeminiSynthesize(t *testing.T) {
 
 	// The request options can be changed while running, and reset.
 	assert.True(t, r.JoinParagraphs("gemini:Kore"))
-	require.NoError(t, r.SetRequestOptions("gemini", &RequestOptions{MaxChars: 1500}))
+	chars, off := 1500, false
+	require.NoError(t, r.SetRequestOverride("gemini", &RequestOverride{MaxChars: &chars, JoinParagraphs: &off}))
 	assert.Equal(t, 1500, r.JoinLimit("gemini:Kore"))
 	assert.False(t, r.JoinParagraphs("gemini:Kore"))
 	e = r.Engines(context.Background())[0]
 	assert.Equal(t, RequestOptions{MaxChars: 1500}, e.Requests)
 	assert.Equal(t, RequestOptions{MaxChars: 4000, JoinParagraphs: true}, e.Defaults)
-	assert.Error(t, r.SetRequestOptions("gemini", &RequestOptions{MaxChars: 50}))
-	assert.ErrorIs(t, r.SetRequestOptions("nope", &RequestOptions{MaxChars: 500}), ErrUnknownEngine)
-	require.NoError(t, r.SetRequestOptions("gemini", nil))
+	assert.Equal(t, 5000, e.MaxChars)
+	// Only what is set is overridden.
+	require.NoError(t, r.SetRequestOverride("gemini", &RequestOverride{JoinParagraphs: &off}))
 	assert.Equal(t, 4000, r.JoinLimit("gemini:Kore"))
+	for _, bad := range []int{50, 6000} {
+		assert.Error(t, r.CheckRequestOverride("gemini", &RequestOverride{MaxChars: &bad}), "%d", bad)
+	}
+	assert.ErrorIs(t, r.SetRequestOverride("nope", nil), ErrUnknownEngine)
+	require.NoError(t, r.SetRequestOverride("gemini", nil))
+	assert.Equal(t, 4000, r.JoinLimit("gemini:Kore"))
+	assert.True(t, r.JoinParagraphs("gemini:Kore"))
 	assert.False(t, r.JoinParagraphs("af_heart"), "Kokoro's pieces are never joined")
 }
 
@@ -377,6 +386,27 @@ func TestGeminiErrors(t *testing.T) {
 		require.ErrorAs(t, err, &ue, "the job waits a little instead of using up an attempt")
 		assert.Equal(t, "The model is overloaded.", ue.Reason)
 		assert.WithinDuration(t, time.Now().Add(geminiRetry), ue.Until, time.Minute)
+	})
+	t.Run("internal error", func(t *testing.T) {
+		srv, _ := fakeGemini(t, func(geminiRequest) (int, string) {
+			return http.StatusInternalServerError, `{"error":{"code":500,"message":"An internal error has occurred."}}`
+		})
+		r, usage := geminiRouter(t, srv.URL, nil)
+		_, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "gemini:Kore"})
+		var he *HTTPError
+		require.ErrorAs(t, err, &he, "it uses up an attempt: an error that stays must end")
+		assert.False(t, he.Permanent())
+		assert.EqualValues(t, 1, usage.today("gemini").Requests)
+	})
+	t.Run("answer too long", func(t *testing.T) {
+		srv, _ := fakeGemini(t, func(geminiRequest) (int, string) {
+			return http.StatusOK, strings.Repeat(" ", geminiMaxAudio/3*4+(2<<20))
+		})
+		r, _ := geminiRouter(t, srv.URL, nil)
+		_, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "gemini:Kore"})
+		var he *HTTPError
+		require.ErrorAs(t, err, &he)
+		assert.True(t, he.Permanent(), "the same text would be as long again")
 	})
 	t.Run("audio in parts", func(t *testing.T) {
 		pcm := func(v int16) string {

@@ -54,8 +54,11 @@ the cloud), can be configured beside it or instead of it.
   pace for them (it still makes whispers softer and shouts louder). An
   engine that does not take a speed is left at its own pace.
 - *Settings* (*Speech requests*) changes `maxChars` and `joinParagraphs`
-  of each engine while running (kept across restarts; *Reset* goes back
-  to the configuration). They apply to chapters rendered from then on.
+  of each engine while running (kept across restarts; only what was
+  changed overrides the configuration, *Reset* goes back to it). `maxChars`
+  can be set up to 5000 for Gemini, 4000 for OpenAI-compatible servers
+  and 10000 for Chatterbox. They apply to chapters rendered from then on;
+  a chapter in the middle of rendering speaks its remaining text anew.
 - Each request to an engine is as long as the text allows: the pieces of
   a paragraph that one voice speaks in one style (its sentences, a
   dialogue tag between them before the speakers are known) go out
@@ -201,8 +204,11 @@ and it is not queued behind a chapter's requests); beyond that, and once
 the daily quota is used up (by `rpd`/`tpd` or a 429), rendering jobs are
 deferred and go on when the quota resets (midnight Pacific time) or the
 engine's retry hint has passed. A request Gemini refuses with 429, or
-that got no answer, is not counted. A server error (5xx) defers the job
-for 2 minutes; an answer without audio is asked for once more. A refused
+that got no answer, is not counted. An overloaded engine (503) defers the
+job for 2 minutes; another server error uses up an attempt (an error that
+stays for one text must end); an answer without audio is asked for once
+more; an answer longer than about 11 minutes of audio fails its chapter
+(lower `maxChars`). A refused
 API key or unknown model defers jobs for 15 minutes (fix the Secret and
 restart); a text Gemini refuses to speak (safety filter) fails its chapter
 with that reason. The pieces already spoken stay cached in every case,
