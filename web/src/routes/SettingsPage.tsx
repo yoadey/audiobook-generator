@@ -12,6 +12,7 @@ import {
 } from '../api/client';
 import { LLMProviderCard } from '../components/LLMProviderCard';
 import { LLMProviderForm } from '../components/LLMProviderForm';
+import { EngineRequestsCard } from '../components/EngineRequestsCard';
 import { PreviewTextCard } from '../components/PreviewTextCard';
 import { UnloadModelsCard } from '../components/UnloadModelsCard';
 import { notifyError, notifySuccess } from '../lib/notify';
@@ -128,6 +129,7 @@ export function SettingsPage() {
         Voices
       </Title>
       <PreviewTextCard />
+      <EngineRequestsCard />
       <UnloadModelsCard />
     </Stack>
   );

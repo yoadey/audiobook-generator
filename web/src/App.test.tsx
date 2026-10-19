@@ -1623,6 +1623,38 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Listen to Puck' })).toBeEnabled();
   });
 
+  it('sets how long the requests of an engine get', async () => {
+    const gemini = {
+      name: 'gemini',
+      kind: 'gemini',
+      emotions: false,
+      speed: false,
+      voices: ['Kore'],
+      requests: { maxChars: 4000, joinParagraphs: true },
+      defaults: { maxChars: 4000, joinParagraphs: true },
+    };
+    const fetch = stubApi({
+      '/api/llm/providers': [],
+      '/api/tts/engines': [gemini],
+      'PATCH /api/tts/engines/gemini': {
+        ...gemini,
+        requests: { maxChars: 4000, joinParagraphs: false },
+      },
+    });
+    renderAt('/settings');
+    const card = await screen.findByTestId('engine-requests-gemini');
+    const across = within(card).getByRole('switch', { name: /Read across paragraphs/ });
+    expect(across).toBeChecked();
+    fireEvent.click(across);
+    expect(
+      await within(card).findByRole('button', { name: /Reset to 4000 characters/ }),
+    ).toBeInTheDocument();
+    const patch = fetch.mock.calls
+      .map(([r]) => r)
+      .find((r): r is Request => typeof r !== 'string' && r.method === 'PATCH');
+    expect(await patch?.json()).toEqual({ joinParagraphs: false });
+  });
+
   it('says when a cloud engine waits for its quota', async () => {
     stubApi({
       '/api/voices': voices,

@@ -179,6 +179,17 @@ func (l *Limiter) Reserve(now time.Time, est int) (func(tokens int), Availabilit
 	}, Availability{At: now}, true
 }
 
+// Refund takes back a request from today's count (it reached the server
+// but was refused, so the quota did not count it); the minute's window
+// keeps it.
+func (l *Limiter) Refund(at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.dayLoaded && l.day == DayOf(at, l.loc) && l.dayRequests > 0 {
+		l.dayRequests--
+	}
+}
+
 // RateLimited records a 429: wait for the server's hint, or back off
 // exponentially (15 s, 30 s, … up to 15 min); a daily quota waits for the
 // next reset.

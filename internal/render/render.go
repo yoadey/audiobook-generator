@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -67,6 +68,9 @@ type Engines interface {
 	// JoinLimit is the longest text the engine takes in one request (0:
 	// pieces are never joined, Kokoro's).
 	JoinLimit(voice string) int
+	// JoinParagraphs: the engine reads consecutive paragraphs in one
+	// request (up to JoinLimit), not only those that flow on.
+	JoinParagraphs(voice string) bool
 }
 
 // VoiceCatalog lists the voices pool voices are chosen from: those of the
@@ -180,6 +184,9 @@ func NarratorVoice(b *store.Book, defaultVoice string) (string, float64) {
 	return voice, speed
 }
 
+// pieceDoneKey: a context value, called when a piece was synthesized.
+type pieceDoneKey struct{}
+
 // Handler is the job handler for JobType.
 func (r *Renderer) Handler() jobs.Handler {
 	return jobs.Handler{
@@ -188,6 +195,20 @@ func (r *Renderer) Handler() jobs.Handler {
 			if j.ChapterID == nil {
 				return jobs.Permanent(errors.New("render job without chapter"))
 			}
+			// Attempts count failures without progress: a long chapter
+			// whose pieces mostly succeed is not given up on.
+			var once sync.Once
+			ctx = context.WithValue(ctx, pieceDoneKey{}, func(ctx context.Context) {
+				once.Do(func() {
+					if j.Attempts <= 1 {
+						return
+					}
+					j.Attempts = 1
+					if err := r.Store.ResetJobAttempts(ctx, j.ID); err != nil {
+						r.Log.Warn("reset job attempts", "job", j.ID, "err", err)
+					}
+				})
+			})
 			return r.Render(ctx, *j.ChapterID, progress)
 		},
 		OnFail: func(ctx context.Context, j *store.Job, err error) {
@@ -202,9 +223,9 @@ func (r *Renderer) Handler() jobs.Handler {
 			if serr := r.Store.SetAudioStatus(ctx, status, truncate(err.Error(), maxSynthErrLen), *j.ChapterID); serr != nil {
 				r.Log.Error("mark audio failed", "chapter", *j.ChapterID, "err", serr)
 			}
-			if rerr := os.RemoveAll(CacheDir(r.DataDir, *j.ChapterID)); rerr != nil {
-				r.Log.Warn("remove render cache", "chapter", *j.ChapterID, "err", rerr)
-			}
+			// The pieces spoken so far (perhaps against an engine's quota)
+			// stay cached for the next render; the cache goes once the
+			// chapter is rendered or its text changes.
 		},
 	}
 }
@@ -428,7 +449,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 	gapLast(gapTail)
 	pauses(items)
 	if engines != nil {
-		items = join(items, engines.JoinLimit)
+		items = join(items, engines.JoinLimit, engines.JoinParagraphs)
 	}
 	return items
 }
@@ -438,9 +459,12 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 // dialogue tag): consecutive items of one voice and style, separated only
 // by the plain pause between segments, up to the engine's limit; across
 // paragraphs too where the chapter preparation found one flows on from
-// the other. Pauses that mean something (after a thought, a trailing
-// line, one the chapter preparation asks for) still split them.
-func join(items []item, limitOf func(voice string) int) []item {
+// the other, or every paragraph where the engine reads on across them (a
+// quota that counts requests); those keep a blank line between them, for
+// the engine's own pause. Pauses that mean something (after a thought, a
+// trailing line, one the chapter preparation asks for, a heading, a
+// scene break) still split them.
+func join(items []item, limitOf func(voice string) int, acrossParas func(voice string) bool) []item {
 	out := items[:0:0]
 	for _, it := range items {
 		n := len(out)
@@ -450,10 +474,14 @@ func join(items []item, limitOf func(voice string) int) []item {
 		}
 		prev := &out[n-1]
 		limit := limitOf(it.voice)
+		sep := " "
 		readsOn := prev.plain && (prev.gap == gapSegment || prev.gap == gapPara && prev.flows)
+		if !readsOn && prev.plain && prev.gap == gapPara && acrossParas(it.voice) {
+			readsOn, sep = true, "\n\n"
+		}
 		if prev.engine == "" || prev.engine != it.engine || prev.voice != it.voice || prev.speed != it.speed ||
 			prev.gain != it.gain || !prev.style.same(it.style) || !readsOn || limit <= 0 ||
-			utf8.RuneCountInString(prev.text)+1+utf8.RuneCountInString(it.text) > limit {
+			utf8.RuneCountInString(prev.text)+len(sep)+utf8.RuneCountInString(it.text) > limit {
 			out = append(out, it)
 			continue
 		}
@@ -466,7 +494,7 @@ func join(items []item, limitOf func(voice string) int) []item {
 		prev.parts = append(prev.parts, it.parts...)
 		// The joined item ends where the last one did.
 		joined := it
-		joined.text = prev.text + " " + it.text
+		joined.text = prev.text + sep + it.text
 		joined.segmentID, joined.parts = prev.segmentID, prev.parts
 		*prev = joined
 	}
@@ -642,6 +670,9 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 			}
 			if err := writeAtomic(files[i], pcm); err != nil {
 				return err
+			}
+			if done, ok := ctx.Value(pieceDoneKey{}).(func(context.Context)); ok {
+				done(ctx)
 			}
 			progressCh <- struct{}{}
 			return nil

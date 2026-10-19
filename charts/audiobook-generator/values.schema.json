@@ -609,6 +609,9 @@
               "maxChars": {
                 "type": "integer",
                 "minimum": 1
+              },
+              "joinParagraphs": {
+                "type": "boolean"
               }
             }
           }
@@ -687,6 +690,9 @@
             "maxChars": {
               "type": "integer",
               "minimum": 1
+            },
+            "joinParagraphs": {
+              "type": "boolean"
             }
           }
         },

@@ -53,6 +53,9 @@ the cloud), can be configured beside it or instead of it.
   mood and whether it is a thought, and the render does not change its
   pace for them (it still makes whispers softer and shouts louder). An
   engine that does not take a speed is left at its own pace.
+- *Settings* (*Speech requests*) changes `maxChars` and `joinParagraphs`
+  of each engine while running (kept across restarts; *Reset* goes back
+  to the configuration). They apply to chapters rendered from then on.
 - Each request to an engine is as long as the text allows: the pieces of
   a paragraph that one voice speaks in one style (its sentences, a
   dialogue tag between them before the speakers are known) go out
@@ -61,7 +64,10 @@ the cloud), can be configured beside it or instead of it.
   a thought, a line trailing off, one the chapter preparation asks for)
   and another voice start a new request, and so does every paragraph end
   unless the chapter preparation found that the next paragraph flows on
-  from it. Speech the narrator reads without an emotion of its own (an
+  from it, or (`joinParagraphs`) whenever the next paragraph goes on in
+  the same voice and style: joined paragraphs keep a blank line between
+  them, and the engine's own pause replaces the app's. Speech the
+  narrator reads without an emotion of its own (an
   unknown speaker, or every quotation in a book without character
   voices) is read like the narration around it, so it joins in too.
   Chatterbox-TTS-Server splits text longer than 450 characters (about
@@ -108,7 +114,8 @@ and `tts.chatterbox`):
 | `gain` | Loudness factor (default 1; never clips) |
 | `speed` | Whether it takes a voice's speed (default: `openai` yes, `chatterbox` no; `gemini` never) |
 | `voices` | Voices to offer in addition to those the server lists |
-| `maxChars` | Longest text sent in one request; the pieces of a paragraph in one voice are joined up to it (default: `chatterbox` 1000, `gemini` 2000, `openai` 400) |
+| `maxChars` | Longest text sent in one request; the pieces of a paragraph in one voice are joined up to it (default: `chatterbox` 1000, `gemini` 4000, `openai` 400) |
+| `joinParagraphs` | Read consecutive paragraphs in one voice and style in one request, not only those the chapter preparation found to flow on (default: `gemini` yes, others no) |
 | `defaultVoice` | Narrator when a book switches to this engine (default: Chatterbox `Emily.wav`, Gemini `Kore`, else the first of `voices`) |
 | `apiKeyEnv` | Gemini only: environment variable with the API key (required) |
 | `limits` | Gemini only: `rpm`, `tpm`, `rpd`, `tpd` of the model's quota (0: unknown; tokens are text tokens) |
@@ -174,9 +181,14 @@ app sends `POST {url}/models/{model}:generateContent` with
 and turns the 24 kHz PCM answer into the chapter's audio like any other.
 Previews are encoded to MP3 with ffmpeg.
 
-**Quota.** Every request counts: each piece of a chapter (pieces of one
-voice in a paragraph are joined up to `maxChars`, 2000 by default, to need
-fewer) and each voice preview. The app counts requests and tokens per
+**Quota.** Every request counts: each piece of a chapter and each voice
+preview. To need few, a Gemini engine reads across paragraphs: consecutive
+text in one voice and style goes out in one request of up to `maxChars`
+(4000 characters by default, about four minutes of speech; both can be
+changed in *Settings*, *Speech requests*). Every change of voice or of a
+quote's emotion starts a new request, so a dialogue-heavy chapter with
+character voices needs many more requests than one read by the narrator
+alone (*Character voices* off on the book's *Narrator* card). The app counts requests and tokens per
 day (`tts_usages`, in `quotaTimezone`, kept across restarts) and shows
 them with the engine: *Voices* (requests and text tokens today, requests
 per minute, against the limits), *System*, and the book's *Narrator*
@@ -184,13 +196,18 @@ card ("63 of 100 requests left today"). Google offers no way to ask for
 the remaining quota, so what is left is counted against `limits`; when
 they are not set, the limits Gemini names in its first 429 answer
 (`QuotaFailure`) are used until a restart, and the display says so.
-Requests wait for the per-minute window (up to 70 s); beyond that, and
-once the daily quota is used up (by `rpd`/`tpd` or a 429), rendering jobs
-are deferred — the pieces already spoken stay cached — and go on when the
-quota resets (midnight Pacific time) or the engine's retry hint has
-passed. A refused API key or unknown model defers them for 15 minutes
-(fix the Secret and restart); a text Gemini refuses to speak (safety
-filter) fails its chapter with that reason.
+Requests wait for the per-minute window (up to 70 s; a preview 10 s,
+and it is not queued behind a chapter's requests); beyond that, and once
+the daily quota is used up (by `rpd`/`tpd` or a 429), rendering jobs are
+deferred and go on when the quota resets (midnight Pacific time) or the
+engine's retry hint has passed. A request Gemini refuses with 429, or
+that got no answer, is not counted. A server error (5xx) defers the job
+for 2 minutes; an answer without audio is asked for once more. A refused
+API key or unknown model defers jobs for 15 minutes (fix the Secret and
+restart); a text Gemini refuses to speak (safety filter) fails its chapter
+with that reason. The pieces already spoken stay cached in every case,
+also when a render fails, and a render that made progress does not use up
+its job's attempts.
 
 **Emotions.** With `emotions: true` a quote's emotion and thoughts are
 asked for in Google's documented way: an instruction before the text

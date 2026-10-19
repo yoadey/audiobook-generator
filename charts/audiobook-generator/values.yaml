@@ -296,9 +296,13 @@ tts:
     timeout: 5m
     # Evens out its loudness against Kokoro's.
     gain: 1
-    # Longest text sent at once: the pieces of a paragraph in one voice are
-    # joined up to it (fewer, longer requests save quota).
-    maxChars: 2000
+    # Longest text sent at once: the pieces in one voice are joined up to
+    # it (fewer, longer requests save quota). Both can be changed in the UI
+    # (Settings, Speech requests).
+    maxChars: 4000
+    # Read consecutive paragraphs in one voice in one request, not only
+    # those the chapter preparation found to flow on.
+    joinParagraphs: true
   # Chatterbox-TTS-Server (devnen), which speaks emotions itself. Off by
   # default: it needs a GPU for book-length work (on CPU it is roughly ten
   # times slower than Kokoro). When on, it joins tts.engines.

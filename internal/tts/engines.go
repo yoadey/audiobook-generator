@@ -83,6 +83,21 @@ type EngineConfig struct {
 	// and thoughts ("Say angrily: …"; default false: they are given by
 	// loudness, like for Kokoro).
 	Emotions *bool `json:"emotions,omitempty"`
+	// JoinParagraphs: consecutive paragraphs in one voice and style are
+	// read in one request, up to MaxChars (default true for gemini, whose
+	// quota counts requests; false for others, which read across a
+	// paragraph end only where the chapter preparation found it flows on).
+	JoinParagraphs *bool `json:"joinParagraphs,omitempty"`
+}
+
+// MaxRequestChars bounds MaxChars as set at runtime.
+const MaxRequestChars = 10000
+
+// RequestOptions are how long an engine's requests get; they can be
+// changed while running (Router.SetRequestOptions).
+type RequestOptions struct {
+	MaxChars       int
+	JoinParagraphs bool
 }
 
 // EngineLimits are a cloud engine's quota; 0 means none. Tokens are the
@@ -189,12 +204,16 @@ func (c *EngineConfig) Validate() error {
 		speed := c.Kind == KindOpenAI
 		c.Speed = &speed
 	}
+	if c.JoinParagraphs == nil {
+		join := c.Kind == KindGemini
+		c.JoinParagraphs = &join
+	}
 	if c.MaxChars == 0 {
 		switch c.Kind {
 		case KindChatterbox:
 			c.MaxChars = 1000
 		case KindGemini:
-			c.MaxChars = 2000
+			c.MaxChars = 4000
 		default:
 			c.MaxChars = 400
 		}
@@ -235,6 +254,9 @@ type Engine struct {
 	Err string
 	// Quota of a cloud engine (nil for others).
 	Quota *Quota
+	// Requests: how long its requests get (as set now), and Defaults: as
+	// configured.
+	Requests, Defaults RequestOptions
 }
 
 // Router sends a request to Kokoro or, for "<engine>:<voice>" voices, to
@@ -326,8 +348,9 @@ func (r *Router) Synthesize(ctx context.Context, s Speech) ([]byte, error) {
 	if r.mp3 == nil {
 		return nil, fmt.Errorf("%s: no MP3 encoder for previews", e.cfg.Name)
 	}
+	// A preview is not queued behind a chapter's requests.
 	s.Format = "pcm"
-	pcm, err := e.synthesize(ctx, s)
+	pcm, err := e.geminiSpeak(ctx, s, true)
 	if err != nil {
 		return nil, err
 	}
@@ -345,6 +368,9 @@ func (r *Router) SynthesizeTimed(ctx context.Context, s Speech) ([]byte, []Word,
 	}
 	return r.kokoro.SynthesizeTimed(ctx, s)
 }
+
+// EngineNames lists the configured engines besides Kokoro, sorted.
+func (r *Router) EngineNames() []string { return slices.Clone(r.names) }
 
 // Kokoro reports whether Kokoro is configured.
 func (r *Router) Kokoro() bool { return r.kokoro != nil }
@@ -488,7 +514,28 @@ func (r *Router) JoinLimit(voice string) int {
 	if err != nil || e == nil {
 		return 0
 	}
-	return e.cfg.MaxChars
+	return e.requestOptions().MaxChars
+}
+
+// JoinParagraphs reports whether a voice's engine reads consecutive
+// paragraphs in one request.
+func (r *Router) JoinParagraphs(voice string) bool {
+	e, _, err := r.route(voice)
+	return err == nil && e != nil && e.requestOptions().JoinParagraphs
+}
+
+// SetRequestOptions changes how long an engine's requests get (nil: back
+// to its configuration).
+func (r *Router) SetRequestOptions(engine string, o *RequestOptions) error {
+	e := r.engines[engine]
+	if e == nil {
+		return fmt.Errorf("%w: %q", ErrUnknownEngine, engine)
+	}
+	if o != nil && (o.MaxChars < 100 || o.MaxChars > MaxRequestChars) {
+		return fmt.Errorf("maxChars must be between 100 and %d", MaxRequestChars)
+	}
+	e.options.Store(o)
+	return nil
 }
 
 // Engines lists the configured engines with their voices.
@@ -501,6 +548,7 @@ func (r *Router) Engines(ctx context.Context) []Engine {
 		if e.gemini != nil {
 			info.Model = e.cfg.Model
 		}
+		info.Requests, info.Defaults = e.requestOptions(), e.defaultOptions()
 		vs, err := e.voices(ctx, false)
 		if err != nil {
 			info.Err = err.Error()

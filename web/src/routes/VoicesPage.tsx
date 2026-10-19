@@ -84,7 +84,9 @@ function EngineCard({
         </Group>
         <Text size="sm" c="dimmed">
           {e.emotions
-            ? 'Speaks emotions and moods itself.'
+            ? e.quota
+              ? 'Speaks the emotions of quotes and thoughts itself.'
+              : 'Speaks emotions and moods itself.'
             : e.quota
               ? 'Emotions are given by loudness (tts.gemini.emotions asks the engine for them).'
               : 'Emotions are given by loudness (this model has no emotion control).'}{' '}

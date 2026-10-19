@@ -308,18 +308,73 @@ func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObje
 	out := []TTSEngine{}
 	if l, ok := s.TTS.(EngineLister); ok {
 		for _, e := range l.Engines(ctx) {
-			voices := e.Voices
-			if voices == nil {
-				voices = []string{}
-			}
-			out = append(out, TTSEngine{
-				Name: e.Name, Kind: TTSEngineKind(e.Kind), Variant: nonEmpty(e.Variant), Model: nonEmpty(e.Model),
-				Emotions: e.Emotions, Speed: e.Speed, Voices: voices, DefaultVoice: nonEmpty(e.DefaultVoice),
-				Error: nonEmpty(e.Err), Quota: toEngineQuota(e.Quota),
-			})
+			out = append(out, toTTSEngine(e))
 		}
 	}
 	return ListTTSEngines200JSONResponse(out), nil
+}
+
+func toTTSEngine(e tts.Engine) TTSEngine {
+	voices := e.Voices
+	if voices == nil {
+		voices = []string{}
+	}
+	return TTSEngine{
+		Name: e.Name, Kind: TTSEngineKind(e.Kind), Variant: nonEmpty(e.Variant), Model: nonEmpty(e.Model),
+		Emotions: e.Emotions, Speed: e.Speed, Voices: voices, DefaultVoice: nonEmpty(e.DefaultVoice),
+		Error: nonEmpty(e.Err), Quota: toEngineQuota(e.Quota),
+		Requests: TTSEngineRequests{MaxChars: e.Requests.MaxChars, JoinParagraphs: e.Requests.JoinParagraphs},
+		Defaults: TTSEngineRequests{MaxChars: e.Defaults.MaxChars, JoinParagraphs: e.Defaults.JoinParagraphs},
+	}
+}
+
+// EngineRequestSetter changes how long an engine's requests get.
+type EngineRequestSetter interface {
+	SetRequestOptions(engine string, o *tts.RequestOptions) error
+}
+
+// UpdateTTSEngine changes how long an engine's requests get; the change
+// is stored and applied again after a restart.
+func (s *Server) UpdateTTSEngine(ctx context.Context, req UpdateTTSEngineRequestObject) (UpdateTTSEngineResponseObject, error) {
+	l, ok := s.TTS.(EngineLister)
+	setter, ok2 := s.TTS.(EngineRequestSetter)
+	if !ok || !ok2 {
+		return UpdateTTSEngine404JSONResponse(errMsg("engine not configured")), nil
+	}
+	find := func() *tts.Engine {
+		for _, e := range l.Engines(ctx) {
+			if e.Name == req.Name {
+				return &e
+			}
+		}
+		return nil
+	}
+	e := find()
+	if e == nil {
+		return UpdateTTSEngine404JSONResponse(errMsg("engine not configured")), nil
+	}
+	var opts *tts.RequestOptions
+	if b := req.Body; b.Reset == nil || !*b.Reset {
+		o := e.Requests
+		if b.MaxChars != nil {
+			o.MaxChars = *b.MaxChars
+		}
+		if b.JoinParagraphs != nil {
+			o.JoinParagraphs = *b.JoinParagraphs
+		}
+		opts = &o
+	}
+	if err := setter.SetRequestOptions(req.Name, opts); err != nil {
+		return UpdateTTSEngine400JSONResponse{ErrorJSONResponse(errMsg(err.Error()))}, nil
+	}
+	var stored *store.EngineRequests
+	if opts != nil {
+		stored = &store.EngineRequests{MaxChars: opts.MaxChars, JoinParagraphs: opts.JoinParagraphs}
+	}
+	if err := s.Store.SetEngineRequests(ctx, req.Name, stored); err != nil {
+		return nil, err
+	}
+	return UpdateTTSEngine200JSONResponse(toTTSEngine(*find())), nil
 }
 
 // toEngineQuota is the API view of a cloud engine's quota (nil for none).

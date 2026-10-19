@@ -791,6 +791,37 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /tts/engines/{name}:
+    patch:
+      operationId: updateTTSEngine
+      summary: Change how long an engine's requests get (kept across restarts)
+      tags: [audio]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TTSEngineUpdate"
+      responses:
+        "200":
+          description: The engine
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TTSEngine"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /voices/preview:
     post:
       operationId: previewVoice
@@ -2358,7 +2389,7 @@ components:
     TTSEngine:
       type: object
       description: A speech engine besides Kokoro; its voices are written "<name>:<voice>"
-      required: [name, kind, emotions, speed, voices]
+      required: [name, kind, emotions, speed, voices, requests, defaults]
       properties:
         name:
           type: string
@@ -2389,6 +2420,36 @@ components:
           description: Why its voices could not be listed
         quota:
           $ref: "#/components/schemas/TTSEngineQuota"
+        requests:
+          $ref: "#/components/schemas/TTSEngineRequests"
+        defaults:
+          $ref: "#/components/schemas/TTSEngineRequests"
+    TTSEngineRequests:
+      type: object
+      description: How long an engine's requests get
+      required: [maxChars, joinParagraphs]
+      properties:
+        maxChars:
+          type: integer
+          description: Longest text sent in one request
+        joinParagraphs:
+          type: boolean
+          description: >-
+            Consecutive paragraphs in one voice and style are read in one
+            request (fewer requests), not only those the chapter preparation
+            found to flow on
+    TTSEngineUpdate:
+      type: object
+      properties:
+        maxChars:
+          type: integer
+          minimum: 100
+          maximum: 10000
+        joinParagraphs:
+          type: boolean
+        reset:
+          type: boolean
+          description: Back to the engine's configuration (other fields are ignored)
     TTSEngineQuota:
       type: object
       description: >-

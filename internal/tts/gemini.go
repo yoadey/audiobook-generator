@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,6 +105,9 @@ func (c *EngineConfig) validateGemini() error {
 		off := false
 		c.Emotions = &off
 	}
+	if v := c.DefaultVoice; v != "" && !slices.Contains(geminiVoices, v) && !slices.Contains(c.Voices, v) {
+		return fmt.Errorf("engine %s: defaultVoice %q is not one of Gemini's voices (e.g. Kore, Puck, Charon)", c.Name, v)
+	}
 	return nil
 }
 
@@ -163,6 +167,10 @@ func newGemini(c EngineConfig, key string) *gemini {
 func (g *gemini) limits(cfg EngineLimits) quota.Limits {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.limitsLocked(cfg)
+}
+
+func (g *gemini) limitsLocked(cfg EngineLimits) quota.Limits {
 	return quota.Limits{
 		RPM: cmp.Or(cfg.RPM, g.learned.RPM),
 		TPM: cmp.Or(cfg.TPM, g.learned.TPM),
@@ -198,16 +206,35 @@ func (g *gemini) record(ctx context.Context, engine, day string, u Usage) {
 	_ = g.usage.AddTTSUsage(bg, engine, day, u)
 }
 
+// geminiPreviewWait is how long a preview waits for the minute's window.
+const geminiPreviewWait = 10 * time.Second
+
 // geminiSpeak renders a speech with a Gemini engine (SampleRate PCM),
 // within its quota: a request waits up to geminiMaxWait for the minute's
-// window, else an *UnavailableError says when to come back.
-func (r *remote) geminiSpeak(ctx context.Context, s Speech) ([]byte, error) {
-	g := r.gemini
+// window, else an *UnavailableError says when to come back. It waits for
+// the quota before it takes one of the engine's slots, so a render does
+// not hold them while waiting. A preview takes no slot (it is not queued
+// behind a chapter) and waits briefly. An answer without audio is asked
+// for once more.
+func (r *remote) geminiSpeak(ctx context.Context, s Speech, preview bool) ([]byte, error) {
 	text := s.Text
 	if *r.cfg.Emotions {
 		if style := geminiStyle(s); style != "" {
 			text = style + ": " + text
 		}
+	}
+	pcm, err := r.geminiOnce(ctx, s.Voice, text, preview)
+	if errors.Is(err, errNoAudio) {
+		pcm, err = r.geminiOnce(ctx, s.Voice, text, preview)
+	}
+	return pcm, err
+}
+
+func (r *remote) geminiOnce(ctx context.Context, voice, text string, preview bool) ([]byte, error) {
+	g := r.gemini
+	maxWait := geminiMaxWait
+	if preview {
+		maxWait = geminiPreviewWait
 	}
 	est := len(text)/4 + 4
 	for {
@@ -220,7 +247,7 @@ func (r *remote) geminiSpeak(ctx context.Context, s Speech) ([]byte, error) {
 			return nil, &HTTPError{Status: http.StatusRequestEntityTooLarge, Body: r.cfg.Name + ": " + a.Reason}
 		}
 		if a.Reason != "" {
-			if a.At.Sub(now) > geminiMaxWait {
+			if a.At.Sub(now) > maxWait {
 				return nil, &UnavailableError{Engine: r.cfg.Name, Until: a.At, Reason: a.Reason}
 			}
 			if err := sleepCtx(ctx, a.At.Sub(now)); err != nil {
@@ -228,13 +255,36 @@ func (r *remote) geminiSpeak(ctx context.Context, s Speech) ([]byte, error) {
 			}
 			continue
 		}
+		if !preview {
+			select {
+			case r.sem <- struct{}{}:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		// Another request may have taken the window meanwhile.
+		now = time.Now()
 		release, _, ok := g.limiter.Reserve(now, est)
 		if !ok {
+			if !preview {
+				<-r.sem
+			}
 			continue
 		}
-		return r.geminiSend(ctx, s.Voice, text, now, release)
+		pcm, err := r.geminiSend(ctx, voice, text, now, release)
+		if !preview {
+			<-r.sem
+		}
+		return pcm, err
 	}
 }
+
+// errNoAudio: the model answered without audio (now and then it does;
+// asking again helps).
+var errNoAudio = errors.New("no audio in the answer")
+
+// geminiRetry defers a job after a server error of the engine.
+const geminiRetry = 2 * time.Minute
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
@@ -286,7 +336,9 @@ func (r *remote) geminiSend(ctx context.Context, voice, text string, start time.
 	data, status, header, err := r.geminiPost(ctx, voice, text)
 	if err != nil {
 		release(0)
-		usage.Errors = 1
+		// No answer: most likely not counted by the quota either.
+		usage.Requests, usage.Errors = 0, 1
+		g.limiter.Refund(start)
 		if ctx.Err() == nil {
 			g.limiter.Failed(time.Now(), 0, err.Error())
 		}
@@ -305,9 +357,21 @@ func (r *remote) geminiSend(ctx context.Context, voice, text string, start time.
 	}
 	usage.InputTokens, usage.OutputTokens = ans.UsageMetadata.PromptTokenCount, ans.UsageMetadata.CandidatesTokenCount
 	release(int(usage.InputTokens))
-	g.limiter.Succeeded()
 
+	pcm, err := r.geminiAudio(&ans)
+	if err != nil {
+		usage.Errors = 1
+		g.limiter.Failed(time.Now(), 0, err.Error())
+		return nil, err
+	}
+	g.limiter.Succeeded()
+	return pcm, nil
+}
+
+// geminiAudio is the audio of an answer: all its audio parts, in order.
+func (r *remote) geminiAudio(ans *geminiAnswer) ([]byte, error) {
 	finish := ""
+	var pcm []byte
 	for _, c := range ans.Candidates {
 		finish = cmp.Or(finish, c.FinishReason)
 		for _, p := range c.Content.Parts {
@@ -316,24 +380,23 @@ func (r *remote) geminiSend(ctx context.Context, voice, text string, start time.
 			}
 			audio, err := base64.StdEncoding.DecodeString(p.InlineData.Data)
 			if err != nil {
-				usage.Errors = 1
 				return nil, fmt.Errorf("%s: audio: %w", r.cfg.Name, err)
 			}
-			pcm, err := geminiPCM(p.InlineData.MimeType, audio, r.cfg.Gain)
+			part, err := geminiPCM(p.InlineData.MimeType, audio, r.cfg.Gain)
 			if err != nil {
-				usage.Errors = 1
 				return nil, fmt.Errorf("%s: %w", r.cfg.Name, err)
 			}
+			pcm = append(pcm, part...)
+		}
+		if pcm != nil {
 			return pcm, nil
 		}
 	}
-	usage.Errors = 1
 	if b := ans.PromptFeedback.BlockReason; b != "" || geminiRefusals[finish] {
 		return nil, &HTTPError{Status: http.StatusUnprocessableEntity,
 			Body: fmt.Sprintf("%s: refused to speak the text (%s)", r.cfg.Name, cmp.Or(b, finish))}
 	}
-	// Now and then the model answers without audio; asking again helps.
-	return nil, fmt.Errorf("%s: no audio in the answer (finish reason %q)", r.cfg.Name, finish)
+	return nil, fmt.Errorf("%s: %w (finish reason %q)", r.cfg.Name, errNoAudio, finish)
 }
 
 // geminiPost sends a generateContent request.
@@ -379,14 +442,15 @@ func (r *remote) geminiFailed(status int, header http.Header, data []byte, usage
 	g := r.gemini
 	now := time.Now()
 	info := parseGeminiError(data)
-	msg := r.cfg.Name + ": " + cmp.Or(info.Message, strings.TrimSpace(string(truncateBytes(data, 1024))))
+	detail := cmp.Or(info.Message, strings.TrimSpace(string(truncateBytes(data, 1024))))
+	msg := r.cfg.Name + ": " + detail
 	he := &HTTPError{Status: status, Body: msg}
 	switch {
 	case status == http.StatusTooManyRequests:
-		usage.RateLimited = 1
-		if g.learn(info.limits) {
-			g.limiter.Configure(g.limits(r.cfg.Limits), g.loc)
-		}
+		// A refused request does not count against the daily quota.
+		usage.RateLimited, usage.Requests = 1, 0
+		g.limiter.Refund(now)
+		g.learn(info.limits, r.cfg.Limits)
 		g.limiter.RateLimited(now, cmp.Or(retryAfter(header.Get("Retry-After"), now), info.retryDelay), info.daily, msg)
 		until := now.Add(geminiMaxWait)
 		if snap := g.limiter.Snapshot(now); snap.CooldownUntil.After(now) {
@@ -401,7 +465,12 @@ func (r *remote) geminiFailed(status int, header http.Header, data []byte, usage
 		info.Reason == "API_KEY_INVALID":
 		// A wrong key or model: wait for the configuration to be fixed.
 		g.limiter.Failed(now, geminiKeyWait, msg)
-		return &UnavailableError{Engine: r.cfg.Name, Until: now.Add(geminiKeyWait), Reason: msg}
+		return &UnavailableError{Engine: r.cfg.Name, Until: now.Add(geminiKeyWait), Reason: detail}
+	case status >= 500:
+		// The engine has trouble: wait a little, without using up the
+		// job's attempts.
+		g.limiter.Failed(now, 0, msg)
+		return &UnavailableError{Engine: r.cfg.Name, Until: now.Add(geminiRetry), Reason: detail}
 	default:
 		g.limiter.Failed(now, 0, msg)
 		return he
@@ -493,17 +562,20 @@ func parseGeminiError(data []byte) geminiError {
 	return out
 }
 
-// learn keeps the limits a 429 answer named; it reports a change.
-func (g *gemini) learn(l EngineLimits) bool {
+// learn keeps the limits a 429 answer named and applies them where none
+// are configured.
+func (g *gemini) learn(l, configured EngineLimits) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	next := EngineLimits{
 		RPM: cmp.Or(l.RPM, g.learned.RPM), TPM: cmp.Or(l.TPM, g.learned.TPM),
 		RPD: cmp.Or(l.RPD, g.learned.RPD), TPD: cmp.Or(l.TPD, g.learned.TPD),
 	}
-	changed := next != g.learned
+	if next == g.learned {
+		return
+	}
 	g.learned = next
-	return changed
+	g.limiter.Configure(g.limitsLocked(configured), g.loc)
 }
 
 // geminiPCM converts the answer's audio to SampleRate PCM: raw 16-bit PCM
@@ -519,8 +591,8 @@ func geminiPCM(mimeType string, audio []byte, gain float64) ([]byte, error) {
 	case "audio/l16", "audio/pcm":
 		rate := SampleRate
 		if v, ok := params["rate"]; ok {
-			if rate, err = strconv.Atoi(v); err != nil {
-				return nil, fmt.Errorf("audio type %q: rate: %w", mimeType, err)
+			if rate, err = strconv.Atoi(v); err != nil || rate < 8000 || rate > 48000 {
+				return nil, fmt.Errorf("audio type %q: unsupported rate", mimeType)
 			}
 		}
 		return pcmFromL16(audio, rate, gain)
@@ -554,20 +626,16 @@ type Quota struct {
 	LastErrorAt    *time.Time
 }
 
-// status reports the engine's quota.
+// quotaStatus reports the engine's quota (with an error when today's
+// usage could not be read: then it counts none).
 func (r *remote) quotaStatus(ctx context.Context) (*Quota, error) {
 	g := r.gemini
 	now := time.Now()
-	if err := g.loadDay(ctx, r.cfg.Name, now); err != nil {
-		return nil, err
-	}
 	day := quota.DayOf(now, g.loc)
 	var today Usage
-	if g.usage != nil {
-		var err error
-		if today, err = g.usage.TTSUsage(ctx, r.cfg.Name, day); err != nil {
-			return nil, err
-		}
+	var err error
+	if err = g.loadDay(ctx, r.cfg.Name, now); err == nil && g.usage != nil {
+		today, err = g.usage.TTSUsage(ctx, r.cfg.Name, day)
 	}
 	lim := g.limits(r.cfg.Limits)
 	snap := g.limiter.Snapshot(now)
@@ -583,12 +651,12 @@ func (r *remote) quotaStatus(ctx context.Context) (*Quota, error) {
 		t := snap.LastErrorAt
 		q.LastErrorAt = &t
 	}
-	if a := g.limiter.Available(now, 0); a.Reason != "" {
+	if a := g.limiter.Available(now, 1); a.Reason != "" {
 		q.Reason, q.AvailableAt = a.Reason, &a.At
 		q.State = QuotaWaiting
 		if !a.At.Before(q.ResetAt) {
 			q.State = QuotaExhausted
 		}
 	}
-	return q, nil
+	return q, err
 }

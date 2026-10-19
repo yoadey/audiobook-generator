@@ -1674,6 +1674,9 @@ type TTSEngine struct {
 	// DefaultVoice The voice that narrates when a book switches to this engine ("<engine>:<voice>")
 	DefaultVoice *string `json:"defaultVoice,omitempty"`
 
+	// Defaults How long an engine's requests get
+	Defaults TTSEngineRequests `json:"defaults"`
+
 	// Emotions Speaks emotions and moods itself (Kokoro voices get pace and loudness instead)
 	Emotions bool `json:"emotions"`
 
@@ -1687,6 +1690,9 @@ type TTSEngine struct {
 
 	// Quota How much of its quota a cloud engine (Gemini) used today, counted by this server (Google offers no way to ask for the remaining quota).
 	Quota *TTSEngineQuota `json:"quota,omitempty"`
+
+	// Requests How long an engine's requests get
+	Requests TTSEngineRequests `json:"requests"`
 
 	// Speed Takes a voice's speed
 	Speed bool `json:"speed"`
@@ -1722,6 +1728,24 @@ type TTSEngineQuota struct {
 
 // TTSEngineQuotaState defines model for TTSEngineQuota.State.
 type TTSEngineQuotaState string
+
+// TTSEngineRequests How long an engine's requests get
+type TTSEngineRequests struct {
+	// JoinParagraphs Consecutive paragraphs in one voice and style are read in one request (fewer requests), not only those the chapter preparation found to flow on
+	JoinParagraphs bool `json:"joinParagraphs"`
+
+	// MaxChars Longest text sent in one request
+	MaxChars int `json:"maxChars"`
+}
+
+// TTSEngineUpdate defines model for TTSEngineUpdate.
+type TTSEngineUpdate struct {
+	JoinParagraphs *bool `json:"joinParagraphs,omitempty"`
+	MaxChars       *int  `json:"maxChars,omitempty"`
+
+	// Reset Back to the engine's configuration (other fields are ignored)
+	Reset *bool `json:"reset,omitempty"`
+}
 
 // TTSInfo Kokoro (when configured)
 type TTSInfo struct {
@@ -1973,6 +1997,9 @@ type UpdateLLMProviderJSONRequestBody = LLMProviderUpdate
 // UpdateSettingsJSONRequestBody defines body for UpdateSettings for application/json ContentType.
 type UpdateSettingsJSONRequestBody = AppSettingsUpdate
 
+// UpdateTTSEngineJSONRequestBody defines body for UpdateTTSEngine for application/json ContentType.
+type UpdateTTSEngineJSONRequestBody = TTSEngineUpdate
+
 // PreviewVoiceJSONRequestBody defines body for PreviewVoice for application/json ContentType.
 type PreviewVoiceJSONRequestBody = VoicePreview
 
@@ -2152,6 +2179,9 @@ type ServerInterface interface {
 	// ListTTSEngines The speech engines configured besides Kokoro, with their voices
 	// (GET /tts/engines)
 	ListTTSEngines(w http.ResponseWriter, r *http.Request)
+	// UpdateTTSEngine Change how long an engine's requests get (kept across restarts)
+	// (PATCH /tts/engines/{name})
+	UpdateTTSEngine(w http.ResponseWriter, r *http.Request, name string)
 	// ListVoices The voice catalogue, reconciled with the voices the TTS server offers
 	// (GET /voices)
 	ListVoices(w http.ResponseWriter, r *http.Request)
@@ -3837,6 +3867,32 @@ func (siw *ServerInterfaceWrapper) ListTTSEngines(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateTTSEngine operation middleware
+func (siw *ServerInterfaceWrapper) UpdateTTSEngine(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateTTSEngine(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListVoices operation middleware
 func (siw *ServerInterfaceWrapper) ListVoices(w http.ResponseWriter, r *http.Request) {
 
@@ -4018,6 +4074,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/voices", wrapper.ListVoices)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tts/engines", wrapper.ListTTSEngines)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/tts/engines/{name}", wrapper.UpdateTTSEngine)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/voices/preview", wrapper.PreviewVoice)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/jobs/{jobId}/retry", wrapper.RetryJob)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/jobs/{jobId}/cancel", wrapper.CancelJob)
@@ -7581,6 +7638,74 @@ func (response ListTTSEnginesdefaultJSONResponse) VisitListTTSEnginesResponse(w 
 	return err
 }
 
+type UpdateTTSEngineRequestObject struct {
+	Name string `json:"name"`
+	Body *UpdateTTSEngineJSONRequestBody
+}
+
+type UpdateTTSEngineResponseObject interface {
+	VisitUpdateTTSEngineResponse(w http.ResponseWriter) error
+}
+
+type UpdateTTSEngine200JSONResponse TTSEngine
+
+func (response UpdateTTSEngine200JSONResponse) VisitUpdateTTSEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateTTSEngine400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateTTSEngine400JSONResponse) VisitUpdateTTSEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateTTSEngine404JSONResponse Error
+
+func (response UpdateTTSEngine404JSONResponse) VisitUpdateTTSEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateTTSEnginedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response UpdateTTSEnginedefaultJSONResponse) VisitUpdateTTSEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListVoicesRequestObject struct {
 }
 
@@ -7882,6 +8007,9 @@ type StrictServerInterface interface {
 	// ListTTSEngines The speech engines configured besides Kokoro, with their voices
 	// (GET /tts/engines)
 	ListTTSEngines(ctx context.Context, request ListTTSEnginesRequestObject) (ListTTSEnginesResponseObject, error)
+	// UpdateTTSEngine Change how long an engine's requests get (kept across restarts)
+	// (PATCH /tts/engines/{name})
+	UpdateTTSEngine(ctx context.Context, request UpdateTTSEngineRequestObject) (UpdateTTSEngineResponseObject, error)
 	// ListVoices The voice catalogue, reconciled with the voices the TTS server offers
 	// (GET /voices)
 	ListVoices(ctx context.Context, request ListVoicesRequestObject) (ListVoicesResponseObject, error)
@@ -9585,6 +9713,39 @@ func (sh *strictHandler) ListTTSEngines(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListTTSEnginesResponseObject); ok {
 		if err := validResponse.VisitListTTSEnginesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateTTSEngine operation middleware
+func (sh *strictHandler) UpdateTTSEngine(w http.ResponseWriter, r *http.Request, name string) {
+	var request UpdateTTSEngineRequestObject
+
+	request.Name = name
+
+	var body UpdateTTSEngineJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateTTSEngine(ctx, request.(UpdateTTSEngineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateTTSEngine")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateTTSEngineResponseObject); ok {
+		if err := validResponse.VisitUpdateTTSEngineResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

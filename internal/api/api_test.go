@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,14 +72,42 @@ func (fakeTTS) EngineVoices(_ context.Context, engine string) ([]string, error) 
 // geminiReset is when the fake Gemini engine's daily quota resets.
 var geminiReset = time.Date(2026, 10, 29, 7, 0, 0, 0, time.UTC)
 
+// fakeRequests are the request options set on the fake's engines.
+var fakeRequests = struct {
+	sync.Mutex
+	m map[string]*tts.RequestOptions
+}{m: map[string]*tts.RequestOptions{}}
+
+var geminiDefaults = tts.RequestOptions{MaxChars: 4000, JoinParagraphs: true}
+
 func (fakeTTS) Engines(context.Context) []tts.Engine {
+	fakeRequests.Lock()
+	defer fakeRequests.Unlock()
+	gem := geminiDefaults
+	if o := fakeRequests.m["gem"]; o != nil {
+		gem = *o
+	}
 	return []tts.Engine{
 		{Name: "cb", Kind: tts.KindChatterbox, Emotions: true, Voices: []string{"Emily.wav"}},
 		{Name: "gem", Kind: tts.KindGemini, Model: "gemini-tts", Voices: []string{"Kore"}, DefaultVoice: "gem:Kore",
 			Quota: &tts.Quota{Day: "2026-10-28", Today: tts.Usage{Requests: 12, InputTokens: 900, OutputTokens: 30000},
 				Limits: tts.EngineLimits{RPD: 100}, Learned: true, ResetAt: geminiReset,
-				Timezone: "America/Los_Angeles", State: tts.QuotaReady}},
+				Timezone: "America/Los_Angeles", State: tts.QuotaReady},
+			Requests: gem, Defaults: geminiDefaults},
 	}
+}
+
+func (fakeTTS) SetRequestOptions(engine string, o *tts.RequestOptions) error {
+	if engine != "gem" && engine != "cb" {
+		return tts.ErrUnknownEngine
+	}
+	if o != nil && (o.MaxChars < 100 || o.MaxChars > tts.MaxRequestChars) {
+		return errors.New("maxChars must be between 100 and 10000")
+	}
+	fakeRequests.Lock()
+	defer fakeRequests.Unlock()
+	fakeRequests.m[engine] = o
+	return nil
 }
 
 type client struct {

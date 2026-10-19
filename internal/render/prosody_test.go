@@ -122,6 +122,12 @@ func (engines) JoinLimit(v string) int {
 	}
 	return 0
 }
+func (engines) JoinParagraphs(string) bool { return false }
+
+// paraEngines read consecutive paragraphs in one request.
+type paraEngines struct{ engines }
+
+func (paraEngines) JoinParagraphs(v string) bool { return v[:3] == "cb:" }
 
 func TestJoin(t *testing.T) {
 	ps, ss := chapter(
@@ -272,6 +278,40 @@ func TestJoinPassages(t *testing.T) {
 	narratorOnly(ss)
 	assert.Nil(t, ss[len(ss)-2].SpeakerCharacterID)
 	assert.Empty(t, ss[len(ss)-2].Emotion)
+}
+
+func TestJoinParagraphs(t *testing.T) {
+	ps, ss := chapter(
+		[]string{"n:The rain fell."},
+		[]string{"n:It fell all night."},
+		[]string{"q:“Hello?”", "n:she called."},
+		[]string{"e:angry:“Go away!”", "n:he said."},
+		[]string{"n:Then morning…"}, // trails off: its pause stays
+		[]string{"n:The sun rose."},
+		[]string{"n:" + strings.Repeat("Word ", 20) + "end."}, // beyond the limit
+	)
+	ps = append(ps[:6], append([]store.Paragraph{{ID: 98, Kind: store.ParagraphSceneBreak}}, ps[6:]...)...)
+	ch := &store.Chapter{Title: "One"}
+	items := plan(ch, ps, ss, func(*store.Segment) (string, float64) { return "cb:emily.wav", 1 },
+		lexicon.Compile(nil), paraEngines{engines("v1")})
+	var texts []string
+	for _, it := range items {
+		texts = append(texts, it.text)
+	}
+	assert.Equal(t, []string{
+		"One", // the heading's pause stays
+		"The rain fell.\n\nIt fell all night.\n\nHello? she called.",
+		"Go away!", // an emotion of its own stays apart
+		"he said.\n\nThen morning…",
+		"The sun rose.", // a scene break keeps its pause
+		strings.Repeat("Word ", 20) + "end.",
+	}, texts)
+	assert.Equal(t, []part{{1, 14}, {2, 18}, {3, 6}, {4, 11}}, items[1].parts)
+
+	// Kokoro's voices are still never joined.
+	kokoro := plan(ch, ps, ss, func(*store.Segment) (string, float64) { return "af_heart", 1 },
+		lexicon.Compile(nil), paraEngines{engines("v1")})
+	assert.Len(t, kokoro, len(ss)+1)
 }
 
 func TestFlowsAndNarratorThoughts(t *testing.T) {

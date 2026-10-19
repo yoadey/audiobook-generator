@@ -527,6 +527,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/tts/engines/{name}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Change how long an engine's requests get (kept across restarts) */
+    patch: operations['updateTTSEngine'];
+    trace?: never;
+  };
   '/voices/preview': {
     parameters: {
       query?: never;
@@ -1404,6 +1421,21 @@ export interface components {
       /** @description Why its voices could not be listed */
       error?: string;
       quota?: components['schemas']['TTSEngineQuota'];
+      requests: components['schemas']['TTSEngineRequests'];
+      defaults: components['schemas']['TTSEngineRequests'];
+    };
+    /** @description How long an engine's requests get */
+    TTSEngineRequests: {
+      /** @description Longest text sent in one request */
+      maxChars: number;
+      /** @description Consecutive paragraphs in one voice and style are read in one request (fewer requests), not only those the chapter preparation found to flow on */
+      joinParagraphs: boolean;
+    };
+    TTSEngineUpdate: {
+      maxChars?: number;
+      joinParagraphs?: boolean;
+      /** @description Back to the engine's configuration (other fields are ignored) */
+      reset?: boolean;
     };
     /** @description How much of its quota a cloud engine (Gemini) used today, counted by this server (Google offers no way to ask for the remaining quota). */
     TTSEngineQuota: {
@@ -2624,6 +2656,35 @@ export interface operations {
           'application/json': components['schemas']['TTSEngine'][];
         };
       };
+      default: components['responses']['Error'];
+    };
+  };
+  updateTTSEngine: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['TTSEngineUpdate'];
+      };
+    };
+    responses: {
+      /** @description The engine */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TTSEngine'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };

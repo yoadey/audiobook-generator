@@ -141,7 +141,8 @@ func TestGeminiConfig(t *testing.T) {
 	assert.Equal(t, "America/Los_Angeles", c.QuotaTimezone)
 	assert.False(t, *c.Speed, "Gemini takes no speed")
 	assert.False(t, *c.Emotions)
-	assert.Equal(t, 2000, c.MaxChars)
+	assert.Equal(t, 4000, c.MaxChars)
+	assert.True(t, *c.JoinParagraphs, "reads across paragraphs: the quota counts requests")
 	assert.Equal(t, 1, c.Concurrency)
 
 	c = EngineConfig{Name: "gemini", Kind: KindGemini, APIKeyEnv: "GEMINI_KEY", Model: "models/gemini-x-tts"}
@@ -155,6 +156,7 @@ func TestGeminiConfig(t *testing.T) {
 		"limits":     {Name: "gemini", Kind: KindGemini, APIKeyEnv: "K", Limits: EngineLimits{RPD: -1}},
 		"timezone":   {Name: "gemini", Kind: KindGemini, APIKeyEnv: "K", QuotaTimezone: "Mars/Olympus"},
 		"model":      {Name: "gemini", Kind: KindGemini, APIKeyEnv: "K", Model: "a/b"},
+		"voice":      {Name: "gemini", Kind: KindGemini, APIKeyEnv: "K", DefaultVoice: "kore"},
 		"key on tts": {Name: "orpheus", Kind: KindOpenAI, URL: "http://o", APIKeyEnv: "K"},
 	} {
 		assert.Error(t, bad.Validate(), name)
@@ -163,12 +165,13 @@ func TestGeminiConfig(t *testing.T) {
 	// As the Helm chart renders tts.gemini.
 	var es Engines
 	require.NoError(t, es.UnmarshalText([]byte(`[{"apiKeyEnv":"ABG_TTS_GEMINI_API_KEY","concurrency":1,
-		"defaultVoice":"Kore","emotions":false,"gain":1,"kind":"gemini","limits":{"rpd":100,"rpm":0,"tpd":0,"tpm":0},
-		"maxChars":2000,"model":"gemini-3.1-flash-tts-preview","name":"gemini","quotaTimezone":"America/Los_Angeles",
+		"defaultVoice":"Kore","emotions":false,"gain":1,"joinParagraphs":true,"kind":"gemini",
+		"limits":{"rpd":100,"rpm":0,"tpd":0,"tpm":0},"maxChars":4000,"model":"gemini-3.1-flash-tts-preview","name":"gemini","quotaTimezone":"America/Los_Angeles",
 		"timeout":"5m"}]`)))
 	require.NoError(t, es[0].Validate())
 	assert.Equal(t, EngineLimits{RPD: 100}, es[0].Limits)
 	assert.Equal(t, Duration(5*time.Minute), es[0].Timeout)
+	assert.True(t, *es[0].JoinParagraphs)
 
 	t.Setenv("EMPTY_KEY", "")
 	_, err := NewRouter(nil, []EngineConfig{{Name: "gemini", Kind: KindGemini, APIKeyEnv: "EMPTY_KEY"}})
@@ -218,6 +221,21 @@ func TestGeminiSynthesize(t *testing.T) {
 	assert.EqualValues(t, 3, e.Quota.Today.Requests, "the preview without an encoder sent nothing")
 	assert.Equal(t, "America/Los_Angeles", e.Quota.Timezone)
 	assert.False(t, e.Quota.Learned)
+	assert.Equal(t, RequestOptions{MaxChars: 4000, JoinParagraphs: true}, e.Requests)
+
+	// The request options can be changed while running, and reset.
+	assert.True(t, r.JoinParagraphs("gemini:Kore"))
+	require.NoError(t, r.SetRequestOptions("gemini", &RequestOptions{MaxChars: 1500}))
+	assert.Equal(t, 1500, r.JoinLimit("gemini:Kore"))
+	assert.False(t, r.JoinParagraphs("gemini:Kore"))
+	e = r.Engines(context.Background())[0]
+	assert.Equal(t, RequestOptions{MaxChars: 1500}, e.Requests)
+	assert.Equal(t, RequestOptions{MaxChars: 4000, JoinParagraphs: true}, e.Defaults)
+	assert.Error(t, r.SetRequestOptions("gemini", &RequestOptions{MaxChars: 50}))
+	assert.ErrorIs(t, r.SetRequestOptions("nope", &RequestOptions{MaxChars: 500}), ErrUnknownEngine)
+	require.NoError(t, r.SetRequestOptions("gemini", nil))
+	assert.Equal(t, 4000, r.JoinLimit("gemini:Kore"))
+	assert.False(t, r.JoinParagraphs("af_heart"), "Kokoro's pieces are never joined")
 }
 
 func TestGeminiEmotions(t *testing.T) {
@@ -260,7 +278,7 @@ func TestGeminiDailyQuota(t *testing.T) {
 	require.ErrorAs(t, err, &ue)
 	loc := mustLoc(geminiTimezone)
 	assert.Equal(t, quota.NextMidnight(time.Now(), loc), ue.DeferUntil(), "waits for the daily reset")
-	assert.Equal(t, Usage{Requests: 1, Errors: 1, RateLimited: 1}, usage.today("gemini"))
+	assert.Equal(t, Usage{Errors: 1, RateLimited: 1}, usage.today("gemini"), "a refused request is not counted")
 
 	// Until then, nothing is sent.
 	_, err = r.Synthesize(ctx, Speech{Text: "Hello.", Voice: "gemini:Kore"})
@@ -325,25 +343,56 @@ func TestGeminiErrors(t *testing.T) {
 		assert.Contains(t, he.Body, "PROHIBITED_CONTENT")
 	})
 	t.Run("no audio", func(t *testing.T) {
-		srv, _ := fakeGemini(t, func(geminiRequest) (int, string) {
+		srv, reqs := fakeGemini(t, func(geminiRequest) (int, string) {
 			return http.StatusOK, `{"candidates":[{"content":{"parts":[{"text":"Sure!"}]},"finishReason":"OTHER"}]}`
 		})
 		r, _ := geminiRouter(t, srv.URL, nil)
 		_, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "gemini:Kore"})
-		require.Error(t, err)
+		require.ErrorIs(t, err, errNoAudio)
 		var he *HTTPError
 		assert.False(t, errors.As(err, &he), "asking again may help")
+		assert.Len(t, *reqs, 2, "asked once more right away")
+		assert.Contains(t, r.Engines(ctx)[0].Quota.LastError, "no audio")
+	})
+	t.Run("no audio once", func(t *testing.T) {
+		n := 0
+		srv, _ := fakeGemini(t, func(geminiRequest) (int, string) {
+			if n++; n == 1 {
+				return http.StatusOK, `{"candidates":[{"finishReason":"OTHER"}]}`
+			}
+			return http.StatusOK, audioAnswer(SampleRate, []int16{7})
+		})
+		r, _ := geminiRouter(t, srv.URL, nil)
+		pcm, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "gemini:Kore"})
+		require.NoError(t, err)
+		assert.Equal(t, []int16{7}, samples16(t, pcm))
 	})
 	t.Run("server error", func(t *testing.T) {
 		srv, _ := fakeGemini(t, func(geminiRequest) (int, string) {
-			return http.StatusInternalServerError, `{"error":{"code":500,"message":"An internal error has occurred."}}`
+			return http.StatusServiceUnavailable, `{"error":{"code":503,"message":"The model is overloaded."}}`
 		})
 		r, _ := geminiRouter(t, srv.URL, nil)
 		_, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "gemini:Kore"})
-		var he *HTTPError
-		require.ErrorAs(t, err, &he)
-		assert.False(t, he.Permanent())
-		assert.Contains(t, he.Body, "An internal error has occurred.")
+		var ue *UnavailableError
+		require.ErrorAs(t, err, &ue, "the job waits a little instead of using up an attempt")
+		assert.Equal(t, "The model is overloaded.", ue.Reason)
+		assert.WithinDuration(t, time.Now().Add(geminiRetry), ue.Until, time.Minute)
+	})
+	t.Run("audio in parts", func(t *testing.T) {
+		pcm := func(v int16) string {
+			b := make([]byte, 2)
+			_, _ = binary.Encode(b, binary.LittleEndian, v)
+			return base64.StdEncoding.EncodeToString(b)
+		}
+		srv, _ := fakeGemini(t, func(geminiRequest) (int, string) {
+			return http.StatusOK, `{"candidates":[{"content":{"parts":[
+				{"inlineData":{"mimeType":"audio/L16;rate=24000","data":"` + pcm(1) + `"}},
+				{"inlineData":{"mimeType":"audio/L16;rate=24000","data":"` + pcm(2) + `"}}]}}]}`
+		})
+		r, _ := geminiRouter(t, srv.URL, nil)
+		out, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "gemini:Kore"})
+		require.NoError(t, err)
+		assert.Equal(t, []int16{1, 2}, samples16(t, out))
 	})
 }
 
@@ -370,4 +419,25 @@ func TestGeminiPCM(t *testing.T) {
 	assert.Equal(t, []int16{1, 2}, samples16(t, pcm), "24 kHz without a rate")
 	_, err = geminiPCM("audio/mpeg", nil, 1)
 	assert.Error(t, err)
+	_, err = geminiPCM("audio/L16;rate=1", []byte{1, 0}, 1)
+	assert.Error(t, err, "a rate that would blow up the resampling")
+}
+
+func TestGeminiPreviewNotQueued(t *testing.T) {
+	srv, _ := fakeGemini(t, func(geminiRequest) (int, string) {
+		return http.StatusOK, audioAnswer(SampleRate, []int16{1})
+	})
+	r, _ := geminiRouter(t, srv.URL, nil)
+	r.SetMP3Encoder(func(_ context.Context, pcm []byte) ([]byte, error) { return pcm, nil })
+	// A chapter's request holds the engine's only slot.
+	r.engines["gemini"].sem <- struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "gemini:Kore", Format: "mp3"})
+	require.NoError(t, err, "a preview does not wait for the slot")
+
+	short, cancel2 := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel2()
+	_, err = r.Synthesize(short, Speech{Text: "Hi.", Voice: "gemini:Kore", Format: "pcm"})
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "a chapter's piece waits for it")
 }

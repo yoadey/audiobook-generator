@@ -224,6 +224,9 @@ export const settingsQuery = queryOptions({
 
 export const updateSettings = (body: AppSettingsUpdate) => unwrap(api.PATCH('/settings', { body }));
 
+export const updateTTSEngine = (name: string, body: components['schemas']['TTSEngineUpdate']) =>
+  unwrap(api.PATCH('/tts/engines/{name}', { params: { path: { name } }, body }));
+
 export const voicesQuery = queryOptions({
   queryKey: ['voices'],
   queryFn: () => unwrap(api.GET('/voices')),

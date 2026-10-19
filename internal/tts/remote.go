@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,6 +35,21 @@ type remote struct {
 	model modelState // Chatterbox only
 
 	gemini *gemini // Gemini only
+
+	options atomic.Pointer[RequestOptions] // nil: as configured
+}
+
+// defaultOptions are the configured request options.
+func (r *remote) defaultOptions() RequestOptions {
+	return RequestOptions{MaxChars: r.cfg.MaxChars, JoinParagraphs: *r.cfg.JoinParagraphs}
+}
+
+// requestOptions are the request options in force.
+func (r *remote) requestOptions() RequestOptions {
+	if o := r.options.Load(); o != nil {
+		return *o
+	}
+	return r.defaultOptions()
 }
 
 func newRemote(c EngineConfig) *remote {
@@ -99,14 +115,15 @@ const chunkRunes = 300
 // synthesize renders with the engine: SampleRate mono PCM for "pcm", the
 // engine's MP3 for "mp3".
 func (r *remote) synthesize(ctx context.Context, s Speech) ([]byte, error) {
+	if r.gemini != nil {
+		// It takes its slot itself, after waiting for its quota.
+		return r.geminiSpeak(ctx, s, false)
+	}
 	select {
 	case r.sem <- struct{}{}:
 		defer func() { <-r.sem }()
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	}
-	if r.gemini != nil {
-		return r.geminiSpeak(ctx, s)
 	}
 	format := "wav"
 	if s.Format == "mp3" {
@@ -233,11 +250,11 @@ func (r *remote) post(ctx context.Context, path string, fields map[string]any) (
 // Fingerprint identifies an engine's settings that change its audio (and
 // the version of how styles are mapped to its controls).
 func (r *remote) fingerprint() string {
-	f := fmt.Sprintf("%s|%s|%s|%s|%g|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Variant, r.cfg.Model, r.cfg.Gain, mappingVersion)
 	if r.cfg.Kind == KindGemini {
-		f += fmt.Sprintf("|%t|%s", *r.cfg.Emotions, geminiMappingVersion)
+		return fmt.Sprintf("%s|%s|%s|%g|%t|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Model, r.cfg.Gain, *r.cfg.Emotions,
+			geminiMappingVersion)
 	}
-	return f
+	return fmt.Sprintf("%s|%s|%s|%s|%g|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Variant, r.cfg.Model, r.cfg.Gain, mappingVersion)
 }
 
 // mappingVersion changes with expressionOf's tables or chunkRunes.

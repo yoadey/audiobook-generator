@@ -97,6 +97,19 @@ func run() error {
 	}
 	speech.SetUsageStore(ttsUsage{st})
 	speech.SetMP3Encoder(audio.Encoder{FFmpeg: cfg.FFmpeg}.MP3)
+	// Request options set in the UI.
+	for _, name := range speech.EngineNames() {
+		o, err := st.EngineRequests(ctx, name)
+		if err != nil || o == nil {
+			if err != nil {
+				log.Warn("read the request options of a speech engine", "engine", name, "err", err)
+			}
+			continue
+		}
+		if err := speech.SetRequestOptions(name, &tts.RequestOptions{MaxChars: o.MaxChars, JoinParagraphs: o.JoinParagraphs}); err != nil {
+			log.Warn("apply the request options of a speech engine", "engine", name, "err", err)
+		}
+	}
 	// Books without a voice of their own speak with the default engine.
 	defaultVoice, err := speech.ResolveDefault(cfg.TTS.DefaultVoice)
 	if err != nil {

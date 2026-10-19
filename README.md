@@ -165,7 +165,9 @@ URLs carry a token instead, so treat them like passwords.
   Google AI Studio): 30 prebuilt voices in the cloud, no GPU needed. Its
   daily quota is counted and shown with the engine (*Voices*, *System*,
   the book's *Narrator*: "63 of 100 requests left today"); once it is
-  used up, rendering waits for the reset. The book text is sent to
+  used up, rendering waits for the reset. To need few requests it reads
+  across paragraphs, up to 4000 characters per request (both adjustable
+  per engine in *Settings*, *Speech requests*). The book text is sent to
   Google. See [docs/tts-engines.md](docs/tts-engines.md#gemini-google-ai-studio).
 - **Voice design** (optional, `voiceDesign.enabled`): describe a voice in
   words (or take the character's profile) and a Qwen3-TTS VoiceDesign

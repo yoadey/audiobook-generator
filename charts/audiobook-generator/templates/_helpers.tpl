@@ -105,7 +105,7 @@ app.kubernetes.io/component: chatterbox
 {{- fail (printf "tts.engines: %q is the name of tts.gemini" .name) }}
 {{- end }}
 {{- end }}
-{{- $e := dict "name" $g.name "kind" "gemini" "apiKeyEnv" "ABG_TTS_GEMINI_API_KEY" "model" $g.model "emotions" $g.emotions "limits" (dict "rpm" (int $g.limits.rpm) "tpm" (int $g.limits.tpm) "rpd" (int $g.limits.rpd) "tpd" (int $g.limits.tpd)) "quotaTimezone" $g.quotaTimezone "concurrency" (int $g.concurrency) "timeout" $g.timeout "gain" $g.gain "maxChars" (int $g.maxChars) }}
+{{- $e := dict "name" $g.name "kind" "gemini" "apiKeyEnv" "ABG_TTS_GEMINI_API_KEY" "model" $g.model "emotions" $g.emotions "limits" (dict "rpm" (int $g.limits.rpm) "tpm" (int $g.limits.tpm) "rpd" (int $g.limits.rpd) "tpd" (int $g.limits.tpd)) "quotaTimezone" $g.quotaTimezone "concurrency" (int $g.concurrency) "timeout" $g.timeout "gain" $g.gain "maxChars" (int $g.maxChars) "joinParagraphs" $g.joinParagraphs }}
 {{- with $g.defaultVoice }}
 {{- $_ := set $e "defaultVoice" . }}
 {{- end }}
