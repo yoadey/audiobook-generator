@@ -30,6 +30,7 @@ function load(network: (url: string) => Promise<Response>) {
     listeners.fetch!({
       request: { method: 'GET', mode: 'navigate', url: `https://abg.example${url}` },
       respondWith: (p: Promise<Response>) => (answer = p),
+      waitUntil: (p: Promise<unknown>) => void p,
     });
     return answer && (await answer);
   };

@@ -289,8 +289,12 @@ func (a *Authenticator) setCookie(w http.ResponseWriter, r *http.Request, name, 
 // installing the app needs (browsers fetch the manifest without cookies;
 // none of it says anything about the library).
 func public(p string) bool {
-	// As routed and served: no ".." can lead from a public prefix elsewhere.
+	// A path with "." or ".." (also encoded) is never public: the router
+	// and the auth check could read it differently.
 	path := pathpkg.Clean(p)
+	if path != p {
+		return false
+	}
 	switch path {
 	case "/healthz", "/readyz", "/metrics", "/manifest.webmanifest", "/sw.js":
 		return true

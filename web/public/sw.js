@@ -40,7 +40,12 @@ self.addEventListener('fetch', (event) => {
       .then((res) => {
         if (isPage(res)) {
           const copy = res.clone();
-          void caches.open(SHELL).then((c) => c.put('/', copy));
+          event.waitUntil(
+            caches
+              .open(SHELL)
+              .then((c) => c.put('/', copy))
+              .catch(() => {}),
+          );
           return res;
         }
         // The server is not there (the ingress answers for it).
