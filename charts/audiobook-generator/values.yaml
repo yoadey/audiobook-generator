@@ -255,11 +255,57 @@ tts:
   # characters (docs/tts-engines.md). Their voices are written
   # "<name>:<voice>" and chosen per character. Fields: name, kind
   # (openai | chatterbox), url, and optionally model, variant, concurrency,
-  # timeout, gain, speed, voices.
+  # timeout, gain, speed, voices. Gemini is set up below (tts.gemini).
   engines: []
   # - name: orpheus
   #   kind: openai
   #   url: http://orpheus.tts:5005
+  # The Gemini API's speech generation (Google AI Studio): 30 prebuilt
+  # voices in the cloud, no GPU needed, but a daily quota. Every piece of a
+  # chapter and every preview is a request; once the quota is used up,
+  # chapters wait for the next day. The usage is shown with the engine
+  # (Voices, System, the book's narrator). The book text leaves the cluster,
+  # and on the free tier Google may use it to improve its products. When on,
+  # it joins tts.engines (docs/tts-engines.md).
+  gemini:
+    enabled: false
+    # Engine name, the prefix of its voices ("gemini:Kore").
+    name: gemini
+    # The existing Secret with the API key (the one of an LLM provider on
+    # the same Google project works too), e.g.
+    # { name: audiobook-llm-keys, key: gemini }.
+    apiKeySecret: {}
+    model: gemini-3.1-flash-tts-preview
+    # Voice that narrates when a book switches to this engine.
+    defaultVoice: Kore
+    # Ask for the emotion of quotes and for thoughts ("Say angrily: ...")
+    # instead of giving them by loudness.
+    emotions: false
+    # The model's quota as AI Studio shows it (Usage > Rate limits); 0 is
+    # unknown. Requests wait for the per-minute window, and the daily
+    # limits tell what is left today. An unknown limit is taken from the
+    # engine's answer once it is hit.
+    limits:
+      rpm: 0
+      tpm: 0
+      rpd: 0
+      tpd: 0
+    # Google's daily quotas reset at midnight Pacific time.
+    quotaTimezone: America/Los_Angeles
+    # Parallel requests; a long one may take a few hundred MB of memory
+    # while its audio is converted.
+    concurrency: 1
+    # Per request: the longest ones speak about five minutes.
+    timeout: 10m
+    # Evens out its loudness against Kokoro's.
+    gain: 1
+    # Longest text sent at once (at most 5000): the pieces in one voice are
+    # joined up to it (fewer, longer requests save quota). Both can be
+    # changed in the UI (Settings, Speech requests).
+    maxChars: 4000
+    # Read consecutive paragraphs in one voice in one request, not only
+    # those the chapter preparation found to flow on.
+    joinParagraphs: true
   # Chatterbox-TTS-Server (devnen), which speaks emotions itself. Off by
   # default: it needs a GPU for book-length work (on CPU it is roughly ten
   # times slower than Kokoro). When on, it joins tts.engines.

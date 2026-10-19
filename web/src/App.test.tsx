@@ -1580,6 +1580,130 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Listen to am_adam' })).toBeDisabled();
   });
 
+  it('shows the daily quota of a cloud speech engine', async () => {
+    const quota = {
+      state: 'ready',
+      today: {
+        day: '2026-10-28',
+        requests: 37,
+        inputTokens: 4200,
+        outputTokens: 90000,
+        errors: 1,
+        rateLimited: 0,
+      },
+      limits: { rpm: 10, tpm: 0, rpd: 100, tpd: 0 },
+      limitsLearned: false,
+      minuteRequests: 2,
+      quotaResetAt: '2099-01-01T08:00:00Z',
+      quotaTimezone: 'America/Los_Angeles',
+    };
+    stubApi({
+      '/api/voices': voices,
+      '/api/tts/engines': [
+        {
+          name: 'gemini',
+          kind: 'gemini',
+          model: 'gemini-tts',
+          emotions: false,
+          speed: false,
+          voices: ['Kore', 'Puck'],
+          defaultVoice: 'gemini:Kore',
+          quota,
+        },
+      ],
+    });
+    renderAt('/voices');
+    expect(await screen.findByText('gemini · gemini-tts')).toBeInTheDocument();
+    expect(screen.getByText('quota left')).toBeInTheDocument();
+    expect(screen.getByText('37 / 100')).toBeInTheDocument();
+    expect(screen.getByText(/63 requests left today/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/every chapter piece and every preview is a request/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Listen to Puck' })).toBeEnabled();
+  });
+
+  it('sets how long the requests of an engine get', async () => {
+    const gemini = {
+      name: 'gemini',
+      kind: 'gemini',
+      emotions: false,
+      speed: false,
+      voices: ['Kore'],
+      requests: { maxChars: 4000, joinParagraphs: true },
+      defaults: { maxChars: 4000, joinParagraphs: true },
+      requestsCustom: false,
+      maxChars: 5000,
+    };
+    const fetch = stubApi({
+      '/api/llm/providers': [],
+      '/api/tts/engines': [gemini],
+      'PATCH /api/tts/engines/gemini': {
+        ...gemini,
+        requests: { maxChars: 4000, joinParagraphs: false },
+        requestsCustom: true,
+      },
+    });
+    renderAt('/settings');
+    const card = await screen.findByTestId('engine-requests-gemini');
+    const across = within(card).getByRole('switch', { name: /Read across paragraphs/ });
+    expect(across).toBeChecked();
+    fireEvent.click(across);
+    expect(
+      await within(card).findByRole('button', { name: /Reset to 4000 characters/ }),
+    ).toBeInTheDocument();
+    const patch = fetch.mock.calls
+      .map(([r]) => r)
+      .find((r): r is Request => typeof r !== 'string' && r.method === 'PATCH');
+    expect(await patch?.json()).toEqual({ joinParagraphs: false });
+
+    // Beyond what the engine takes: not sent.
+    const input = within(card).getByRole('textbox', { name: /Longest request/ });
+    fireEvent.change(input, { target: { value: '6000' } });
+    expect(within(card).getByText('100 to 5000')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('says when a cloud engine waits for its quota', async () => {
+    stubApi({
+      '/api/voices': voices,
+      '/api/tts/engines': [
+        {
+          name: 'gemini',
+          kind: 'gemini',
+          emotions: false,
+          speed: false,
+          voices: ['Kore'],
+          quota: {
+            state: 'exhausted',
+            reason: 'daily quota exhausted (the engine answered 429)',
+            availableAt: '2099-01-01T08:00:00Z',
+            today: {
+              day: '2026-10-28',
+              requests: 15,
+              inputTokens: 0,
+              outputTokens: 0,
+              errors: 1,
+              rateLimited: 1,
+            },
+            limits: { rpd: 15 },
+            limitsLearned: true,
+            minuteRequests: 0,
+            quotaResetAt: '2099-01-01T08:00:00Z',
+            quotaTimezone: 'America/Los_Angeles',
+          },
+        },
+      ],
+    });
+    renderAt('/voices');
+    expect(await screen.findByText('quota exhausted')).toBeInTheDocument();
+    expect(
+      screen.getByText(/daily quota exhausted \(the engine answered 429\)/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/0 requests left today/)).toBeInTheDocument();
+    expect(screen.getByText(/as the engine named them/)).toBeInTheDocument();
+  });
+
   it('shows when a deferred job runs again', async () => {
     stubApi({
       '/api/jobs': {

@@ -658,6 +658,26 @@ var migrations = []*gormigrate.Migration{
 			return tx.Migrator().DropColumn(&Book{}, "Description")
 		},
 	},
+	{
+		ID: "202610280001_tts_usage",
+		Migrate: func(tx *gorm.DB) error {
+			type TTSUsage struct {
+				ID           int64  `gorm:"primaryKey"`
+				Engine       string `gorm:"not null;uniqueIndex:idx_tts_usages_engine_day,priority:1"`
+				Day          string `gorm:"not null;uniqueIndex:idx_tts_usages_engine_day,priority:2"`
+				Requests     int64  `gorm:"not null;default:0"`
+				InputTokens  int64  `gorm:"not null;default:0"`
+				OutputTokens int64  `gorm:"not null;default:0"`
+				Errors       int64  `gorm:"not null;default:0"`
+				RateLimited  int64  `gorm:"not null;default:0"`
+				UpdatedAt    time.Time
+			}
+			return tx.Migrator().CreateTable(&TTSUsage{})
+		},
+		Rollback: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable("tts_usages")
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

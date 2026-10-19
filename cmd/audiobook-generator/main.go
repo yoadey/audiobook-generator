@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	_ "time/tzdata" // quota time zones of LLM providers, without the OS database
+	_ "time/tzdata" // quota time zones of LLM providers and cloud speech engines, without the OS database
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -94,6 +94,18 @@ func run() error {
 	speech, err := tts.NewRouter(kokoro, cfg.TTS.Engines)
 	if err != nil {
 		return fmt.Errorf("ABG_TTS_ENGINES: %w", err)
+	}
+	speech.SetUsageStore(ttsUsage{st})
+	speech.SetMP3Encoder(audio.Encoder{FFmpeg: cfg.FFmpeg}.MP3)
+	// Request options set in the UI.
+	for _, name := range speech.EngineNames() {
+		o, err := st.EngineRequests(ctx, name)
+		if err == nil {
+			err = speech.SetRequestOverride(name, api.RequestOverride(o))
+		}
+		if err != nil {
+			log.Warn("apply the request options set for a speech engine", "engine", name, "err", err)
+		}
 	}
 	// Books without a voice of their own speak with the default engine.
 	defaultVoice, err := speech.ResolveDefault(cfg.TTS.DefaultVoice)
@@ -301,4 +313,18 @@ func newLogger(cfg config.Config) (*slog.Logger, error) {
 		h = slog.NewTextHandler(os.Stdout, opts)
 	}
 	return slog.New(h), nil
+}
+
+// ttsUsage keeps the daily usage of cloud speech engines in the store.
+type ttsUsage struct{ st *store.Store }
+
+func (u ttsUsage) TTSUsage(ctx context.Context, engine, day string) (tts.Usage, error) {
+	r, err := u.st.GetTTSUsage(ctx, engine, day)
+	return tts.Usage{Requests: r.Requests, InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
+		Errors: r.Errors, RateLimited: r.RateLimited}, err
+}
+
+func (u ttsUsage) AddTTSUsage(ctx context.Context, engine, day string, d tts.Usage) error {
+	return u.st.AddTTSUsage(ctx, store.TTSUsage{Engine: engine, Day: day, Requests: d.Requests,
+		InputTokens: d.InputTokens, OutputTokens: d.OutputTokens, Errors: d.Errors, RateLimited: d.RateLimited})
 }

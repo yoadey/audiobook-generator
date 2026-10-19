@@ -177,9 +177,59 @@ func TestEngineVoices(t *testing.T) {
 		c := newAPI(t, s, 10<<20)
 		var engines []api.TTSEngine
 		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/tts/engines", nil, &engines))
-		require.Len(t, engines, 1)
+		require.Len(t, engines, 2)
 		assert.Equal(t, api.TTSEngine{Name: "cb", Kind: api.TTSEngineKindChatterbox, Emotions: true,
 			Voices: []string{"Emily.wav"}}, engines[0])
+		gem := engines[1]
+		assert.Equal(t, api.TTSEngineKindGemini, gem.Kind)
+		assert.Equal(t, "gemini-tts", *gem.Model)
+		require.NotNil(t, gem.Quota, "a cloud engine reports its quota")
+		q := gem.Quota
+		assert.Equal(t, api.TTSEngineQuotaStateReady, q.State)
+		assert.EqualValues(t, 12, q.Today.Requests)
+		assert.Equal(t, "2026-10-28", q.Today.Day.String())
+		assert.Equal(t, 100, *q.Limits.Rpd)
+		assert.Zero(t, *q.Limits.Rpm)
+		assert.True(t, q.LimitsLearned)
+		assert.True(t, geminiReset.Equal(q.QuotaResetAt))
+		assert.Equal(t, "America/Los_Angeles", q.QuotaTimezone)
+		assert.Equal(t, api.TTSEngineRequests{MaxChars: 4000, JoinParagraphs: true}, gem.Requests)
+
+		// The request options are changed, stored, and reset.
+		assert.False(t, gem.RequestsCustom)
+		assert.Equal(t, 5000, gem.MaxChars)
+		var changed api.TTSEngine
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/tts/engines/gem",
+			map[string]any{"joinParagraphs": false}, &changed))
+		assert.Equal(t, api.TTSEngineRequests{MaxChars: 4000}, changed.Requests)
+		assert.True(t, changed.RequestsCustom)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/tts/engines/gem",
+			map[string]any{"maxChars": 2500}, &changed))
+		assert.Equal(t, api.TTSEngineRequests{MaxChars: 2500}, changed.Requests, "the earlier change stays")
+		assert.Equal(t, api.TTSEngineRequests{MaxChars: 4000, JoinParagraphs: true}, changed.Defaults)
+		stored, err := s.EngineRequests(context.Background(), "gem")
+		require.NoError(t, err)
+		require.NotNil(t, stored, "applied again after a restart")
+		assert.Equal(t, 2500, *stored.MaxChars)
+		assert.False(t, *stored.JoinParagraphs)
+		require.Equal(t, http.StatusOK, c.json(http.MethodGet, "/api/tts/engines", nil, &engines))
+		assert.True(t, engines[1].RequestsCustom)
+		require.Equal(t, http.StatusBadRequest, c.json(http.MethodPatch, "/api/tts/engines/gem",
+			map[string]any{"maxChars": 6000}, nil))
+		stored, err = s.EngineRequests(context.Background(), "gem")
+		require.NoError(t, err)
+		assert.Equal(t, 2500, *stored.MaxChars, "a refused change is not stored")
+		require.Equal(t, http.StatusNotFound, c.json(http.MethodPatch, "/api/tts/engines/nope",
+			map[string]any{"maxChars": 2000}, nil))
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/tts/engines/gem",
+			map[string]any{"reset": true}, &changed))
+		assert.Equal(t, changed.Defaults, changed.Requests)
+		assert.False(t, changed.RequestsCustom)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/tts/engines/gem", map[string]any{}, &changed))
+		assert.False(t, changed.RequestsCustom, "nothing set: nothing overridden")
+		stored, err = s.EngineRequests(context.Background(), "gem")
+		require.NoError(t, err)
+		assert.Nil(t, stored)
 
 		assert.Equal(t, "Run!", c.says(map[string]any{"voice": "cb:Emily.wav", "text": "Run!", "emotion": "shouting"}))
 		require.Equal(t, http.StatusBadRequest, c.json(http.MethodPost, "/api/voices/preview",

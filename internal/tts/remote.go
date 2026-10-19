@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,6 +33,23 @@ type remote struct {
 	listing    chan struct{} // closed when the running listing is done
 
 	model modelState // Chatterbox only
+
+	gemini *gemini // Gemini only
+
+	options atomic.Pointer[RequestOptions] // nil: as configured
+}
+
+// defaultOptions are the configured request options.
+func (r *remote) defaultOptions() RequestOptions {
+	return RequestOptions{MaxChars: r.cfg.MaxChars, JoinParagraphs: *r.cfg.JoinParagraphs}
+}
+
+// requestOptions are the request options in force.
+func (r *remote) requestOptions() RequestOptions {
+	if o := r.options.Load(); o != nil {
+		return *o
+	}
+	return r.defaultOptions()
 }
 
 func newRemote(c EngineConfig) *remote {
@@ -97,6 +115,10 @@ const chunkRunes = 300
 // synthesize renders with the engine: SampleRate mono PCM for "pcm", the
 // engine's MP3 for "mp3".
 func (r *remote) synthesize(ctx context.Context, s Speech) ([]byte, error) {
+	if r.gemini != nil {
+		// It takes its slot itself, after waiting for its quota.
+		return r.geminiSpeak(ctx, s, false)
+	}
 	select {
 	case r.sem <- struct{}{}:
 		defer func() { <-r.sem }()
@@ -228,6 +250,10 @@ func (r *remote) post(ctx context.Context, path string, fields map[string]any) (
 // Fingerprint identifies an engine's settings that change its audio (and
 // the version of how styles are mapped to its controls).
 func (r *remote) fingerprint() string {
+	if r.cfg.Kind == KindGemini {
+		return fmt.Sprintf("%s|%s|%s|%g|%t|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Model, r.cfg.Gain, *r.cfg.Emotions,
+			geminiMappingVersion)
+	}
 	return fmt.Sprintf("%s|%s|%s|%s|%g|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Variant, r.cfg.Model, r.cfg.Gain, mappingVersion)
 }
 
@@ -355,6 +381,9 @@ func (r *remote) merge(listed []string) []string {
 
 func (r *remote) fetch(ctx context.Context) ([]string, map[string]bool, error) {
 	references := map[string]bool{}
+	if r.cfg.Kind == KindGemini {
+		return slices.Clone(geminiVoices), references, nil
+	}
 	if r.cfg.Kind != KindChatterbox {
 		listed, err := r.list(ctx, "/v1/audio/voices")
 		return listed, references, err

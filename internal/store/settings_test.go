@@ -37,3 +37,21 @@ func TestSettings(t *testing.T) {
 		assert.True(t, on)
 	})
 }
+
+func TestEngineRequests(t *testing.T) {
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		o, err := s.EngineRequests(ctx, "gemini")
+		require.NoError(t, err)
+		assert.Nil(t, o, "unset: the configuration applies")
+		chars := 3000
+		require.NoError(t, s.SetEngineRequests(ctx, "gemini", &store.EngineRequests{MaxChars: &chars}))
+		o, err = s.EngineRequests(ctx, "gemini")
+		require.NoError(t, err)
+		assert.Equal(t, &store.EngineRequests{MaxChars: &chars}, o, "only what was set")
+		require.NoError(t, s.SetEngineRequests(ctx, "gemini", nil))
+		o, err = s.EngineRequests(ctx, "gemini")
+		require.NoError(t, err)
+		assert.Nil(t, o)
+	})
+}

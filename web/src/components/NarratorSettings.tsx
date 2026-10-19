@@ -28,6 +28,7 @@ import {
   voicesQuery,
 } from '../api/client';
 import { splitEngineVoice } from '../lib/recipe';
+import { EngineBudget } from './EngineQuota';
 import { notifyError, notifySuccess } from '../lib/notify';
 
 const accents: Record<string, string> = { 'en-US': 'American', 'en-GB': 'British' };
@@ -235,11 +236,14 @@ export function NarratorSettings({ book }: { book: Book }) {
         </Group>
         {engineVoice && (
           <Text size="xs" c="dimmed">
-            {engineInfo
-              ? `${engine}${engineInfo.variant ? ` (${engineInfo.variant})` : ''} reads most of the book: without a GPU it is much slower than Kokoro.${engineInfo.speed ? '' : ' It paces itself (the speed is not applied).'}`
-              : `The engine ${engine} is not configured: chapters cannot be rendered with this voice.`}
+            {!engineInfo
+              ? `The engine ${engine} is not configured: chapters cannot be rendered with this voice.`
+              : engineInfo.quota
+                ? `${engine} reads most of the book in the cloud: every piece of a chapter is a request against its daily quota, and chapters wait for the next day once it is used up.${engineInfo.speed ? '' : ' It paces itself (the speed is not applied).'}`
+                : `${engine}${engineInfo.variant ? ` (${engineInfo.variant})` : ''} reads most of the book: without a GPU it is much slower than Kokoro.${engineInfo.speed ? '' : ' It paces itself (the speed is not applied).'}`}
           </Text>
         )}
+        {engineInfo?.quota && <EngineBudget name={engine} quota={engineInfo.quota} />}
         <Textarea
           label="Sample text"
           description="What voice previews in this book say (with its pronunciations); empty for the text in Settings."

@@ -84,3 +84,18 @@ func (e Encoder) Encode(ctx context.Context, r io.Reader, out string, m Metadata
 	}
 	return os.Rename(tmp, out)
 }
+
+// MP3 encodes PCM to MP3 (voice previews of engines that speak PCM only).
+func (e Encoder) MP3(ctx context.Context, pcm []byte) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, e.FFmpeg, //nolint:gosec // fixed binary, arguments are not shell-interpreted
+		"-hide_banner", "-loglevel", "error",
+		"-f", "s16le", "-ar", strconv.Itoa(SampleRate), "-ac", "1", "-i", "pipe:0",
+		"-c:a", "libmp3lame", "-b:a", "96k", "-f", "mp3", "pipe:1")
+	cmd.Stdin = bytes.NewReader(pcm)
+	var out, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg: %w: %s", err, bytes.TrimSpace(stderr.Bytes()))
+	}
+	return out.Bytes(), nil
+}

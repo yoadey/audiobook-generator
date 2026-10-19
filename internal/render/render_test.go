@@ -210,6 +210,27 @@ func TestRenderResumesFromCache(t *testing.T) {
 	})
 }
 
+func TestRenderProgressKeepsAttempts(t *testing.T) {
+	ff := ffmpeg(t)
+	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
+		ctx := context.Background()
+		dir, _, cs := setup(t, s)
+		j := &store.Job{Type: render.JobType, Queue: render.Queue, ChapterID: &cs[1].ID, MaxAttempts: 3}
+		require.NoError(t, s.EnqueueJob(ctx, j))
+		require.NoError(t, s.ResetJobAttempts(ctx, j.ID))
+		j.Attempts = 3 // the last attempt
+		fake := &fakeTTS{failAt: 4, err: errors.New("engine hiccup")}
+		r := &render.Renderer{
+			Store: s, TTS: fake, Encoder: audio.Encoder{FFmpeg: ff}, DataDir: dir,
+			Concurrency: 1, DefaultVoice: "af_heart", Log: slog.New(slog.DiscardHandler),
+		}
+		require.Error(t, r.Handler().Run(ctx, j, func(float64) {}))
+		got, err := s.GetJob(ctx, j.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, got.Attempts, "pieces were spoken: the failure does not use up the attempts")
+	})
+}
+
 func TestRenderRejectsBadVoice(t *testing.T) {
 	ff := ffmpeg(t)
 	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
@@ -280,7 +301,7 @@ func TestRenderOfDeletedBook(t *testing.T) {
 	})
 }
 
-func TestFailedRenderCleansUp(t *testing.T) {
+func TestFailedRender(t *testing.T) {
 	storetest.ForEachDialect(t, func(t *testing.T, s *store.Store) {
 		ctx := context.Background()
 		dir, _, cs := setup(t, s)
@@ -299,7 +320,7 @@ func TestFailedRenderCleansUp(t *testing.T) {
 		assert.Equal(t, store.AudioFailed, got.AudioStatus)
 		assert.True(t, utf8.ValidString(got.AudioError))
 		assert.True(t, strings.HasPrefix(msg, strings.TrimSuffix(got.AudioError, "…")))
-		assert.NoDirExists(t, cache)
+		assert.DirExists(t, cache, "the pieces spoken so far are kept for the next render")
 	})
 }
 

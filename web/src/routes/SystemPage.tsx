@@ -15,6 +15,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
 import { systemInfoQuery, ttsEnginesQuery } from '../api/client';
+import { EngineBudget } from '../components/EngineQuota';
 
 function InfoCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -104,15 +105,21 @@ export function SystemPage() {
             <InfoCard key={e.name} title={`Speech engine ${e.name}`}>
               <Row label="Status">
                 <Badge color={e.error ? 'red' : 'green'} variant="light">
-                  {e.error ? 'unreachable' : 'reachable'}
+                  {e.error ? 'unreachable' : e.quota ? 'cloud' : 'reachable'}
                 </Badge>
               </Row>
               <Row label="Kind">
                 {e.kind}
                 {e.variant ? ` (${e.variant})` : ''}
               </Row>
+              {e.model && (
+                <Row label="Model">
+                  <Code>{e.model}</Code>
+                </Row>
+              )}
               <Row label="Voices">{e.voices.length}</Row>
               <Row label="Emotions">{e.emotions ? 'spoken by the engine' : 'as loudness'}</Row>
+              {e.quota && <EngineBudget name="Quota" quota={e.quota} />}
               {e.error && (
                 <Text c="red" size="xs">
                   {e.error}

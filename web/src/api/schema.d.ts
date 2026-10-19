@@ -527,6 +527,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/tts/engines/{name}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Change how long an engine's requests get (kept across restarts) */
+    patch: operations['updateTTSEngine'];
+    trace?: never;
+  };
   '/voices/preview': {
     parameters: {
       query?: never;
@@ -1389,9 +1406,11 @@ export interface components {
     TTSEngine: {
       name: string;
       /** @enum {string} */
-      kind: 'openai' | 'chatterbox';
+      kind: 'openai' | 'chatterbox' | 'gemini';
       /** @description The model a Chatterbox engine runs (original, turbo or nano) */
       variant?: string;
+      /** @description The model a Gemini engine speaks with */
+      model?: string;
       /** @description Speaks emotions and moods itself (Kokoro voices get pace and loudness instead) */
       emotions: boolean;
       /** @description Takes a voice's speed */
@@ -1401,6 +1420,47 @@ export interface components {
       defaultVoice?: string;
       /** @description Why its voices could not be listed */
       error?: string;
+      quota?: components['schemas']['TTSEngineQuota'];
+      requests: components['schemas']['TTSEngineRequests'];
+      defaults: components['schemas']['TTSEngineRequests'];
+      /** @description The request options were changed in the UI (else they follow the configuration) */
+      requestsCustom: boolean;
+      /** @description The most maxChars may be set to for this engine */
+      maxChars: number;
+    };
+    /** @description How long an engine's requests get */
+    TTSEngineRequests: {
+      /** @description Longest text sent in one request */
+      maxChars: number;
+      /** @description Consecutive paragraphs in one voice and style are read in one request (fewer requests), not only those the chapter preparation found to flow on */
+      joinParagraphs: boolean;
+    };
+    TTSEngineUpdate: {
+      /** @description Between 100 and the engine's maxChars */
+      maxChars?: number;
+      joinParagraphs?: boolean;
+      /** @description Back to the engine's configuration (other fields are ignored) */
+      reset?: boolean;
+    };
+    /** @description How much of its quota a cloud engine (Gemini) used today, counted by this server (Google offers no way to ask for the remaining quota). */
+    TTSEngineQuota: {
+      /** @enum {string} */
+      state: 'ready' | 'waiting' | 'exhausted';
+      /** @description Why the engine takes no request now */
+      reason?: string;
+      /** Format: date-time */
+      availableAt?: string;
+      today: components['schemas']['LLMUsageDay'];
+      limits: components['schemas']['LLMLimits'];
+      /** @description Some limits were not configured but named by the engine in a 429 answer */
+      limitsLearned: boolean;
+      minuteRequests: number;
+      /** Format: date-time */
+      quotaResetAt: string;
+      quotaTimezone: string;
+      lastError?: string;
+      /** Format: date-time */
+      lastErrorAt?: string;
     };
     /** @description Provider limits; 0 means no limit. Daily limits reset at midnight in quotaTimezone. */
     LLMLimits: {
@@ -2601,6 +2661,35 @@ export interface operations {
           'application/json': components['schemas']['TTSEngine'][];
         };
       };
+      default: components['responses']['Error'];
+    };
+  };
+  updateTTSEngine: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['TTSEngineUpdate'];
+      };
+    };
+    responses: {
+      /** @description The engine */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TTSEngine'];
+        };
+      };
+      400: components['responses']['Error'];
+      404: components['responses']['Error'];
       default: components['responses']['Error'];
     };
   };

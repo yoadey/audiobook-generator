@@ -609,7 +609,91 @@
               "maxChars": {
                 "type": "integer",
                 "minimum": 1
+              },
+              "joinParagraphs": {
+                "type": "boolean"
               }
+            }
+          }
+        },
+        "gemini": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,30}$"
+            },
+            "apiKeySecret": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                }
+              }
+            },
+            "model": {
+              "type": "string",
+              "pattern": "^(models/)?[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+            },
+            "defaultVoice": {
+              "type": "string"
+            },
+            "emotions": {
+              "type": "boolean"
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "rpm": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "tpm": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "rpd": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "tpd": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "quotaTimezone": {
+              "type": "string",
+              "minLength": 1
+            },
+            "concurrency": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "timeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+            },
+            "gain": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "maxChars": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
+            },
+            "joinParagraphs": {
+              "type": "boolean"
             }
           }
         },

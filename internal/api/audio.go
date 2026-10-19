@@ -8,9 +8,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/yoadey/audiobook-generator/internal/assemble"
 	"github.com/yoadey/audiobook-generator/internal/attribution"
@@ -305,17 +309,122 @@ func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObje
 	out := []TTSEngine{}
 	if l, ok := s.TTS.(EngineLister); ok {
 		for _, e := range l.Engines(ctx) {
-			voices := e.Voices
-			if voices == nil {
-				voices = []string{}
+			v := toTTSEngine(e)
+			stored, err := s.Store.EngineRequests(ctx, e.Name)
+			if err != nil {
+				s.Log.WarnContext(ctx, "read the request options of a speech engine", "engine", e.Name, "err", err)
 			}
-			out = append(out, TTSEngine{
-				Name: e.Name, Kind: TTSEngineKind(e.Kind), Variant: nonEmpty(e.Variant), Emotions: e.Emotions,
-				Speed: e.Speed, Voices: voices, DefaultVoice: nonEmpty(e.DefaultVoice), Error: nonEmpty(e.Err),
-			})
+			v.RequestsCustom = stored != nil
+			out = append(out, v)
 		}
 	}
 	return ListTTSEngines200JSONResponse(out), nil
+}
+
+func toTTSEngine(e tts.Engine) TTSEngine {
+	voices := e.Voices
+	if voices == nil {
+		voices = []string{}
+	}
+	return TTSEngine{
+		Name: e.Name, Kind: TTSEngineKind(e.Kind), Variant: nonEmpty(e.Variant), Model: nonEmpty(e.Model),
+		Emotions: e.Emotions, Speed: e.Speed, Voices: voices, DefaultVoice: nonEmpty(e.DefaultVoice),
+		Error: nonEmpty(e.Err), Quota: toEngineQuota(e.Quota),
+		Requests: TTSEngineRequests{MaxChars: e.Requests.MaxChars, JoinParagraphs: e.Requests.JoinParagraphs},
+		Defaults: TTSEngineRequests{MaxChars: e.Defaults.MaxChars, JoinParagraphs: e.Defaults.JoinParagraphs},
+		MaxChars: e.MaxChars,
+	}
+}
+
+// EngineRequestSetter changes how long an engine's requests get.
+type EngineRequestSetter interface {
+	CheckRequestOverride(engine string, o *tts.RequestOverride) error
+	SetRequestOverride(engine string, o *tts.RequestOverride) error
+}
+
+// RequestOverride is a stored override of an engine's request options.
+func RequestOverride(o *store.EngineRequests) *tts.RequestOverride {
+	if o == nil {
+		return nil
+	}
+	return &tts.RequestOverride{MaxChars: o.MaxChars, JoinParagraphs: o.JoinParagraphs}
+}
+
+// UpdateTTSEngine changes how long an engine's requests get: only the
+// fields given are overridden (the others follow the configuration); the
+// override is stored and applied again after a restart.
+func (s *Server) UpdateTTSEngine(ctx context.Context, req UpdateTTSEngineRequestObject) (UpdateTTSEngineResponseObject, error) {
+	l, ok := s.TTS.(EngineLister)
+	setter, ok2 := s.TTS.(EngineRequestSetter)
+	if !ok || !ok2 || !slices.ContainsFunc(l.Engines(ctx), func(e tts.Engine) bool { return e.Name == req.Name }) {
+		return UpdateTTSEngine404JSONResponse(errMsg("engine not configured")), nil
+	}
+	stored, err := s.Store.EngineRequests(ctx, req.Name)
+	if err != nil {
+		return nil, err
+	}
+	if b := req.Body; b.Reset != nil && *b.Reset {
+		stored = nil
+	} else {
+		if stored == nil {
+			stored = &store.EngineRequests{}
+		}
+		if b.MaxChars != nil {
+			stored.MaxChars = b.MaxChars
+		}
+		if b.JoinParagraphs != nil {
+			stored.JoinParagraphs = b.JoinParagraphs
+		}
+		if stored.MaxChars == nil && stored.JoinParagraphs == nil {
+			stored = nil // nothing overridden
+		}
+	}
+	if err := setter.CheckRequestOverride(req.Name, RequestOverride(stored)); err != nil {
+		return UpdateTTSEngine400JSONResponse{ErrorJSONResponse(errMsg(err.Error()))}, nil
+	}
+	if err := s.Store.SetEngineRequests(ctx, req.Name, stored); err != nil {
+		return nil, err
+	}
+	if err := setter.SetRequestOverride(req.Name, RequestOverride(stored)); err != nil {
+		return nil, err
+	}
+	for _, e := range l.Engines(ctx) {
+		if e.Name == req.Name {
+			out := toTTSEngine(e)
+			out.RequestsCustom = stored != nil
+			return UpdateTTSEngine200JSONResponse(out), nil
+		}
+	}
+	return UpdateTTSEngine404JSONResponse(errMsg("engine not configured")), nil
+}
+
+// toEngineQuota is the API view of a cloud engine's quota (nil for none).
+func toEngineQuota(q *tts.Quota) *TTSEngineQuota {
+	if q == nil {
+		return nil
+	}
+	day, _ := time.Parse(time.DateOnly, q.Day)
+	l := q.Limits
+	return &TTSEngineQuota{
+		State:  TTSEngineQuotaState(q.State),
+		Reason: nonEmpty(q.Reason),
+		Today: LLMUsageDay{
+			Day:          openapi_types.Date{Time: day},
+			Requests:     q.Today.Requests,
+			InputTokens:  q.Today.InputTokens,
+			OutputTokens: q.Today.OutputTokens,
+			Errors:       q.Today.Errors,
+			RateLimited:  q.Today.RateLimited,
+		},
+		Limits:         LLMLimits{Rpm: &l.RPM, Tpm: &l.TPM, Rpd: &l.RPD, Tpd: &l.TPD},
+		LimitsLearned:  q.Learned,
+		MinuteRequests: q.MinuteRequests,
+		AvailableAt:    q.AvailableAt,
+		QuotaResetAt:   q.ResetAt,
+		QuotaTimezone:  q.Timezone,
+		LastError:      nonEmpty(q.LastError),
+		LastErrorAt:    q.LastErrorAt,
+	}
 }
 
 // PreviewVoice speaks a sample; recent previews are cached.

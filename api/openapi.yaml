@@ -791,6 +791,37 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /tts/engines/{name}:
+    patch:
+      operationId: updateTTSEngine
+      summary: Change how long an engine's requests get (kept across restarts)
+      tags: [audio]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TTSEngineUpdate"
+      responses:
+        "200":
+          description: The engine
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TTSEngine"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /voices/preview:
     post:
       operationId: previewVoice
@@ -2358,16 +2389,19 @@ components:
     TTSEngine:
       type: object
       description: A speech engine besides Kokoro; its voices are written "<name>:<voice>"
-      required: [name, kind, emotions, speed, voices]
+      required: [name, kind, emotions, speed, voices, requests, defaults, requestsCustom, maxChars]
       properties:
         name:
           type: string
         kind:
           type: string
-          enum: [openai, chatterbox]
+          enum: [openai, chatterbox, gemini]
         variant:
           type: string
           description: The model a Chatterbox engine runs (original, turbo or nano)
+        model:
+          type: string
+          description: The model a Gemini engine speaks with
         emotions:
           type: boolean
           description: Speaks emotions and moods itself (Kokoro voices get pace and loudness instead)
@@ -2384,6 +2418,78 @@ components:
         error:
           type: string
           description: Why its voices could not be listed
+        quota:
+          $ref: "#/components/schemas/TTSEngineQuota"
+        requests:
+          $ref: "#/components/schemas/TTSEngineRequests"
+        defaults:
+          $ref: "#/components/schemas/TTSEngineRequests"
+        requestsCustom:
+          type: boolean
+          description: The request options were changed in the UI (else they follow the configuration)
+        maxChars:
+          type: integer
+          description: The most maxChars may be set to for this engine
+    TTSEngineRequests:
+      type: object
+      description: How long an engine's requests get
+      required: [maxChars, joinParagraphs]
+      properties:
+        maxChars:
+          type: integer
+          description: Longest text sent in one request
+        joinParagraphs:
+          type: boolean
+          description: >-
+            Consecutive paragraphs in one voice and style are read in one
+            request (fewer requests), not only those the chapter preparation
+            found to flow on
+    TTSEngineUpdate:
+      type: object
+      properties:
+        maxChars:
+          type: integer
+          description: Between 100 and the engine's maxChars
+        joinParagraphs:
+          type: boolean
+        reset:
+          type: boolean
+          description: Back to the engine's configuration (other fields are ignored)
+    TTSEngineQuota:
+      type: object
+      description: >-
+        How much of its quota a cloud engine (Gemini) used today, counted by
+        this server (Google offers no way to ask for the remaining quota).
+      required: [state, today, limits, limitsLearned, minuteRequests, quotaResetAt, quotaTimezone]
+      properties:
+        state:
+          type: string
+          enum: [ready, waiting, exhausted]
+        reason:
+          type: string
+          description: Why the engine takes no request now
+        availableAt:
+          type: string
+          format: date-time
+        today:
+          $ref: "#/components/schemas/LLMUsageDay"
+        limits:
+          $ref: "#/components/schemas/LLMLimits"
+        limitsLearned:
+          type: boolean
+          description: Some limits were not configured but named by the engine in a 429 answer
+        minuteRequests:
+          type: integer
+        quotaResetAt:
+          type: string
+          format: date-time
+        quotaTimezone:
+          type: string
+        lastError:
+          type: string
+        lastErrorAt:
+          type: string
+          format: date-time
 
     LLMLimits:
       type: object

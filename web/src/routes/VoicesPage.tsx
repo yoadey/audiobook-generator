@@ -25,6 +25,7 @@ import {
   type Voice,
   voicesQuery,
 } from '../api/client';
+import { EngineQuota, QuotaBadge } from '../components/EngineQuota';
 import { VoicePreviewButton } from '../components/VoicePreviewButton';
 import { usePreview } from '../lib/preview';
 
@@ -62,10 +63,12 @@ function EngineCard({
             <Badge variant="light">
               {e.kind}
               {e.variant ? ` · ${e.variant}` : ''}
+              {e.model ? ` · ${e.model}` : ''}
             </Badge>
             <Badge variant="light" color={e.error ? 'red' : 'green'}>
               {e.error ? 'unreachable' : `${e.voices.length} voices`}
             </Badge>
+            {e.quota && <QuotaBadge quota={e.quota} />}
           </Group>
           {e.emotions && (
             <Select
@@ -81,18 +84,27 @@ function EngineCard({
         </Group>
         <Text size="sm" c="dimmed">
           {e.emotions
-            ? 'Speaks emotions and moods itself.'
-            : 'Emotions are given by loudness (this model has no emotion control).'}{' '}
+            ? e.quota
+              ? 'Speaks the emotions of quotes and thoughts itself.'
+              : 'Speaks emotions and moods itself.'
+            : e.quota
+              ? 'Emotions are given by loudness (tts.gemini.emotions asks the engine for them).'
+              : 'Emotions are given by loudness (this model has no emotion control).'}{' '}
           {e.speed ? '' : 'Paces itself. '}
+          {e.quota
+            ? 'A cloud service with a daily quota: every chapter piece and every preview is a request. '
+            : ''}
           Choose its voices as <Text span ff="monospace">{`${e.name}:<voice>`}</Text> for a
-          character (voice editor) or the narrator (book page, Narrator). Voices cloned from your
-          own clips appear here once uploaded to the engine (see docs/tts-engines.md).
+          character (voice editor) or the narrator (book page, Narrator).
+          {e.kind === 'chatterbox' &&
+            ' Voices cloned from your own clips appear here once uploaded to the engine (see docs/tts-engines.md).'}
         </Text>
         {e.error && (
           <Text size="xs" c="red">
             {e.error}
           </Text>
         )}
+        {e.quota && <EngineQuota quota={e.quota} />}
         {e.voices.length > 0 && (
           <Group gap="xs">
             {e.voices.map((v) => (

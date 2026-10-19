@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -16,6 +18,45 @@ const (
 	// idle (unset: unload them).
 	SettingUnloadIdleModels = "unload_idle_models"
 )
+
+// settingEngineRequests prefixes the request options of a speech engine
+// (by name), as set in the UI.
+const settingEngineRequests = "tts_requests_"
+
+// EngineRequests are how long a speech engine's requests get, as set in
+// the UI (nil fields: as configured).
+type EngineRequests struct {
+	MaxChars       *int  `json:"maxChars,omitempty"`
+	JoinParagraphs *bool `json:"joinParagraphs,omitempty"`
+}
+
+// EngineRequests returns the request options set for an engine (nil:
+// none, its configuration applies).
+func (s *Store) EngineRequests(ctx context.Context, engine string) (*EngineRequests, error) {
+	v, err := s.GetSetting(ctx, settingEngineRequests+engine)
+	if err != nil || v == "" {
+		return nil, err
+	}
+	var o EngineRequests
+	if err := json.Unmarshal([]byte(v), &o); err != nil {
+		return nil, fmt.Errorf("setting %s%s: %w", settingEngineRequests, engine, err)
+	}
+	return &o, nil
+}
+
+// SetEngineRequests stores the request options of an engine (nil: back
+// to its configuration).
+func (s *Store) SetEngineRequests(ctx context.Context, engine string, o *EngineRequests) error {
+	v := ""
+	if o != nil {
+		b, err := json.Marshal(o)
+		if err != nil {
+			return err
+		}
+		v = string(b)
+	}
+	return s.SetSetting(ctx, settingEngineRequests+engine, v)
+}
 
 // UnloadIdleModels reports whether idle speech models are unloaded.
 func (s *Store) UnloadIdleModels(ctx context.Context) (bool, error) {

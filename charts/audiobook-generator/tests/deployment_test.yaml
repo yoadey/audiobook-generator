@@ -156,7 +156,7 @@ tests:
       tts.kokoro.enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "no speech engine: enable tts.kokoro, set tts.externalUrl, or configure tts.chatterbox or tts.engines"
+          errorMessage: "no speech engine: enable tts.kokoro, set tts.externalUrl, or configure tts.chatterbox, tts.gemini or tts.engines"
 
   - it: rejects external Postgres without a host
     template: templates/deployment.yaml

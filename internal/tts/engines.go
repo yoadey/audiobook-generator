@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -20,6 +21,9 @@ const (
 	// KindChatterbox is Chatterbox-TTS-Server (devnen): with the original
 	// model it speaks emotions itself.
 	KindChatterbox = "chatterbox"
+	// KindGemini is the Gemini API's speech generation (Google AI Studio),
+	// a cloud service with an API key and a daily quota.
+	KindGemini = "gemini"
 )
 
 // Chatterbox variants the server runs (its model.repo_id).
@@ -62,9 +66,58 @@ type EngineConfig struct {
 	Speed *bool `json:"speed,omitempty"`
 	// MaxChars is the longest text sent in one request: the pieces of a
 	// paragraph in one voice are joined up to it (default 1000 for
-	// chatterbox, which splits longer text by sentences itself; 400 for
-	// openai).
+	// chatterbox, which splits longer text by sentences itself; 2000 for
+	// gemini, whose quota counts requests; 400 for openai).
 	MaxChars int `json:"maxChars,omitempty"`
+	// APIKeyEnv names the environment variable that holds a Gemini
+	// engine's API key.
+	APIKeyEnv string `json:"apiKeyEnv,omitempty"`
+	// Limits of a Gemini engine's quota (0: unknown; a limit the engine
+	// names in a 429 answer is used meanwhile).
+	Limits EngineLimits `json:"limits,omitzero"`
+	// QuotaTimezone is where a Gemini engine's daily quota resets at
+	// midnight (default America/Los_Angeles, as Google's does).
+	QuotaTimezone string `json:"quotaTimezone,omitempty"`
+	// Emotions: a Gemini engine is asked to speak the emotion of a quote
+	// and thoughts ("Say angrily: …"; default false: they are given by
+	// loudness, like for Kokoro).
+	Emotions *bool `json:"emotions,omitempty"`
+	// JoinParagraphs: consecutive paragraphs in one voice and style are
+	// read in one request, up to MaxChars (default true for gemini, whose
+	// quota counts requests; false for others, which read across a
+	// paragraph end only where the chapter preparation found it flows on).
+	JoinParagraphs *bool `json:"joinParagraphs,omitempty"`
+}
+
+// MaxRequestChars bounds MaxChars as set at runtime, by kind: a Gemini
+// answer must stay within its audio limit, OpenAI-compatible servers
+// often take at most 4096 characters, Chatterbox splits long text itself.
+func MaxRequestChars(kind string) int {
+	switch kind {
+	case KindGemini:
+		return 5000
+	case KindOpenAI:
+		return 4000
+	}
+	return 10000
+}
+
+// MinRequestChars bounds MaxChars as set at runtime from below.
+const MinRequestChars = 100
+
+// RequestOptions are how long an engine's requests get.
+type RequestOptions struct {
+	MaxChars       int
+	JoinParagraphs bool
+}
+
+// EngineLimits are a cloud engine's quota; 0 means none. Tokens are the
+// input (text) tokens.
+type EngineLimits struct {
+	RPM int `json:"rpm,omitempty"`
+	TPM int `json:"tpm,omitempty"`
+	RPD int `json:"rpd,omitempty"`
+	TPD int `json:"tpd,omitempty"`
 }
 
 // Engines is a list of engine configurations, read from JSON (an
@@ -114,9 +167,17 @@ func (c *EngineConfig) Validate() error {
 		return fmt.Errorf("engine name %q: lower-case letters, digits and dashes, not %q", c.Name, KokoroEngine)
 	}
 	switch c.Kind {
-	case KindOpenAI, KindChatterbox:
+	case KindOpenAI, KindChatterbox, KindGemini:
 	default:
-		return fmt.Errorf("engine %s: kind must be %q or %q, got %q", c.Name, KindOpenAI, KindChatterbox, c.Kind)
+		return fmt.Errorf("engine %s: kind must be %q, %q or %q, got %q",
+			c.Name, KindOpenAI, KindChatterbox, KindGemini, c.Kind)
+	}
+	if c.Kind == KindGemini {
+		if err := c.validateGemini(); err != nil {
+			return err
+		}
+	} else if c.APIKeyEnv != "" || c.Limits != (EngineLimits{}) || c.QuotaTimezone != "" || c.Emotions != nil {
+		return fmt.Errorf("engine %s: apiKeyEnv, limits, quotaTimezone and emotions are for gemini engines", c.Name)
 	}
 	if !strings.HasPrefix(c.URL, "http://") && !strings.HasPrefix(c.URL, "https://") {
 		return fmt.Errorf("engine %s: url must be http(s), got %q", c.Name, c.URL)
@@ -151,13 +212,21 @@ func (c *EngineConfig) Validate() error {
 		c.Gain = 1
 	}
 	if c.Speed == nil {
-		speed := c.Kind != KindChatterbox
+		speed := c.Kind == KindOpenAI
 		c.Speed = &speed
 	}
+	if c.JoinParagraphs == nil {
+		join := c.Kind == KindGemini
+		c.JoinParagraphs = &join
+	}
 	if c.MaxChars == 0 {
-		c.MaxChars = 400
-		if c.Kind == KindChatterbox {
+		switch c.Kind {
+		case KindChatterbox:
 			c.MaxChars = 1000
+		case KindGemini:
+			c.MaxChars = 4000
+		default:
+			c.MaxChars = 400
 		}
 	}
 	return nil
@@ -183,6 +252,8 @@ type Engine struct {
 	Kind string
 	// Variant of a Chatterbox engine ("" otherwise).
 	Variant string
+	// Model of a Gemini engine ("" otherwise).
+	Model string
 	// Emotions: it speaks emotions itself (no pace and loudness for them).
 	Emotions bool
 	// Speed: it takes a voice's speed.
@@ -192,6 +263,12 @@ type Engine struct {
 	DefaultVoice string
 	// Err tells why its voices could not be listed.
 	Err string
+	// Quota of a cloud engine (nil for others).
+	Quota *Quota
+	// Requests: how long its requests get (as set now), and Defaults: as
+	// configured; MaxChars is the most a request may be set to.
+	Requests, Defaults RequestOptions
+	MaxChars           int
 }
 
 // Router sends a request to Kokoro or, for "<engine>:<voice>" voices, to
@@ -201,13 +278,16 @@ type Router struct {
 	kokoro  *Client // nil: no Kokoro
 	engines map[string]*remote
 	names   []string
+	// mp3 encodes PCM for previews of engines that speak PCM only.
+	mp3 func(ctx context.Context, pcm []byte) ([]byte, error)
 }
 
 // ErrNoKokoro is returned for a Kokoro voice when Kokoro is not configured.
 var ErrNoKokoro = errors.New("tts: Kokoro is not configured")
 
 // NewRouter returns a router over Kokoro (nil for none) and the given
-// engines (validated); at least one of them is needed.
+// engines (validated); at least one of them is needed. API keys are read
+// from the environment.
 func NewRouter(kokoro *Client, engines []EngineConfig) (*Router, error) {
 	if kokoro == nil && len(engines) == 0 {
 		return nil, errors.New("no speech engine: configure Kokoro or another engine")
@@ -220,7 +300,15 @@ func NewRouter(kokoro *Client, engines []EngineConfig) (*Router, error) {
 		if r.engines[c.Name] != nil {
 			return nil, fmt.Errorf("engine %s configured twice", c.Name)
 		}
-		r.engines[c.Name] = newRemote(c)
+		rem := newRemote(c)
+		if c.Kind == KindGemini {
+			key := os.Getenv(c.APIKeyEnv)
+			if key == "" {
+				return nil, fmt.Errorf("engine %s: the API key variable %s is empty", c.Name, c.APIKeyEnv)
+			}
+			rem.gemini = newGemini(c, key)
+		}
+		r.engines[c.Name] = rem
 		r.names = append(r.names, c.Name)
 	}
 	slices.Sort(r.names)
@@ -242,6 +330,20 @@ func (r *Router) route(voice string) (*remote, string, error) {
 	return e, name, nil
 }
 
+// SetUsageStore keeps the daily usage of cloud engines (call before the
+// first request).
+func (r *Router) SetUsageStore(u UsageStore) {
+	for _, e := range r.engines {
+		if e.gemini != nil {
+			e.gemini.usage = u
+		}
+	}
+}
+
+// SetMP3Encoder sets how previews of engines that speak PCM only are
+// encoded (call before the first request).
+func (r *Router) SetMP3Encoder(f func(ctx context.Context, pcm []byte) ([]byte, error)) { r.mp3 = f }
+
 // Synthesize renders text with the voice's engine.
 func (r *Router) Synthesize(ctx context.Context, s Speech) ([]byte, error) {
 	e, name, err := r.route(s.Voice)
@@ -252,7 +354,19 @@ func (r *Router) Synthesize(ctx context.Context, s Speech) ([]byte, error) {
 		return r.kokoro.Synthesize(ctx, s)
 	}
 	s.Voice = name
-	return e.synthesize(ctx, s)
+	if e.gemini == nil || s.Format != "mp3" {
+		return e.synthesize(ctx, s)
+	}
+	if r.mp3 == nil {
+		return nil, fmt.Errorf("%s: no MP3 encoder for previews", e.cfg.Name)
+	}
+	// A preview is not queued behind a chapter's requests.
+	s.Format = "pcm"
+	pcm, err := e.geminiSpeak(ctx, s, true)
+	if err != nil {
+		return nil, err
+	}
+	return r.mp3(ctx, pcm)
 }
 
 // SynthesizeTimed renders with word times; other engines have none.
@@ -266,6 +380,9 @@ func (r *Router) SynthesizeTimed(ctx context.Context, s Speech) ([]byte, []Word,
 	}
 	return r.kokoro.SynthesizeTimed(ctx, s)
 }
+
+// EngineNames lists the configured engines besides Kokoro, sorted.
+func (r *Router) EngineNames() []string { return slices.Clone(r.names) }
 
 // Kokoro reports whether Kokoro is configured.
 func (r *Router) Kokoro() bool { return r.kokoro != nil }
@@ -332,6 +449,8 @@ func (r *Router) DefaultVoice(engine string) string {
 	case v != "":
 	case e.cfg.Kind == KindChatterbox:
 		v = chatterboxDefaultVoice
+	case e.cfg.Kind == KindGemini:
+		v = geminiDefaultVoice
 	case len(e.cfg.Voices) > 0:
 		v = e.cfg.Voices[0]
 	default:
@@ -407,7 +526,65 @@ func (r *Router) JoinLimit(voice string) int {
 	if err != nil || e == nil {
 		return 0
 	}
-	return e.cfg.MaxChars
+	return e.requestOptions().MaxChars
+}
+
+// JoinParagraphs reports whether a voice's engine reads consecutive
+// paragraphs in one request.
+func (r *Router) JoinParagraphs(voice string) bool {
+	e, _, err := r.route(voice)
+	return err == nil && e != nil && e.requestOptions().JoinParagraphs
+}
+
+// RequestOverride changes some of an engine's request options while
+// running (nil fields keep the configuration).
+type RequestOverride struct {
+	MaxChars       *int
+	JoinParagraphs *bool
+}
+
+// overridden applies an override to the configured options and checks
+// the result.
+func (e *remote) overridden(o *RequestOverride) (RequestOptions, error) {
+	opts := e.defaultOptions()
+	if o == nil {
+		return opts, nil
+	}
+	if o.MaxChars != nil {
+		if limit := MaxRequestChars(e.cfg.Kind); *o.MaxChars < MinRequestChars || *o.MaxChars > limit {
+			return opts, fmt.Errorf("maxChars must be between %d and %d for %s", MinRequestChars, limit, e.cfg.Name)
+		}
+		opts.MaxChars = *o.MaxChars
+	}
+	if o.JoinParagraphs != nil {
+		opts.JoinParagraphs = *o.JoinParagraphs
+	}
+	return opts, nil
+}
+
+// CheckRequestOverride reports whether an override can be applied.
+func (r *Router) CheckRequestOverride(engine string, o *RequestOverride) error {
+	e := r.engines[engine]
+	if e == nil {
+		return fmt.Errorf("%w: %q", ErrUnknownEngine, engine)
+	}
+	_, err := e.overridden(o)
+	return err
+}
+
+// SetRequestOverride changes how long an engine's requests get (nil:
+// back to its configuration).
+func (r *Router) SetRequestOverride(engine string, o *RequestOverride) error {
+	e := r.engines[engine]
+	if e == nil {
+		return fmt.Errorf("%w: %q", ErrUnknownEngine, engine)
+	}
+	opts, err := e.overridden(o)
+	if err != nil {
+		return err
+	}
+	e.options.Store(&opts)
+	return nil
 }
 
 // Engines lists the configured engines with their voices.
@@ -417,16 +594,34 @@ func (r *Router) Engines(ctx context.Context) []Engine {
 		e := r.engines[n]
 		info := Engine{Name: n, Kind: e.cfg.Kind, Variant: e.cfg.Variant, Emotions: e.expressive(), Speed: *e.cfg.Speed,
 			DefaultVoice: r.DefaultVoice(n)}
+		if e.gemini != nil {
+			info.Model = e.cfg.Model
+		}
+		info.Requests, info.Defaults, info.MaxChars = e.requestOptions(), e.defaultOptions(), MaxRequestChars(e.cfg.Kind)
 		vs, err := e.voices(ctx, false)
 		if err != nil {
 			info.Err = err.Error()
 		}
 		info.Voices = vs
+		if e.gemini != nil {
+			// A usage that cannot be read shows as none, with the error.
+			q, err := e.quotaStatus(ctx)
+			if err != nil {
+				q.LastError = strings.TrimPrefix(q.LastError+"; today's usage could not be read: "+err.Error(), "; ")
+			}
+			info.Quota = q
+		}
 		out = append(out, info)
 	}
 	return out
 }
 
 func (r *remote) expressive() bool {
-	return r.cfg.Kind == KindChatterbox && r.cfg.Variant == VariantOriginal
+	switch r.cfg.Kind {
+	case KindChatterbox:
+		return r.cfg.Variant == VariantOriginal
+	case KindGemini:
+		return *r.cfg.Emotions
+	}
+	return false
 }
