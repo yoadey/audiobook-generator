@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"strings"
 	"sync"
 	"time"
@@ -284,13 +285,22 @@ func (a *Authenticator) setCookie(w http.ResponseWriter, r *http.Request, name, 
 }
 
 // public lists paths that work without a session: probes, metrics (scraped
-// in-cluster), podcast feeds (token-protected) and the sign-in itself.
-func public(path string) bool {
+// in-cluster), podcast feeds (token-protected), the sign-in itself and what
+// installing the app needs (browsers fetch the manifest without cookies;
+// none of it says anything about the library).
+func public(p string) bool {
+	// A path with "." or ".." (also encoded) is never public: the router
+	// and the auth check could read it differently.
+	path := pathpkg.Clean(p)
+	if path != p {
+		return false
+	}
 	switch path {
-	case "/healthz", "/readyz", "/metrics":
+	case "/healthz", "/readyz", "/metrics", "/manifest.webmanifest", "/sw.js":
 		return true
 	}
-	return strings.HasPrefix(path, "/feed/") || strings.HasPrefix(path, "/auth/")
+	return strings.HasPrefix(path, "/feed/") || strings.HasPrefix(path, "/auth/") ||
+		strings.HasPrefix(path, "/icons/")
 }
 
 func unsafeMethod(m string) bool {

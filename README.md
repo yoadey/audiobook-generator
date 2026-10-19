@@ -99,6 +99,13 @@ URLs carry a token instead, so treat them like passwords.
   rendering, downloads, the podcast feed, pronunciations and the chapters
   as they are narrated) is behind *Audiobook*; *Export* and *Delete* are
   in the book's *⋯* menu.
+- **As an app**: the web UI installs like an app (its own window and
+  icon, the player on the lock screen): *Install app* in the header in
+  Chrome, Edge and on Android, *Share → Add to Home Screen* in Safari on
+  iPhone and iPad. Browsers install only from HTTPS (or `localhost`). The
+  manifest, icons and service worker work without sign-in; the service
+  worker keeps only the app's page, for a clear message when the server
+  cannot be reached, and never books, audio or the API.
 - **Reading along**: the reader has a small player bar
   at the bottom. It marks the sentence and the word being spoken (word
   times come from Kokoro-FastAPI; other TTS servers give sentences only)
