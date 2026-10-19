@@ -1,6 +1,6 @@
 import { onlineManager, QueryClient } from '@tanstack/react-query';
 import { createMemoryHistory } from '@tanstack/react-router';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { App } from './App';
@@ -241,6 +241,21 @@ describe('App', () => {
     expect(await screen.findByText('No books yet')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /upload epub/i })).toBeEnabled();
+  });
+
+  it('offers to install the app where the browser can', async () => {
+    stubApi({ '/api/books': { items: [], total: 0 } });
+    renderAt('/library');
+    await screen.findByText('No books yet');
+    expect(screen.queryByRole('button', { name: 'Install app' })).toBeNull();
+
+    const prompt = vi.fn(() => Promise.resolve());
+    act(() => {
+      window.dispatchEvent(Object.assign(new Event('beforeinstallprompt'), { prompt }));
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Install app' }));
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'Install app' })).toBeNull();
   });
 
   it('lists books with progress and errors', async () => {

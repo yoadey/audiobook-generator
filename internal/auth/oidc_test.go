@@ -174,6 +174,13 @@ func TestSignIn(t *testing.T) {
 	assert.Equal(t, "ok", body)
 	res, body = do(t, c, http.MethodGet, app.URL+"/feed/tok/1.xml", nil)
 	assert.Equal(t, "feed", body)
+	// What installing the app needs (fetched without cookies), not the UI.
+	for _, p := range []string{"/manifest.webmanifest", "/sw.js", "/icons/icon-192.png"} {
+		res, body = do(t, c, http.MethodGet, app.URL+p, nil)
+		assert.Equal(t, "ui", body, p)
+	}
+	res, _ = do(t, c, http.MethodGet, app.URL+"/index.html", nil)
+	assert.Equal(t, http.StatusFound, res.StatusCode)
 
 	res = signIn(t, idp, app, c, "/books/1", nil)
 	require.Equal(t, http.StatusFound, res.StatusCode)

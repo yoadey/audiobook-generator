@@ -13,6 +13,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconBooks,
+  IconDownload,
   IconListCheck,
   IconLogout,
   IconMicrophone,
@@ -23,8 +24,10 @@ import {
 } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
+import { useEffect } from 'react';
 
 import { meQuery } from '../api/client';
+import { useInstall } from '../lib/install';
 
 const navItems = [
   { to: '/library', label: 'Library', icon: IconBooks },
@@ -40,6 +43,15 @@ export function Layout() {
   const { setColorScheme } = useMantineColorScheme();
   const scheme = useComputedColorScheme('light');
   const me = useQuery(meQuery).data;
+  const install = useInstall();
+
+  // The installed app's title bar takes the page's colour.
+  useEffect(() => {
+    const color = scheme === 'dark' ? '#242424' : '#ffffff';
+    for (const m of document.querySelectorAll('meta[name="theme-color"]')) {
+      m.setAttribute('content', color);
+    }
+  }, [scheme]);
 
   return (
     <AppShell
@@ -58,6 +70,13 @@ export function Layout() {
               <Text size="sm" c="dimmed" visibleFrom="xs">
                 {me.name}
               </Text>
+            )}
+            {install && (
+              <Tooltip label="Install as an app">
+                <ActionIcon variant="default" size="lg" aria-label="Install app" onClick={install}>
+                  <IconDownload size={18} />
+                </ActionIcon>
+              </Tooltip>
             )}
             <ActionIcon
               variant="default"

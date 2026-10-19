@@ -11,8 +11,10 @@ import (
 
 func TestHandler(t *testing.T) {
 	h := handler(fstest.MapFS{
-		"index.html":        {Data: []byte("<html>app</html>")},
-		"assets/app-123.js": {Data: []byte("console.log(1)")},
+		"index.html":           {Data: []byte("<html>app</html>")},
+		"assets/app-123.js":    {Data: []byte("console.log(1)")},
+		"sw.js":                {Data: []byte("self")},
+		"manifest.webmanifest": {Data: []byte("{}")},
 	})
 
 	tests := []struct {
@@ -22,6 +24,9 @@ func TestHandler(t *testing.T) {
 		{"/books/42", "<html>app</html>", "no-cache"}, // client-side route
 		{"/assets/app-123.js", "console.log(1)", "public, max-age=31536000, immutable"},
 		{"/assets/missing.js", "<html>app</html>", "no-cache"},
+		// Installed apps pick up a new version.
+		{"/sw.js", "self", "no-cache"},
+		{"/manifest.webmanifest", "{}", "no-cache"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
@@ -32,6 +37,13 @@ func TestHandler(t *testing.T) {
 			assert.Equal(t, tt.cache, rec.Header().Get("Cache-Control"))
 		})
 	}
+}
+
+func TestManifestType(t *testing.T) {
+	h := handler(fstest.MapFS{"index.html": {}, "manifest.webmanifest": {Data: []byte("{}")}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/manifest.webmanifest", nil))
+	assert.Equal(t, "application/manifest+json", rec.Header().Get("Content-Type"))
 }
 
 func TestHandlerWithoutBuild(t *testing.T) {

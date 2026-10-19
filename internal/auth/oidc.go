@@ -284,13 +284,16 @@ func (a *Authenticator) setCookie(w http.ResponseWriter, r *http.Request, name, 
 }
 
 // public lists paths that work without a session: probes, metrics (scraped
-// in-cluster), podcast feeds (token-protected) and the sign-in itself.
+// in-cluster), podcast feeds (token-protected), the sign-in itself and what
+// installing the app needs (browsers fetch the manifest without cookies;
+// none of it says anything about the library).
 func public(path string) bool {
 	switch path {
-	case "/healthz", "/readyz", "/metrics":
+	case "/healthz", "/readyz", "/metrics", "/manifest.webmanifest", "/sw.js":
 		return true
 	}
-	return strings.HasPrefix(path, "/feed/") || strings.HasPrefix(path, "/auth/")
+	return strings.HasPrefix(path, "/feed/") || strings.HasPrefix(path, "/auth/") ||
+		strings.HasPrefix(path, "/icons/")
 }
 
 func unsafeMethod(m string) bool {
