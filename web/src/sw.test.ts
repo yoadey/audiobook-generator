@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-
 import { describe, expect, it, vi } from 'vitest';
+
+import src from '../public/sw.js?raw';
 
 // The service worker (public/sw.js) in a stand-in for its global scope.
 function load(network: (url: string) => Promise<Response>) {
@@ -22,7 +21,6 @@ function load(network: (url: string) => Promise<Response>) {
     delete: vi.fn(),
     match: vi.fn(async (url: string) => store.get(url)),
   };
-  const src = readFileSync(resolve(import.meta.dirname, '../public/sw.js'), 'utf8');
   new Function('self', 'caches', 'fetch', src)(scope, caches, (req: Request | string) =>
     network(typeof req === 'string' ? req : req.url),
   );
