@@ -88,9 +88,11 @@ export function Reader({
   // what stays in view when the text flows anew.
   const readAt = useRef<number | undefined>(startSegment);
   // None while playing away from the voice: the page shown stays.
+  // While playing away from the voice: where the reader turned to.
+  const awayAt = useRef<number | undefined>(undefined);
   const anchor = () => {
     const l = latest.current;
-    if (l.playing) return l.follow ? l.active : undefined;
+    if (l.playing) return l.follow ? l.active : awayAt.current;
     return readAt.current ?? l.active;
   };
   // Scroll events until then come from a scroll this component started.
@@ -139,10 +141,8 @@ export function Reader({
   const marking = playing ? prefs.highlight !== 'off' : prefs.showPosition;
   const mark: [number, number] | undefined =
     activeSeg && marking ? (sentence ?? [0, Array.from(activeSeg.text).length]) : undefined;
-  const word =
-    activeSeg && cue && playing && prefs.highlight === 'word'
-      ? wordAt(activeSeg.text, cue, positionMs)
-      : undefined;
+  // (Known whatever is marked: pages turn with it.)
+  const word = activeSeg && cue && playing ? wordAt(activeSeg.text, cue, positionMs) : undefined;
 
   // A segment that is not spoken (only punctuation) stands for the next
   // one that is, so a position always has a time in the audio.
@@ -190,14 +190,19 @@ export function Reader({
     },
     [box.w],
   );
-  // The first segment shown on a page (one going on from the page before
-  // counts, as it does when scrolling).
+  // Where a page's reading starts: its first segment that begins on it
+  // (the end of one begun on the page before was read there), else the one
+  // that fills it.
   const firstOn = useCallback(
     (page: number) => {
+      let filling: number | undefined;
       for (const el of content.current?.querySelectorAll<HTMLElement>('[data-seg]') ?? []) {
-        if (pageOf(el, true) >= page) return Number(el.dataset.seg);
+        const start = pageOf(el);
+        if (start === page) return Number(el.dataset.seg);
+        if (start > page) return filling ?? Number(el.dataset.seg);
+        if (filling === undefined && pageOf(el, true) >= page) filling = Number(el.dataset.seg);
       }
-      return undefined;
+      return filling;
     },
     [pageOf],
   );
@@ -223,10 +228,8 @@ export function Reader({
     [box.w, pageOf],
   );
 
-  // Brings a segment into view: scrolls to it, or turns to its page (none
-  // while it is on the page shown). Paused, that is its last page: reading
-  // went on from the page before (a turn makes the page's first segment
-  // the position, often begun on the page before).
+  // Brings a segment into view: scrolls to it, or turns to the page it
+  // begins on (none while it is on the page shown).
   const show = useCallback(
     (segmentId: number, smooth: boolean) => {
       if (!paged) return scrollTo(segmentId, smooth);
@@ -234,7 +237,7 @@ export function Reader({
       if (!range) return false;
       const [first, last] = range;
       const now = pageNow.current;
-      if (now < first || now > last) showPage(latest.current.playing ? first : last, smooth);
+      if (now < first || now > last) showPage(first, smooth);
       return true;
     },
     [paged, scrollTo, pagesOf, showPage],
@@ -351,6 +354,7 @@ export function Reader({
       // Following on only where the voice is.
       const range = active !== undefined ? pagesOf(active) : undefined;
       setFollow(!!range && page >= range[0] && page <= range[1]);
+      awayAt.current = firstOn(page);
       return;
     }
     const first = firstOn(page);
@@ -495,6 +499,7 @@ export function Reader({
           active={p.id === activeParagraph ? active : undefined}
           mark={p.id === activeParagraph ? mark : undefined}
           word={p.id === activeParagraph ? word : undefined}
+          wordShown={prefs.highlight === 'word'}
           onSelect={select}
         />
       ))}
@@ -672,6 +677,7 @@ const ParagraphView = memo(function ParagraphView({
   active,
   mark,
   word,
+  wordShown,
   onSelect,
 }: {
   p: Paragraph;
@@ -684,6 +690,8 @@ const ParagraphView = memo(function ParagraphView({
   mark?: [number, number];
   /** The word of the active segment being spoken. */
   word?: [number, number];
+  /** The word spoken is marked (else only known). */
+  wordShown: boolean;
   onSelect: (segmentId: number) => void;
 }) {
   if (p.kind === 'scene_break') {
@@ -721,11 +729,12 @@ const ParagraphView = memo(function ParagraphView({
             data-mark={piece.marked || undefined}
             style={{
               fontStyle: piece.italic ? 'italic' : undefined,
-              background: piece.word
-                ? 'var(--mantine-color-yellow-light-hover)'
-                : piece.marked
-                  ? 'var(--mantine-color-yellow-light)'
-                  : undefined,
+              background:
+                piece.word && wordShown
+                  ? 'var(--mantine-color-yellow-light-hover)'
+                  : piece.marked
+                    ? 'var(--mantine-color-yellow-light)'
+                    : undefined,
               borderRadius: piece.marked ? 3 : undefined,
               boxDecorationBreak: 'clone',
               WebkitBoxDecorationBreak: 'clone',
