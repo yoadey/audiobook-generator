@@ -10,7 +10,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/yoadey/audiobook-generator/internal/assemble"
 	"github.com/yoadey/audiobook-generator/internal/attribution"
@@ -310,12 +313,42 @@ func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObje
 				voices = []string{}
 			}
 			out = append(out, TTSEngine{
-				Name: e.Name, Kind: TTSEngineKind(e.Kind), Variant: nonEmpty(e.Variant), Emotions: e.Emotions,
-				Speed: e.Speed, Voices: voices, DefaultVoice: nonEmpty(e.DefaultVoice), Error: nonEmpty(e.Err),
+				Name: e.Name, Kind: TTSEngineKind(e.Kind), Variant: nonEmpty(e.Variant), Model: nonEmpty(e.Model),
+				Emotions: e.Emotions, Speed: e.Speed, Voices: voices, DefaultVoice: nonEmpty(e.DefaultVoice),
+				Error: nonEmpty(e.Err), Quota: toEngineQuota(e.Quota),
 			})
 		}
 	}
 	return ListTTSEngines200JSONResponse(out), nil
+}
+
+// toEngineQuota is the API view of a cloud engine's quota (nil for none).
+func toEngineQuota(q *tts.Quota) *TTSEngineQuota {
+	if q == nil {
+		return nil
+	}
+	day, _ := time.Parse(time.DateOnly, q.Day)
+	l := q.Limits
+	return &TTSEngineQuota{
+		State:  TTSEngineQuotaState(q.State),
+		Reason: nonEmpty(q.Reason),
+		Today: LLMUsageDay{
+			Day:          openapi_types.Date{Time: day},
+			Requests:     q.Today.Requests,
+			InputTokens:  q.Today.InputTokens,
+			OutputTokens: q.Today.OutputTokens,
+			Errors:       q.Today.Errors,
+			RateLimited:  q.Today.RateLimited,
+		},
+		Limits:         LLMLimits{Rpm: &l.RPM, Tpm: &l.TPM, Rpd: &l.RPD, Tpd: &l.TPD},
+		LimitsLearned:  q.Learned,
+		MinuteRequests: q.MinuteRequests,
+		AvailableAt:    q.AvailableAt,
+		QuotaResetAt:   q.ResetAt,
+		QuotaTimezone:  q.Timezone,
+		LastError:      nonEmpty(q.LastError),
+		LastErrorAt:    q.LastErrorAt,
+	}
 }
 
 // PreviewVoice speaks a sample; recent previews are cached.

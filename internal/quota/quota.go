@@ -1,4 +1,7 @@
-package llm
+// Package quota tracks the rate limits and daily quotas of a remote API
+// (LLM providers, cloud speech engines): what may be sent now, and when the
+// next request fits.
+package quota
 
 import (
 	"fmt"
@@ -28,11 +31,11 @@ type event struct {
 	tokens int
 }
 
-// limiter tracks one provider. Daily counters are persisted by the pool
-// (store.LLMUsage) and loaded into the limiter on the first request of a
-// day, so restarts keep the daily quota honest; per-minute windows and
-// cooldowns live in memory only.
-type limiter struct {
+// Limiter tracks one provider. Daily counters are persisted by its owner
+// (e.g. store.LLMUsage) and loaded into the Limiter on the first request
+// of a day, so restarts keep the daily quota honest; per-minute windows
+// and cooldowns live in memory only.
+type Limiter struct {
 	mu     sync.Mutex
 	limits Limits
 	loc    *time.Location
@@ -53,12 +56,13 @@ type limiter struct {
 	lastErrorAt time.Time
 }
 
-func newLimiter(l Limits, loc *time.Location) *limiter {
-	return &limiter{limits: l, loc: loc}
+// New returns a limiter whose daily limits reset at midnight in loc.
+func New(l Limits, loc *time.Location) *Limiter {
+	return &Limiter{limits: l, loc: loc}
 }
 
-// configure updates the limits (settings may change while running).
-func (l *limiter) configure(lim Limits, loc *time.Location) {
+// Configure updates the limits (settings may change while running).
+func (l *Limiter) Configure(lim Limits, loc *time.Location) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.loc.String() != loc.String() {
@@ -67,30 +71,31 @@ func (l *limiter) configure(lim Limits, loc *time.Location) {
 	l.limits, l.loc = lim, loc
 }
 
-func dayOf(t time.Time, loc *time.Location) string { return t.In(loc).Format(time.DateOnly) }
+// DayOf is the day (YYYY-MM-DD) of t in loc.
+func DayOf(t time.Time, loc *time.Location) string { return t.In(loc).Format(time.DateOnly) }
 
-// nextMidnight is the start of the day after t in loc.
-func nextMidnight(t time.Time, loc *time.Location) time.Time {
+// NextMidnight is the start of the day after t in loc.
+func NextMidnight(t time.Time, loc *time.Location) time.Time {
 	y, m, d := t.In(loc).Date()
 	return time.Date(y, m, d+1, 0, 0, 0, 0, loc)
 }
 
-// needsDay reports whether the daily counters for now must be (re)loaded.
-func (l *limiter) needsDay(now time.Time) (string, bool) {
+// NeedsDay reports whether the daily counters for now must be (re)loaded.
+func (l *Limiter) NeedsDay(now time.Time) (string, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	d := dayOf(now, l.loc)
+	d := DayOf(now, l.loc)
 	return d, !l.dayLoaded || l.day != d
 }
 
-// loadDay sets the persisted counters of a day.
-func (l *limiter) loadDay(day string, requests, tokens int64) {
+// LoadDay sets the persisted counters of a day.
+func (l *Limiter) LoadDay(day string, requests, tokens int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.day, l.dayLoaded, l.dayRequests, l.dayTokens = day, true, requests, tokens
 }
 
-func (l *limiter) prune(now time.Time) {
+func (l *Limiter) prune(now time.Time) {
 	cut := now.Add(-time.Minute)
 	i := 0
 	for i < len(l.window) && !l.window[i].at.After(cut) {
@@ -99,26 +104,26 @@ func (l *limiter) prune(now time.Time) {
 	l.window = l.window[i:]
 }
 
-// available returns when a request of about est tokens may be sent.
+// Available returns when a request of about est tokens may be sent.
 // Reason is empty when that is now.
-func (l *limiter) available(now time.Time, est int) Availability {
+func (l *Limiter) Available(now time.Time, est int) Availability {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.availableLocked(now, est)
 }
 
-func (l *limiter) availableLocked(now time.Time, est int) Availability {
+func (l *Limiter) availableLocked(now time.Time, est int) Availability {
 	l.prune(now)
 	lim := l.limits
 	if now.Before(l.cooldownUntil) {
 		return Availability{At: l.cooldownUntil, Reason: l.cooldownWhy}
 	}
-	if l.dayLoaded && l.day == dayOf(now, l.loc) {
+	if l.dayLoaded && l.day == DayOf(now, l.loc) {
 		if lim.RPD > 0 && l.dayRequests >= int64(lim.RPD) {
-			return Availability{At: nextMidnight(now, l.loc), Reason: fmt.Sprintf("daily limit of %d requests reached", lim.RPD)}
+			return Availability{At: NextMidnight(now, l.loc), Reason: fmt.Sprintf("daily limit of %d requests reached", lim.RPD)}
 		}
 		if lim.TPD > 0 && l.dayTokens+int64(est) > int64(lim.TPD) {
-			return Availability{At: nextMidnight(now, l.loc), Reason: fmt.Sprintf("daily limit of %d tokens reached", lim.TPD)}
+			return Availability{At: NextMidnight(now, l.loc), Reason: fmt.Sprintf("daily limit of %d tokens reached", lim.TPD)}
 		}
 	}
 	if lim.RPM > 0 && len(l.window) >= lim.RPM {
@@ -144,9 +149,9 @@ func (l *limiter) availableLocked(now time.Time, est int) Availability {
 	return Availability{At: now}
 }
 
-// reserve takes a slot for a request if one is free right now; it returns
+// Reserve takes a slot for a request if one is free right now; it returns
 // a release function that records the actual token count.
-func (l *limiter) reserve(now time.Time, est int) (func(tokens int), Availability, bool) {
+func (l *Limiter) Reserve(now time.Time, est int) (func(tokens int), Availability, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if a := l.availableLocked(now, est); a.Reason != "" {
@@ -155,7 +160,7 @@ func (l *limiter) reserve(now time.Time, est int) (func(tokens int), Availabilit
 	l.seq++
 	id := l.seq
 	l.window = append(l.window, event{id: id, at: now, tokens: est})
-	if l.dayLoaded && l.day == dayOf(now, l.loc) {
+	if l.dayLoaded && l.day == DayOf(now, l.loc) {
 		l.dayRequests++
 	}
 	return func(tokens int) {
@@ -168,88 +173,90 @@ func (l *limiter) reserve(now time.Time, est int) (func(tokens int), Availabilit
 				break
 			}
 		}
-		if l.dayLoaded && l.day == dayOf(now, l.loc) {
+		if l.dayLoaded && l.day == DayOf(now, l.loc) {
 			l.dayTokens += int64(tokens)
 		}
 	}, Availability{At: now}, true
 }
 
-// rateLimited records a 429: wait for the server's hint, or back off
+// RateLimited records a 429: wait for the server's hint, or back off
 // exponentially (15 s, 30 s, … up to 15 min); a daily quota waits for the
 // next reset.
-func (l *limiter) rateLimited(now time.Time, hint time.Duration, daily bool, msg string) {
+func (l *Limiter) RateLimited(now time.Time, hint time.Duration, daily bool, msg string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.strikes++
 	wait := hint
 	switch {
 	case daily:
-		l.cooldownUntil = nextMidnight(now, l.loc)
-		l.cooldownWhy = "daily quota exhausted (provider answered 429)"
+		l.cooldownUntil = NextMidnight(now, l.loc)
+		l.cooldownWhy = "daily quota exhausted (answered 429)"
 		l.recordErrorLocked(now, msg)
 		return
 	case wait <= 0:
 		wait = min(15*time.Second<<min(l.strikes-1, 6), 15*time.Minute)
 	}
 	l.cooldownUntil = now.Add(wait)
-	l.cooldownWhy = "rate-limited by the provider"
+	l.cooldownWhy = "rate-limited (answered 429)"
 	l.recordErrorLocked(now, msg)
 }
 
-// failed records another error; cooldown keeps a broken provider (wrong
+// Failed records another error; cooldown keeps a broken provider (wrong
 // key, unreachable) from being hit on every request.
-func (l *limiter) failed(now time.Time, cooldown time.Duration, msg string) {
+func (l *Limiter) Failed(now time.Time, cooldown time.Duration, msg string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if cooldown > 0 {
 		l.cooldownUntil = now.Add(cooldown)
-		l.cooldownWhy = "failing: " + truncate(msg, 200)
+		l.cooldownWhy = "failing: " + Truncate(msg, 200)
 	}
 	l.recordErrorLocked(now, msg)
 }
 
-func (l *limiter) succeeded() {
+// Succeeded resets the back-off after a successful request.
+func (l *Limiter) Succeeded() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.strikes = 0
 	l.lastError = ""
 }
 
-func (l *limiter) recordErrorLocked(now time.Time, msg string) {
-	l.lastError = truncate(msg, 500)
+func (l *Limiter) recordErrorLocked(now time.Time, msg string) {
+	l.lastError = Truncate(msg, 500)
 	l.lastErrorAt = now
 }
 
-// snapshot is the limiter state for status displays.
-type snapshot struct {
-	minuteRequests int
-	minuteTokens   int
-	cooldownUntil  time.Time
-	cooldownWhy    string
-	lastError      string
-	lastErrorAt    time.Time
+// Snapshot is the Limiter state for status displays.
+type Snapshot struct {
+	MinuteRequests int
+	MinuteTokens   int
+	CooldownUntil  time.Time
+	CooldownWhy    string
+	LastError      string
+	LastErrorAt    time.Time
 }
 
-func (l *limiter) snapshot(now time.Time) snapshot {
+// Snapshot reports the state for status displays.
+func (l *Limiter) Snapshot(now time.Time) Snapshot {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.prune(now)
-	s := snapshot{
-		minuteRequests: len(l.window),
-		lastError:      l.lastError,
-		lastErrorAt:    l.lastErrorAt,
+	s := Snapshot{
+		MinuteRequests: len(l.window),
+		LastError:      l.lastError,
+		LastErrorAt:    l.lastErrorAt,
 	}
 	for _, e := range l.window {
-		s.minuteTokens += e.tokens
+		s.MinuteTokens += e.tokens
 	}
 	if now.Before(l.cooldownUntil) {
-		s.cooldownUntil, s.cooldownWhy = l.cooldownUntil, l.cooldownWhy
+		s.CooldownUntil, s.CooldownWhy = l.cooldownUntil, l.cooldownWhy
 	}
 	return s
 }
 
-// truncate shortens s to at most n runes (never splitting one).
-func truncate(s string, n int) string {
+// Truncate shortens s to at most n runes (never splitting one).
+func Truncate(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
 		return s

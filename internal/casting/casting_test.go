@@ -575,6 +575,19 @@ func TestEngineCatalog(t *testing.T) {
 	assert.Equal(t, "af_heart", Castable(kokoro)[0].ID)
 	_, err = c.VoicesFor(ctx, "orpheus:tara")
 	assert.Error(t, err)
+
+	// Gemini's prebuilt voices have known genders.
+	c.Engines = engineVoices{"gemini": {"Kore", "Puck", "Zephyr", "Charon"}}
+	vs, err = c.VoicesFor(ctx, "gemini:Kore")
+	require.NoError(t, err)
+	genders = map[string]store.Gender{}
+	for _, v := range vs {
+		genders[v.ID] = v.Gender
+	}
+	assert.Equal(t, map[string]store.Gender{
+		"gemini:Kore": store.GenderFemale, "gemini:Puck": store.GenderMale,
+		"gemini:Zephyr": store.GenderFemale, "gemini:Charon": store.GenderMale,
+	}, genders)
 }
 
 func TestChooseEngineVoices(t *testing.T) {

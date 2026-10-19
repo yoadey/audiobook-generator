@@ -72,5 +72,20 @@ Providers from the values are shown read-only in the UI (Settings), where
 more can be added. Each `apiKeySecret` becomes an environment variable of
 the app; the provider list itself is passed as JSON (`ABG_LLM_PROVIDERS`).
 
+## Gemini speech
+
+```yaml
+tts:
+  gemini:
+    enabled: true
+    apiKeySecret: { name: audiobook-llm-keys, key: gemini }   # existing Secret
+    limits: { rpm: 10, rpd: 100 }   # as AI Studio shows them for the model
+```
+
+Gemini's speech generation joins the engines (voices `gemini:Kore`, …);
+its daily quota is counted and shown in the UI, and rendering waits for the
+reset once it is used up. See
+[docs/tts-engines.md](../../docs/tts-engines.md#gemini-google-ai-studio).
+
 All values are documented in [`values.yaml`](values.yaml) and validated by
 [`values.schema.json`](values.schema.json).

@@ -13,6 +13,13 @@ with more exaggeration), so the app can be run with
 ABG_TTS_ENGINES='[{"name":"chatterbox","kind":"chatterbox",
 "url":"http://localhost:8880"}]'.
 
+Gemini API speech generation: POST /v1beta/models/<model>:generateContent
+(a tone as base64 L16 PCM, with usageMetadata); after FAKE_GEMINI_RPD
+requests (default 0: no limit) it answers 429 with a QuotaFailure naming a
+daily limit, so the app can be run with ABG_TTS_ENGINES='[{"name":"gemini",
+"kind":"gemini","url":"http://localhost:8880/v1beta","apiKeyEnv":"GEMINI_KEY"}]'
+and GEMINI_KEY set to anything.
+
 Voice design (images/voice-design): POST /design answers a 3 s WAV tone
 (after FAKE_DESIGN_SECONDS of thinking, default 1), so the app can be run
 with ABG_VOICE_DESIGN_URL=http://localhost:8880 and no deployment to scale.
@@ -45,6 +52,9 @@ CHATTERBOX_REFERENCES = ["anna.wav"]
 LLM_KEY = os.environ.get("FAKE_LLM_KEY", "")
 DESIGN_SECONDS = float(os.environ.get("FAKE_DESIGN_SECONDS", "1"))
 MODELS = ["fake-small", "fake-large"]
+GEMINI_RPD = int(os.environ.get("FAKE_GEMINI_RPD", "0"))
+GEMINI_REQUESTS = [0]
+GEMINI_PATH = re.compile(r"^/v1beta/models/[A-Za-z0-9._-]+:generateContent$")
 
 
 def tone(seconds: float) -> bytes:
@@ -205,6 +215,27 @@ class Handler(BaseHTTPRequestHandler):
                     CHATTERBOX_REFERENCES.append(name)
                     uploaded.append(name)
             self._send(200, json.dumps({"uploaded_files": uploaded, "errors": []}).encode(), "application/json")
+            return
+        if GEMINI_PATH.match(self.path):
+            req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            GEMINI_REQUESTS[0] += 1
+            if GEMINI_RPD and GEMINI_REQUESTS[0] > GEMINI_RPD:
+                body = {"error": {"code": 429, "message": "You exceeded your current quota.",
+                                  "status": "RESOURCE_EXHAUSTED", "details": [
+                                      {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [
+                                          {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+                                           "quotaValue": str(GEMINI_RPD)}]},
+                                      {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "30s"}]}}
+                self._send(429, json.dumps(body).encode(), "application/json")
+                return
+            text = req["contents"][0]["parts"][0]["text"]
+            pcm = tone(0.02 * len(text))
+            body = {"candidates": [{"content": {"role": "model", "parts": [{"inlineData": {
+                        "mimeType": f"audio/L16;codec=pcm;rate={RATE}", "data": base64.b64encode(pcm).decode()}}]},
+                        "finishReason": "STOP"}],
+                    "usageMetadata": {"promptTokenCount": len(text) // 4 + 1,
+                                      "candidatesTokenCount": int(25 * 0.02 * len(text))}}
+            self._send(200, json.dumps(body).encode(), "application/json")
             return
         if self.path == "/design":
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))

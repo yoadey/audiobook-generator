@@ -57,7 +57,27 @@ func pcmFromWAV(data []byte, gain float64) ([]byte, error) {
 		}
 		mono[i] = sum / float64(channels)
 	}
-	mono = resample(mono, int(rate), SampleRate)
+	return pcm16(mono, int(rate), gain)
+}
+
+// pcmFromL16 converts raw signed 16-bit little-endian mono PCM at rate to
+// SampleRate, scaled by gain like pcmFromWAV.
+func pcmFromL16(data []byte, rate int, gain float64) ([]byte, error) {
+	if rate <= 0 {
+		return nil, fmt.Errorf("PCM: invalid rate %d", rate)
+	}
+	mono := make([]float64, len(data)/2)
+	for i := range mono {
+		mono[i] = sample(data[2*i:], 2, false)
+	}
+	return pcm16(mono, rate, gain)
+}
+
+// pcm16 resamples mono samples (-1..1) to SampleRate and writes them as
+// signed 16-bit PCM, scaled by gain but never louder than just below full
+// scale.
+func pcm16(mono []float64, rate int, gain float64) ([]byte, error) {
+	mono = resample(mono, rate, SampleRate)
 	peak := 0.0
 	for _, v := range mono {
 		peak = max(peak, math.Abs(v))

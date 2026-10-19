@@ -381,6 +381,21 @@ type LLMUsage struct {
 	UpdatedAt   time.Time
 }
 
+// TTSUsage counts the requests and tokens of a cloud speech engine (by
+// its configured name) on one day, in the engine's quota time zone.
+type TTSUsage struct {
+	ID           int64  `gorm:"primaryKey"`
+	Engine       string `gorm:"not null;uniqueIndex:idx_tts_usages_engine_day,priority:1"`
+	Day          string `gorm:"not null;uniqueIndex:idx_tts_usages_engine_day,priority:2"` // YYYY-MM-DD
+	Requests     int64  `gorm:"not null;default:0"`
+	InputTokens  int64  `gorm:"not null;default:0"`
+	OutputTokens int64  `gorm:"not null;default:0"`
+	// Errors counts failed requests, RateLimited the 429 answers among them.
+	Errors      int64 `gorm:"not null;default:0"`
+	RateLimited int64 `gorm:"not null;default:0"`
+	UpdatedAt   time.Time
+}
+
 // AnalysisStatus is the state of a book's character analysis.
 type AnalysisStatus string
 

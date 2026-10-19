@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yoadey/audiobook-generator/internal/quota"
 	"github.com/yoadey/audiobook-generator/internal/store"
 )
 
@@ -34,7 +35,7 @@ type Pool struct {
 	Sleep   func(ctx context.Context, d time.Duration) error
 
 	mu       sync.Mutex
-	limiters map[int64]*limiter
+	limiters map[int64]*quota.Limiter
 }
 
 // NewPool returns a pool with production defaults.
@@ -199,28 +200,28 @@ func (p *Pool) location(prov *store.LLMProvider) *time.Location {
 
 // limiter returns the provider's limiter, configured with its current
 // limits and loaded with today's persisted counters.
-func (p *Pool) limiter(ctx context.Context, prov *store.LLMProvider, now time.Time) (*limiter, error) {
-	lim := Limits{RPM: prov.RPM, TPM: prov.TPM, RPD: prov.RPD, TPD: prov.TPD}
+func (p *Pool) limiter(ctx context.Context, prov *store.LLMProvider, now time.Time) (*quota.Limiter, error) {
+	lim := quota.Limits{RPM: prov.RPM, TPM: prov.TPM, RPD: prov.RPD, TPD: prov.TPD}
 	loc := p.location(prov)
 	p.mu.Lock()
 	if p.limiters == nil {
-		p.limiters = map[int64]*limiter{}
+		p.limiters = map[int64]*quota.Limiter{}
 	}
 	l, ok := p.limiters[prov.ID]
 	if !ok {
-		l = newLimiter(lim, loc)
+		l = quota.New(lim, loc)
 		p.limiters[prov.ID] = l
 	}
 	p.mu.Unlock()
 	if ok {
-		l.configure(lim, loc)
+		l.Configure(lim, loc)
 	}
-	if day, need := l.needsDay(now); need {
+	if day, need := l.NeedsDay(now); need {
 		u, err := p.Store.GetLLMUsage(ctx, prov.ID, day)
 		if err != nil {
 			return nil, err
 		}
-		l.loadDay(day, u.Requests, u.InputTokens+u.OutputTokens)
+		l.LoadDay(day, u.Requests, u.InputTokens+u.OutputTokens)
 	}
 	return l, nil
 }
@@ -286,7 +287,7 @@ func classify(err error) errorKind {
 
 // send performs one request on a provider whose limiter slot is reserved,
 // and does all the bookkeeping: usage counters, limiter state, metrics.
-func (p *Pool) send(ctx context.Context, prov *store.LLMProvider, l *limiter, release func(int), req Request) (*Result, error) {
+func (p *Pool) send(ctx context.Context, prov *store.LLMProvider, l *quota.Limiter, release func(int), req Request) (*Result, error) {
 	ep, err := p.endpoint(prov)
 	if err != nil {
 		release(0)
@@ -297,7 +298,7 @@ func (p *Pool) send(ctx context.Context, prov *store.LLMProvider, l *limiter, re
 	start := p.Now()
 	c, err := ep.Complete(callCtx, req)
 	took := p.Now().Sub(start)
-	day := dayOf(start, p.location(prov))
+	day := quota.DayOf(start, p.location(prov))
 
 	// Bookkeeping must happen even when ctx is canceled meanwhile.
 	bg, bgCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -306,7 +307,7 @@ func (p *Pool) send(ctx context.Context, prov *store.LLMProvider, l *limiter, re
 
 	if err == nil {
 		release(c.Usage.InputTokens + c.Usage.OutputTokens)
-		l.succeeded()
+		l.Succeeded()
 		usage.InputTokens, usage.OutputTokens = int64(c.Usage.InputTokens), int64(c.Usage.OutputTokens)
 		if uerr := p.Store.AddLLMUsage(bg, usage); uerr != nil {
 			p.Log.Warn("record LLM usage", "provider", prov.Name, "err", uerr)
@@ -326,16 +327,16 @@ func (p *Pool) send(ctx context.Context, prov *store.LLMProvider, l *limiter, re
 			var he *HTTPError
 			errors.As(err, &he)
 			usage.RateLimited = 1
-			l.rateLimited(now, he.RetryAfter, he.DailyQuota(), err.Error())
+			l.RateLimited(now, he.RetryAfter, he.DailyQuota(), err.Error())
 			p.Metrics.request(prov.Name, outcomeRateLimited)
 		case errConfig:
-			l.failed(now, 5*time.Minute, err.Error())
+			l.Failed(now, 5*time.Minute, err.Error())
 			p.Metrics.request(prov.Name, outcomeError)
 		case errRequest:
-			l.failed(now, 0, err.Error())
+			l.Failed(now, 0, err.Error())
 			p.Metrics.request(prov.Name, outcomeError)
 		default:
-			l.failed(now, 30*time.Second, err.Error())
+			l.Failed(now, 30*time.Second, err.Error())
 			p.Metrics.request(prov.Name, outcomeError)
 		}
 	}
@@ -382,7 +383,7 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 		now := p.Now()
 		var (
 			pick        *store.LLMProvider
-			pickLim     *limiter
+			pickLim     *quota.Limiter
 			pickAt      time.Time
 			reasons     []string
 			retryAt     time.Time
@@ -402,7 +403,7 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 			if err != nil {
 				return nil, err
 			}
-			a := l.available(now, est)
+			a := l.Available(now, est)
 			if !a.Never && (a.Reason == "" || a.At.Sub(now) <= p.MaxWait) {
 				pick, pickLim, pickAt = prov, l, a.At
 				break
@@ -442,7 +443,7 @@ func (p *Pool) Complete(ctx context.Context, req Request) (*Result, error) {
 			}
 			continue // re-evaluate: another request may have taken the slot
 		}
-		release, _, ok := pickLim.reserve(now, est)
+		release, _, ok := pickLim.Reserve(now, est)
 		if !ok {
 			continue
 		}
@@ -570,7 +571,7 @@ func (p *Pool) Test(ctx context.Context, prov *store.LLMProvider) (*TestResult, 
 	if err != nil {
 		return nil, err
 	}
-	release, avail, ok := l.reserve(now, estimateTokens(req))
+	release, avail, ok := l.Reserve(now, estimateTokens(req))
 	if !ok {
 		return &TestResult{Message: fmt.Sprintf("not available until %s: %s",
 			avail.At.UTC().Format(time.RFC3339), avail.Reason)}, nil
@@ -636,26 +637,26 @@ func (p *Pool) Status(ctx context.Context) ([]Status, error) {
 			return nil, err
 		}
 		loc := p.location(prov)
-		day := dayOf(now, loc)
+		day := quota.DayOf(now, loc)
 		today, err := p.Store.GetLLMUsage(ctx, prov.ID, day)
 		if err != nil {
 			return nil, err
 		}
-		snap := l.snapshot(now)
+		snap := l.Snapshot(now)
 		st := Status{
 			Provider:       *prov,
 			Today:          today,
-			MinuteRequests: snap.minuteRequests,
-			MinuteTokens:   snap.minuteTokens,
-			QuotaResetAt:   nextMidnight(now, loc),
-			LastError:      snap.lastError,
+			MinuteRequests: snap.MinuteRequests,
+			MinuteTokens:   snap.MinuteTokens,
+			QuotaResetAt:   quota.NextMidnight(now, loc),
+			LastError:      snap.LastError,
 			State:          StateReady,
 		}
-		if !snap.lastErrorAt.IsZero() {
-			t := snap.lastErrorAt
+		if !snap.LastErrorAt.IsZero() {
+			t := snap.LastErrorAt
 			st.LastErrorAt = &t
 		}
-		a := l.available(now, 0)
+		a := l.Available(now, 0)
 		_, hasKey := p.apiKey(prov)
 		switch {
 		case !prov.Enabled:

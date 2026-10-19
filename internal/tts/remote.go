@@ -32,6 +32,8 @@ type remote struct {
 	listing    chan struct{} // closed when the running listing is done
 
 	model modelState // Chatterbox only
+
+	gemini *gemini // Gemini only
 }
 
 func newRemote(c EngineConfig) *remote {
@@ -102,6 +104,9 @@ func (r *remote) synthesize(ctx context.Context, s Speech) ([]byte, error) {
 		defer func() { <-r.sem }()
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+	if r.gemini != nil {
+		return r.geminiSpeak(ctx, s)
 	}
 	format := "wav"
 	if s.Format == "mp3" {
@@ -228,7 +233,11 @@ func (r *remote) post(ctx context.Context, path string, fields map[string]any) (
 // Fingerprint identifies an engine's settings that change its audio (and
 // the version of how styles are mapped to its controls).
 func (r *remote) fingerprint() string {
-	return fmt.Sprintf("%s|%s|%s|%s|%g|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Variant, r.cfg.Model, r.cfg.Gain, mappingVersion)
+	f := fmt.Sprintf("%s|%s|%s|%s|%g|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Variant, r.cfg.Model, r.cfg.Gain, mappingVersion)
+	if r.cfg.Kind == KindGemini {
+		f += fmt.Sprintf("|%t|%s", *r.cfg.Emotions, geminiMappingVersion)
+	}
+	return f
 }
 
 // mappingVersion changes with expressionOf's tables or chunkRunes.
@@ -355,6 +364,9 @@ func (r *remote) merge(listed []string) []string {
 
 func (r *remote) fetch(ctx context.Context) ([]string, map[string]bool, error) {
 	references := map[string]bool{}
+	if r.cfg.Kind == KindGemini {
+		return slices.Clone(geminiVoices), references, nil
+	}
 	if r.cfg.Kind != KindChatterbox {
 		listed, err := r.list(ctx, "/v1/audio/voices")
 		return listed, references, err

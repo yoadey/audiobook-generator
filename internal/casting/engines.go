@@ -23,12 +23,21 @@ type EngineVoiceLister interface {
 // left out, their names tell nothing).
 //
 //go:embed chatterbox_voices.json
-var engineGendersJSON []byte
+var chatterboxGendersJSON []byte
+
+// The genders of the Gemini API's prebuilt voices (as Google lists them).
+//
+//go:embed gemini_voices.json
+var geminiGendersJSON []byte
 
 var engineGenders = func() map[string]store.Gender {
-	var m map[string]store.Gender
-	if err := json.Unmarshal(engineGendersJSON, &m); err != nil {
-		panic(fmt.Errorf("casting: chatterbox_voices.json: %w", err))
+	m := map[string]store.Gender{}
+	for name, data := range map[string][]byte{
+		"chatterbox_voices.json": chatterboxGendersJSON, "gemini_voices.json": geminiGendersJSON,
+	} {
+		if err := json.Unmarshal(data, &m); err != nil {
+			panic(fmt.Errorf("casting: %s: %w", name, err))
+		}
 	}
 	return m
 }()

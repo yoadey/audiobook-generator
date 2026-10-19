@@ -60,3 +60,14 @@ func TestEncodeFailureLeavesNoFile(t *testing.T) {
 	require.Error(t, err)
 	assert.NoFileExists(t, out)
 }
+
+func TestMP3(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	data, err := Encoder{FFmpeg: "ffmpeg"}.MP3(context.Background(), Silence(500*time.Millisecond))
+	require.NoError(t, err)
+	// An MP3 starts with an ID3 tag or a frame sync.
+	require.Greater(t, len(data), 3)
+	assert.True(t, string(data[:3]) == "ID3" || (data[0] == 0xFF && data[1]&0xE0 == 0xE0), "an MP3")
+}

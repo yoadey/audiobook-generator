@@ -632,6 +632,7 @@ func (e SegmentKind) Valid() bool {
 // Defines values for TTSEngineKind.
 const (
 	TTSEngineKindChatterbox TTSEngineKind = "chatterbox"
+	TTSEngineKindGemini     TTSEngineKind = "gemini"
 	TTSEngineKindOpenai     TTSEngineKind = "openai"
 )
 
@@ -640,7 +641,30 @@ func (e TTSEngineKind) Valid() bool {
 	switch e {
 	case TTSEngineKindChatterbox:
 		return true
+	case TTSEngineKindGemini:
+		return true
 	case TTSEngineKindOpenai:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TTSEngineQuotaState.
+const (
+	TTSEngineQuotaStateExhausted TTSEngineQuotaState = "exhausted"
+	TTSEngineQuotaStateReady     TTSEngineQuotaState = "ready"
+	TTSEngineQuotaStateWaiting   TTSEngineQuotaState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the TTSEngineQuotaState enum.
+func (e TTSEngineQuotaState) Valid() bool {
+	switch e {
+	case TTSEngineQuotaStateExhausted:
+		return true
+	case TTSEngineQuotaStateReady:
+		return true
+	case TTSEngineQuotaStateWaiting:
 		return true
 	default:
 		return false
@@ -1656,7 +1680,13 @@ type TTSEngine struct {
 	// Error Why its voices could not be listed
 	Error *string       `json:"error,omitempty"`
 	Kind  TTSEngineKind `json:"kind"`
-	Name  string        `json:"name"`
+
+	// Model The model a Gemini engine speaks with
+	Model *string `json:"model,omitempty"`
+	Name  string  `json:"name"`
+
+	// Quota How much of its quota a cloud engine (Gemini) used today, counted by this server (Google offers no way to ask for the remaining quota).
+	Quota *TTSEngineQuota `json:"quota,omitempty"`
 
 	// Speed Takes a voice's speed
 	Speed bool `json:"speed"`
@@ -1668,6 +1698,30 @@ type TTSEngine struct {
 
 // TTSEngineKind defines model for TTSEngine.Kind.
 type TTSEngineKind string
+
+// TTSEngineQuota How much of its quota a cloud engine (Gemini) used today, counted by this server (Google offers no way to ask for the remaining quota).
+type TTSEngineQuota struct {
+	AvailableAt *time.Time `json:"availableAt,omitempty"`
+	LastError   *string    `json:"lastError,omitempty"`
+	LastErrorAt *time.Time `json:"lastErrorAt,omitempty"`
+
+	// Limits Provider limits; 0 means no limit. Daily limits reset at midnight in quotaTimezone.
+	Limits LLMLimits `json:"limits"`
+
+	// LimitsLearned Some limits were not configured but named by the engine in a 429 answer
+	LimitsLearned  bool      `json:"limitsLearned"`
+	MinuteRequests int       `json:"minuteRequests"`
+	QuotaResetAt   time.Time `json:"quotaResetAt"`
+	QuotaTimezone  string    `json:"quotaTimezone"`
+
+	// Reason Why the engine takes no request now
+	Reason *string             `json:"reason,omitempty"`
+	State  TTSEngineQuotaState `json:"state"`
+	Today  LLMUsageDay         `json:"today"`
+}
+
+// TTSEngineQuotaState defines model for TTSEngineQuota.State.
+type TTSEngineQuotaState string
 
 // TTSInfo Kokoro (when configured)
 type TTSInfo struct {

@@ -1389,9 +1389,11 @@ export interface components {
     TTSEngine: {
       name: string;
       /** @enum {string} */
-      kind: 'openai' | 'chatterbox';
+      kind: 'openai' | 'chatterbox' | 'gemini';
       /** @description The model a Chatterbox engine runs (original, turbo or nano) */
       variant?: string;
+      /** @description The model a Gemini engine speaks with */
+      model?: string;
       /** @description Speaks emotions and moods itself (Kokoro voices get pace and loudness instead) */
       emotions: boolean;
       /** @description Takes a voice's speed */
@@ -1401,6 +1403,27 @@ export interface components {
       defaultVoice?: string;
       /** @description Why its voices could not be listed */
       error?: string;
+      quota?: components['schemas']['TTSEngineQuota'];
+    };
+    /** @description How much of its quota a cloud engine (Gemini) used today, counted by this server (Google offers no way to ask for the remaining quota). */
+    TTSEngineQuota: {
+      /** @enum {string} */
+      state: 'ready' | 'waiting' | 'exhausted';
+      /** @description Why the engine takes no request now */
+      reason?: string;
+      /** Format: date-time */
+      availableAt?: string;
+      today: components['schemas']['LLMUsageDay'];
+      limits: components['schemas']['LLMLimits'];
+      /** @description Some limits were not configured but named by the engine in a 429 answer */
+      limitsLearned: boolean;
+      minuteRequests: number;
+      /** Format: date-time */
+      quotaResetAt: string;
+      quotaTimezone: string;
+      lastError?: string;
+      /** Format: date-time */
+      lastErrorAt?: string;
     };
     /** @description Provider limits; 0 means no limit. Daily limits reset at midnight in quotaTimezone. */
     LLMLimits: {

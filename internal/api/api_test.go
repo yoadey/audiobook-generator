@@ -67,8 +67,17 @@ func (fakeTTS) EngineVoices(_ context.Context, engine string) ([]string, error) 
 	return []string{"Emily.wav", "Adrian.wav"}, nil
 }
 
+// geminiReset is when the fake Gemini engine's daily quota resets.
+var geminiReset = time.Date(2026, 10, 29, 7, 0, 0, 0, time.UTC)
+
 func (fakeTTS) Engines(context.Context) []tts.Engine {
-	return []tts.Engine{{Name: "cb", Kind: tts.KindChatterbox, Emotions: true, Voices: []string{"Emily.wav"}}}
+	return []tts.Engine{
+		{Name: "cb", Kind: tts.KindChatterbox, Emotions: true, Voices: []string{"Emily.wav"}},
+		{Name: "gem", Kind: tts.KindGemini, Model: "gemini-tts", Voices: []string{"Kore"}, DefaultVoice: "gem:Kore",
+			Quota: &tts.Quota{Day: "2026-10-28", Today: tts.Usage{Requests: 12, InputTokens: 900, OutputTokens: 30000},
+				Limits: tts.EngineLimits{RPD: 100}, Learned: true, ResetAt: geminiReset,
+				Timezone: "America/Los_Angeles", State: tts.QuotaReady}},
+	}
 }
 
 type client struct {

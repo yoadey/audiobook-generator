@@ -14,7 +14,7 @@ Open the web UI:
 {{- end }}
 
 Database: {{ .Values.database.type }}{{ if eq .Values.database.type "postgres" }} ({{ .Values.database.postgres.mode }}){{ end }}
-TTS:      {{ if include "abg.kokoro" . }}Kokoro at {{ include "abg.ttsUrl" . }}{{ else }}no Kokoro{{ end }}{{ if .Values.tts.chatterbox.enabled }}, Chatterbox ({{ .Values.tts.chatterbox.variant }}){{ end }}{{ range .Values.tts.engines }}, {{ .name }}{{ end }}
+TTS:      {{ if include "abg.kokoro" . }}Kokoro at {{ include "abg.ttsUrl" . }}{{ else }}no Kokoro{{ end }}{{ if .Values.tts.chatterbox.enabled }}, Chatterbox ({{ .Values.tts.chatterbox.variant }}){{ end }}{{ if .Values.tts.gemini.enabled }}, Gemini ({{ .Values.tts.gemini.model }}){{ end }}{{ range .Values.tts.engines }}, {{ .name }}{{ end }}
 {{- if .Values.tts.kokoro.enabled }}
           The Kokoro pod needs a few minutes to load its model on first start.
 {{- end }}

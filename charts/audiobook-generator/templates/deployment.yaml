@@ -128,6 +128,13 @@ spec:
             - name: ABG_TTS_ENGINES
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.tts.gemini.enabled }}
+            - name: ABG_TTS_GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.tts.gemini.apiKeySecret.name }}
+                  key: {{ .Values.tts.gemini.apiKeySecret.key }}
+            {{- end }}
             {{- if .Values.voiceDesign.enabled }}
             {{- $vd := .Values.voiceDesign }}
             - name: ABG_VOICE_DESIGN_URL

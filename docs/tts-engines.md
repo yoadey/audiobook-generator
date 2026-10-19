@@ -2,14 +2,15 @@
 
 Kokoro (82M, CPU) is fast and clear but cannot act: emotions are given by
 pace and loudness, moods and pauses by the text (see `PLAN.md` §3.6a,
-§3.7). Other engines, such as Chatterbox, can be configured beside it or
-instead of it.
+§3.7). Other engines, such as Chatterbox or Gemini (Google AI Studio, in
+the cloud), can be configured beside it or instead of it.
 
 ## Which engine a book speaks with
 
 - The deployment decides which engines exist: Kokoro (the chart's or an
   external one; `ABG_TTS_KOKORO=false` without), the chart's Chatterbox,
-  further engines (`tts.engines`), in any combination with at least one.
+  Gemini (`tts.gemini`), further engines (`tts.engines`), in any
+  combination with at least one.
 - A book speaks with the engine of its narrator. The audiobook page
   (*Narrator*) offers each engine of the deployment; switching starts from
   the engine's default voice, and saving casts the characters again from
@@ -17,14 +18,15 @@ instead of it.
 - New books speak with the default engine: that of `ABG_TTS_DEFAULT_VOICE`
   (chart `tts.defaultVoice`). Without Kokoro, a Kokoro voice there stands
   for the first engine's default voice (`defaultVoice` of the engine, for
-  Chatterbox `Emily.wav`), so a Chatterbox-only deployment needs no other
-  setting.
+  Chatterbox `Emily.wav`, for Gemini `Kore`), so a deployment with only
+  one of them needs no other setting.
 - Casting with another engine gives each main character a voice of its
   own (engines' voices do not blend and keep their own pace), avoiding the
   narrator's; once every voice is taken, the least used one is shared.
   Minor characters get a voice of their gender by hash, as with Kokoro.
   A voice's gender comes from Chatterbox-TTS-Server's known predefined
-  voices (by name) or a tag in a clip's file name (`f_anna.wav`,
+  voices and Gemini's prebuilt voices (by name) or a tag in a clip's file
+  name (`f_anna.wav`,
   `old-man.wav`, `female`, `male`); voices of unknown gender are used
   only when chosen by hand.
 - A character voice whose engine is no longer configured is replaced by
@@ -97,22 +99,26 @@ and `tts.chatterbox`):
 | Field | Meaning |
 |---|---|
 | `name` | Prefix of its voices: lower-case letters, digits, dashes |
-| `kind` | `chatterbox` (Chatterbox-TTS-Server) or `openai` (any OpenAI-compatible `/v1/audio/speech` returning WAV) |
-| `url` | Base URL |
+| `kind` | `chatterbox` (Chatterbox-TTS-Server), `gemini` (the Gemini API, below) or `openai` (any OpenAI-compatible `/v1/audio/speech` returning WAV) |
+| `url` | Base URL (Gemini: default `https://generativelanguage.googleapis.com/v1beta`) |
 | `variant` | Chatterbox only: `original` (default; acts emotions), `turbo` (faster, ignores them) or `nano` (fastest, ignores them; needs the patched image below) — must match the server's model |
-| `model` | OpenAI-compatible only: `model` sent (default `tts-1`) |
+| `model` | OpenAI-compatible: `model` sent (default `tts-1`); Gemini: the TTS model (default `gemini-3.1-flash-tts-preview`) |
 | `concurrency` | Parallel requests (default 1) |
 | `timeout` | Per request (default `10m`) |
 | `gain` | Loudness factor (default 1; never clips) |
-| `speed` | Whether it takes a voice's speed (default: `openai` yes, `chatterbox` no) |
+| `speed` | Whether it takes a voice's speed (default: `openai` yes, `chatterbox` no; `gemini` never) |
 | `voices` | Voices to offer in addition to those the server lists |
-| `maxChars` | Longest text sent in one request; the pieces of a paragraph in one voice are joined up to it (default: `chatterbox` 1000, `openai` 400) |
-| `defaultVoice` | Narrator when a book switches to this engine (default: Chatterbox `Emily.wav`, else the first of `voices`) |
+| `maxChars` | Longest text sent in one request; the pieces of a paragraph in one voice are joined up to it (default: `chatterbox` 1000, `gemini` 2000, `openai` 400) |
+| `defaultVoice` | Narrator when a book switches to this engine (default: Chatterbox `Emily.wav`, Gemini `Kore`, else the first of `voices`) |
+| `apiKeyEnv` | Gemini only: environment variable with the API key (required) |
+| `limits` | Gemini only: `rpm`, `tpm`, `rpd`, `tpd` of the model's quota (0: unknown; tokens are text tokens) |
+| `quotaTimezone` | Gemini only: where the daily quota resets at midnight (default `America/Los_Angeles`) |
+| `emotions` | Gemini only: ask for quotes' emotions and thoughts (default `false`) |
 
 Voices are listed from the server: Chatterbox-TTS-Server's predefined
 voices (`/get_predefined_voices`) and reference clips
 (`/get_reference_files`, cloned), or `/v1/audio/voices` of an
-OpenAI-compatible server.
+OpenAI-compatible server. Gemini's 30 prebuilt voices are known.
 
 The chart can run Chatterbox-TTS-Server itself (`tts.chatterbox.enabled`,
 off by default): image `ghcr.io/devnen/chatterbox-tts-server`, pinned by
@@ -145,6 +151,55 @@ the app lists its voices at most once a minute (a failed listing is
 retried after 30 s; a voice is never guessed to be predefined or cloned
 before it was listed once). Renovate does not bump the image (its tags
 are commit hashes): bump `tts.chatterbox.image.tag` by hand.
+
+## Gemini (Google AI Studio)
+
+The Gemini API speaks with 30 prebuilt voices (`Kore`, `Puck`, `Charon`,
+…; 14 female, 16 male), in the cloud: no GPU, good prosody, but a quota.
+Turn it on in the chart:
+
+```yaml
+tts:
+  gemini:
+    enabled: true
+    apiKeySecret: { name: audiobook-llm-keys, key: gemini }  # an existing Secret
+    limits: { rpm: 10, rpd: 100 }   # as AI Studio shows them for the model
+```
+
+The key is created in [Google AI Studio](https://aistudio.google.com/apikey);
+the Secret of a Gemini LLM provider on the same project works too (quotas
+are per model, so speech and analysis do not take from each other). The
+app sends `POST {url}/models/{model}:generateContent` with
+`responseModalities: ["AUDIO"]` and the voice as `prebuiltVoiceConfig`,
+and turns the 24 kHz PCM answer into the chapter's audio like any other.
+Previews are encoded to MP3 with ffmpeg.
+
+**Quota.** Every request counts: each piece of a chapter (pieces of one
+voice in a paragraph are joined up to `maxChars`, 2000 by default, to need
+fewer) and each voice preview. The app counts requests and tokens per
+day (`tts_usages`, in `quotaTimezone`, kept across restarts) and shows
+them with the engine: *Voices* (requests and text tokens today, requests
+per minute, against the limits), *System*, and the book's *Narrator*
+card ("63 of 100 requests left today"). Google offers no way to ask for
+the remaining quota, so what is left is counted against `limits`; when
+they are not set, the limits Gemini names in its first 429 answer
+(`QuotaFailure`) are used until a restart, and the display says so.
+Requests wait for the per-minute window (up to 70 s); beyond that, and
+once the daily quota is used up (by `rpd`/`tpd` or a 429), rendering jobs
+are deferred — the pieces already spoken stay cached — and go on when the
+quota resets (midnight Pacific time) or the engine's retry hint has
+passed. A refused API key or unknown model defers them for 15 minutes
+(fix the Secret and restart); a text Gemini refuses to speak (safety
+filter) fails its chapter with that reason.
+
+**Emotions.** With `emotions: true` a quote's emotion and thoughts are
+asked for in Google's documented way: an instruction before the text
+(`Say angrily: …`, `Whisper: …`, `Say softly, as an inner thought: …`);
+the book's text follows unchanged. Off by default, then emotions are given
+by loudness like for Kokoro. Gemini takes no speed: it paces itself.
+
+**Privacy.** The book text is sent to Google. On the free tier Google may
+use it to improve its products; use a paid project if that matters.
 
 ## Voice design: voices from a description
 

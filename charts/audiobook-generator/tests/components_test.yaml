@@ -248,6 +248,53 @@ tests:
             name: ABG_TTS_ENGINES
             value: '[{"kind":"openai","name":"orpheus","url":"http://orpheus:5005"},{"concurrency":1,"gain":1,"kind":"chatterbox","maxChars":1000,"name":"chatterbox","timeout":"10m","url":"http://abg-audiobook-generator-chatterbox:8004","variant":"original"}]'
 
+  - it: speaks with Gemini, its API key from a Secret
+    template: templates/deployment.yaml
+    set:
+      tts.kokoro.enabled: false
+      tts.gemini.enabled: true
+      tts.gemini.apiKeySecret: { name: llm-keys, key: gemini }
+      tts.gemini.limits.rpd: 100
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_ENGINES
+            value: '[{"apiKeyEnv":"ABG_TTS_GEMINI_API_KEY","concurrency":1,"defaultVoice":"Kore","emotions":false,"gain":1,"kind":"gemini","limits":{"rpd":100,"rpm":0,"tpd":0,"tpm":0},"maxChars":2000,"model":"gemini-3.1-flash-tts-preview","name":"gemini","quotaTimezone":"America/Los_Angeles","timeout":"5m"}]'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_GEMINI_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: llm-keys
+                key: gemini
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ABG_TTS_KOKORO
+            value: "false"
+
+  - it: needs the Secret with Gemini's API key
+    template: templates/deployment.yaml
+    set:
+      tts.gemini.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "tts.gemini.apiKeySecret: name and key of the Secret with the API key are required"
+
+  - it: rejects an engine named like the chart's Gemini
+    template: templates/deployment.yaml
+    set:
+      tts.gemini.enabled: true
+      tts.gemini.apiKeySecret: { name: llm-keys, key: gemini }
+      tts.engines:
+        - name: gemini
+          kind: openai
+          url: http://x
+    asserts:
+      - failedTemplate: {}
+
   - it: renders a CNPG cluster only in cnpg mode
     template: templates/cnpg-cluster.yaml
     set:

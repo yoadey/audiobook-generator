@@ -76,7 +76,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: chatterbox
 {{- end }}
 
-{{/* ABG_TTS_ENGINES: tts.engines plus the chart's Chatterbox (JSON, empty for none). */}}
+{{/* ABG_TTS_ENGINES: tts.engines plus the chart's Chatterbox and Gemini (JSON, empty for none). */}}
 {{- define "abg.ttsEngines" -}}
 {{- $list := list }}
 {{- range .Values.tts.engines }}
@@ -91,6 +91,22 @@ app.kubernetes.io/component: chatterbox
 {{- end }}
 {{- $e := dict "name" $c.name "kind" "chatterbox" "url" (printf "http://%s:8004" (include "abg.chatterbox.fullname" .)) "variant" $c.variant "concurrency" (int $c.concurrency) "timeout" $c.timeout "gain" $c.gain "maxChars" (int $c.maxChars) }}
 {{- with $c.defaultVoice }}
+{{- $_ := set $e "defaultVoice" . }}
+{{- end }}
+{{- $list = append $list $e }}
+{{- end }}
+{{- if .Values.tts.gemini.enabled }}
+{{- $g := .Values.tts.gemini }}
+{{- if not (and $g.apiKeySecret $g.apiKeySecret.name $g.apiKeySecret.key) }}
+{{- fail "tts.gemini.apiKeySecret: name and key of the Secret with the API key are required" }}
+{{- end }}
+{{- range $list }}
+{{- if eq .name $g.name }}
+{{- fail (printf "tts.engines: %q is the name of tts.gemini" .name) }}
+{{- end }}
+{{- end }}
+{{- $e := dict "name" $g.name "kind" "gemini" "apiKeyEnv" "ABG_TTS_GEMINI_API_KEY" "model" $g.model "emotions" $g.emotions "limits" (dict "rpm" (int $g.limits.rpm) "tpm" (int $g.limits.tpm) "rpd" (int $g.limits.rpd) "tpd" (int $g.limits.tpd)) "quotaTimezone" $g.quotaTimezone "concurrency" (int $g.concurrency) "timeout" $g.timeout "gain" $g.gain "maxChars" (int $g.maxChars) }}
+{{- with $g.defaultVoice }}
 {{- $_ := set $e "defaultVoice" . }}
 {{- end }}
 {{- $list = append $list $e }}
@@ -260,8 +276,8 @@ true
 {{- fail (printf "publicUrl must be an http(s) URL, got %q" .) }}
 {{- end }}
 {{- end }}
-{{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) (not .Values.tts.engines) }}
-{{- fail "no speech engine: enable tts.kokoro, set tts.externalUrl, or configure tts.chatterbox or tts.engines" }}
+{{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) (not .Values.tts.gemini.enabled) (not .Values.tts.engines) }}
+{{- fail "no speech engine: enable tts.kokoro, set tts.externalUrl, or configure tts.chatterbox, tts.gemini or tts.engines" }}
 {{- end }}
 {{- if .Values.voiceDesign.enabled }}
 {{- $engine := include "abg.voiceDesign.engine" . }}
@@ -278,7 +294,7 @@ true
 {{- fail "voiceDesign.onDemand grants the app's ServiceAccount the right to scale: set serviceAccount.create or serviceAccount.name (not the namespace's default one)" }}
 {{- end }}
 {{- end }}
-{{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) }}
+{{- if and (not (include "abg.kokoro" .)) (not .Values.tts.chatterbox.enabled) (not .Values.tts.gemini.enabled) }}
 {{- $default := false }}
 {{- range .Values.tts.engines }}
 {{- if or (eq .kind "chatterbox") .defaultVoice .voices }}

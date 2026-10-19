@@ -45,6 +45,7 @@ export type Segment = components['schemas']['Segment'];
 export type SystemInfo = components['schemas']['SystemInfo'];
 export type Tier = components['schemas']['Tier'];
 export type TTSEngine = components['schemas']['TTSEngine'];
+export type TTSEngineQuota = components['schemas']['TTSEngineQuota'];
 export type Voice = components['schemas']['Voice'];
 export type Volume = components['schemas']['Volume'];
 
@@ -229,11 +230,13 @@ export const voicesQuery = queryOptions({
   staleTime: 5 * 60_000,
 });
 
-/** Speech engines besides Kokoro, with their voices. */
+/** Speech engines besides Kokoro, with their voices and quotas. */
 export const ttsEnginesQuery = queryOptions({
   queryKey: ['tts-engines'],
   queryFn: () => unwrap(api.GET('/tts/engines')),
   staleTime: 60_000,
+  // A cloud engine's quota changes while chapters are rendered.
+  refetchInterval: (q) => (q.state.data?.some((e) => e.quota) ? 30_000 : false),
 });
 
 export const jobsQuery = (status?: Job['status'][]) =>

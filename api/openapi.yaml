@@ -2364,10 +2364,13 @@ components:
           type: string
         kind:
           type: string
-          enum: [openai, chatterbox]
+          enum: [openai, chatterbox, gemini]
         variant:
           type: string
           description: The model a Chatterbox engine runs (original, turbo or nano)
+        model:
+          type: string
+          description: The model a Gemini engine speaks with
         emotions:
           type: boolean
           description: Speaks emotions and moods itself (Kokoro voices get pace and loudness instead)
@@ -2384,6 +2387,43 @@ components:
         error:
           type: string
           description: Why its voices could not be listed
+        quota:
+          $ref: "#/components/schemas/TTSEngineQuota"
+    TTSEngineQuota:
+      type: object
+      description: >-
+        How much of its quota a cloud engine (Gemini) used today, counted by
+        this server (Google offers no way to ask for the remaining quota).
+      required: [state, today, limits, limitsLearned, minuteRequests, quotaResetAt, quotaTimezone]
+      properties:
+        state:
+          type: string
+          enum: [ready, waiting, exhausted]
+        reason:
+          type: string
+          description: Why the engine takes no request now
+        availableAt:
+          type: string
+          format: date-time
+        today:
+          $ref: "#/components/schemas/LLMUsageDay"
+        limits:
+          $ref: "#/components/schemas/LLMLimits"
+        limitsLearned:
+          type: boolean
+          description: Some limits were not configured but named by the engine in a 429 answer
+        minuteRequests:
+          type: integer
+        quotaResetAt:
+          type: string
+          format: date-time
+        quotaTimezone:
+          type: string
+        lastError:
+          type: string
+        lastErrorAt:
+          type: string
+          format: date-time
 
     LLMLimits:
       type: object
