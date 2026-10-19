@@ -34,7 +34,7 @@ export function useInstall(): (() => void) | undefined {
   }, []);
   if (!prompt) return undefined;
   return () => {
-    void prompt.prompt();
+    prompt.prompt().catch(() => {}); // dismissed or not allowed
     setPrompt(undefined); // a prompt can be shown once
   };
 }

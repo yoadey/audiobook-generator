@@ -181,6 +181,11 @@ func TestSignIn(t *testing.T) {
 	}
 	res, _ = do(t, c, http.MethodGet, app.URL+"/index.html", nil)
 	assert.Equal(t, http.StatusFound, res.StatusCode)
+	// No way from a public prefix to the rest ("..", also encoded).
+	for _, p := range []string{"/icons/..%2findex.html", "/icons/%2e%2e/books/1", "/feed/..%2fbooks"} {
+		res, _ = do(t, c, http.MethodGet, app.URL+p, nil)
+		assert.Equal(t, http.StatusFound, res.StatusCode, p)
+	}
 
 	res = signIn(t, idp, app, c, "/books/1", nil)
 	require.Equal(t, http.StatusFound, res.StatusCode)

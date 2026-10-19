@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"strings"
 	"sync"
 	"time"
@@ -287,7 +288,9 @@ func (a *Authenticator) setCookie(w http.ResponseWriter, r *http.Request, name, 
 // in-cluster), podcast feeds (token-protected), the sign-in itself and what
 // installing the app needs (browsers fetch the manifest without cookies;
 // none of it says anything about the library).
-func public(path string) bool {
+func public(p string) bool {
+	// As routed and served: no ".." can lead from a public prefix elsewhere.
+	path := pathpkg.Clean(p)
 	switch path {
 	case "/healthz", "/readyz", "/metrics", "/manifest.webmanifest", "/sw.js":
 		return true
