@@ -158,6 +158,7 @@ func TestGeminiConfig(t *testing.T) {
 		"timezone":   {Name: "gemini", Kind: KindGemini, APIKeyEnv: "K", QuotaTimezone: "Mars/Olympus"},
 		"model":      {Name: "gemini", Kind: KindGemini, APIKeyEnv: "K", Model: "a/b"},
 		"voice":      {Name: "gemini", Kind: KindGemini, APIKeyEnv: "K", DefaultVoice: "kore"},
+		"too long":   {Name: "gemini", Kind: KindGemini, APIKeyEnv: "K", MaxChars: 20000},
 		"key on tts": {Name: "orpheus", Kind: KindOpenAI, URL: "http://o", APIKeyEnv: "K"},
 	} {
 		assert.Error(t, bad.Validate(), name)
@@ -377,15 +378,20 @@ func TestGeminiErrors(t *testing.T) {
 		assert.Equal(t, []int16{7}, samples16(t, pcm))
 	})
 	t.Run("server error", func(t *testing.T) {
-		srv, _ := fakeGemini(t, func(geminiRequest) (int, string) {
+		srv, reqs := fakeGemini(t, func(geminiRequest) (int, string) {
 			return http.StatusServiceUnavailable, `{"error":{"code":503,"message":"The model is overloaded."}}`
 		})
-		r, _ := geminiRouter(t, srv.URL, nil)
+		r, usage := geminiRouter(t, srv.URL, nil)
 		_, err := r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "gemini:Kore"})
 		var ue *UnavailableError
 		require.ErrorAs(t, err, &ue, "the job waits a little instead of using up an attempt")
 		assert.Equal(t, "The model is overloaded.", ue.Reason)
 		assert.WithinDuration(t, time.Now().Add(geminiRetry), ue.Until, time.Minute)
+		// Meanwhile nothing is sent, and nothing was counted.
+		_, err = r.Synthesize(ctx, Speech{Text: "Hi.", Voice: "gemini:Kore"})
+		require.ErrorAs(t, err, &ue)
+		assert.Len(t, *reqs, 1)
+		assert.Zero(t, usage.today("gemini").Requests)
 	})
 	t.Run("internal error", func(t *testing.T) {
 		srv, _ := fakeGemini(t, func(geminiRequest) (int, string) {

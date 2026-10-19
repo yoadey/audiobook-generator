@@ -203,9 +203,10 @@ Requests wait for the per-minute window (up to 70 s; a preview 10 s,
 and it is not queued behind a chapter's requests); beyond that, and once
 the daily quota is used up (by `rpd`/`tpd` or a 429), rendering jobs are
 deferred and go on when the quota resets (midnight Pacific time) or the
-engine's retry hint has passed. A request Gemini refuses with 429, or
-that got no answer, is not counted. An overloaded engine (503) defers the
-job for 2 minutes; another server error uses up an attempt (an error that
+engine's retry hint has passed. A request Gemini refuses with 429 or 503
+is not counted. An overloaded engine (503) makes every request wait 2
+minutes (jobs are deferred, nothing is sent meanwhile); another server
+error uses up an attempt (an error that
 stays for one text must end); an answer without audio is asked for once
 more; an answer longer than about 11 minutes of audio fails its chapter
 (lower `maxChars`). A refused

@@ -607,7 +607,7 @@ func (r *Router) Engines(ctx context.Context) []Engine {
 			// A usage that cannot be read shows as none, with the error.
 			q, err := e.quotaStatus(ctx)
 			if err != nil {
-				q.LastError = "today's usage could not be read: " + err.Error()
+				q.LastError = strings.TrimPrefix(q.LastError+"; today's usage could not be read: "+err.Error(), "; ")
 			}
 			info.Quota = q
 		}

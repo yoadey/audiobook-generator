@@ -312,7 +312,7 @@ func (s *Server) ListTTSEngines(ctx context.Context, _ ListTTSEnginesRequestObje
 			v := toTTSEngine(e)
 			stored, err := s.Store.EngineRequests(ctx, e.Name)
 			if err != nil {
-				return nil, err
+				s.Log.WarnContext(ctx, "read the request options of a speech engine", "engine", e.Name, "err", err)
 			}
 			v.RequestsCustom = stored != nil
 			out = append(out, v)
@@ -374,6 +374,9 @@ func (s *Server) UpdateTTSEngine(ctx context.Context, req UpdateTTSEngineRequest
 		}
 		if b.JoinParagraphs != nil {
 			stored.JoinParagraphs = b.JoinParagraphs
+		}
+		if stored.MaxChars == nil && stored.JoinParagraphs == nil {
+			stored = nil // nothing overridden
 		}
 	}
 	if err := setter.CheckRequestOverride(req.Name, RequestOverride(stored)); err != nil {

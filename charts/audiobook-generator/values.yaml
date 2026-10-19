@@ -292,6 +292,8 @@ tts:
       tpd: 0
     # Google's daily quotas reset at midnight Pacific time.
     quotaTimezone: America/Los_Angeles
+    # Parallel requests; a long one may take a few hundred MB of memory
+    # while its audio is converted.
     concurrency: 1
     # Per request: the longest ones speak about five minutes.
     timeout: 10m

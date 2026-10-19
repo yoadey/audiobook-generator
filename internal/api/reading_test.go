@@ -225,6 +225,8 @@ func TestEngineVoices(t *testing.T) {
 			map[string]any{"reset": true}, &changed))
 		assert.Equal(t, changed.Defaults, changed.Requests)
 		assert.False(t, changed.RequestsCustom)
+		require.Equal(t, http.StatusOK, c.json(http.MethodPatch, "/api/tts/engines/gem", map[string]any{}, &changed))
+		assert.False(t, changed.RequestsCustom, "nothing set: nothing overridden")
 		stored, err = s.EngineRequests(context.Background(), "gem")
 		require.NoError(t, err)
 		assert.Nil(t, stored)

@@ -105,6 +105,10 @@ func (c *EngineConfig) validateGemini() error {
 		off := false
 		c.Emotions = &off
 	}
+	if c.MaxChars > MaxRequestChars(KindGemini) {
+		return fmt.Errorf("engine %s: maxChars must be at most %d (longer answers exceed the audio limit)",
+			c.Name, MaxRequestChars(KindGemini))
+	}
 	if v := c.DefaultVoice; v != "" && !slices.Contains(geminiVoices, v) && !slices.Contains(c.Voices, v) {
 		return fmt.Errorf("engine %s: defaultVoice %q is not one of Gemini's voices (e.g. Kore, Puck, Charon)", c.Name, v)
 	}
@@ -444,7 +448,7 @@ func (r *remote) geminiPost(ctx context.Context, voice, text string) ([]byte, in
 	if int64(len(data)) > limit {
 		// The same text gives as much audio again: never asked again.
 		return nil, 0, nil, &HTTPError{Status: http.StatusRequestEntityTooLarge,
-			Body: r.cfg.Name + ": the answer is too long; lower the longest request (maxChars)"}
+			Body: "the answer is too long; lower the longest request (maxChars)"}
 	}
 	return data, resp.StatusCode, resp.Header, nil
 }
@@ -479,10 +483,13 @@ func (r *remote) geminiFailed(status int, header http.Header, data []byte, start
 		g.limiter.Failed(now, geminiKeyWait, msg)
 		return &UnavailableError{Engine: r.cfg.Name, Until: now.Add(geminiKeyWait), Reason: detail}
 	case status == http.StatusServiceUnavailable:
-		// The engine is overloaded: wait a little, without using up the
-		// job's attempts (an error that stays, such as a 500 for one
-		// text, uses them up instead of being asked for forever).
-		g.limiter.Failed(now, 0, msg)
+		// The engine is overloaded: every request waits a little (none is
+		// sent meanwhile), without using up the jobs' attempts or the
+		// quota (an error that stays, such as a 500 for one text, uses up
+		// the attempts instead of being asked for forever).
+		usage.Requests = 0
+		g.limiter.Refund(start)
+		g.limiter.Failed(now, geminiRetry, msg)
 		return &UnavailableError{Engine: r.cfg.Name, Until: now.Add(geminiRetry), Reason: detail}
 	default:
 		g.limiter.Failed(now, 0, msg)
