@@ -87,8 +87,8 @@ export function Reader({
   // Where reading is while paused (placed, turned, scrolled or clicked to):
   // what stays in view when the text flows anew.
   const readAt = useRef<number | undefined>(startSegment);
-  // None while playing away from the voice: the page shown stays.
-  // While playing away from the voice: where the reader turned to.
+  // While playing away from the voice: where the reader turned to (none
+  // after scrolling away: the page stays where it is).
   const awayAt = useRef<number | undefined>(undefined);
   const anchor = () => {
     const l = latest.current;
@@ -414,6 +414,7 @@ export function Reader({
       if (ownScroll.current) return;
       if (latest.current.playing) {
         setFollow(false);
+        awayAt.current = undefined;
         return;
       }
       clearTimeout(readTimer.current);
@@ -721,7 +722,7 @@ const ParagraphView = memo(function ParagraphView({
           s.emphasis,
           s.id === active ? mark : undefined,
           s.id === active ? word : undefined,
-        ).map((piece, k) => (
+        ).map((piece, k, all) => (
           <span
             key={k}
             // Where the voice is (for turning to its page).
@@ -735,7 +736,12 @@ const ParagraphView = memo(function ParagraphView({
                   : piece.marked
                     ? 'var(--mantine-color-yellow-light)'
                     : undefined,
-              borderRadius: piece.marked ? 3 : undefined,
+              // One rounded band for the marked range, however it is cut.
+              borderRadius: piece.marked
+                ? `${all[k - 1]?.marked ? 0 : 3}px ${all[k + 1]?.marked ? 0 : 3}px ${
+                    all[k + 1]?.marked ? 0 : 3
+                  }px ${all[k - 1]?.marked ? 0 : 3}px`
+                : undefined,
               boxDecorationBreak: 'clone',
               WebkitBoxDecorationBreak: 'clone',
             }}
