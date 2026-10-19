@@ -685,6 +685,40 @@ describe('App', () => {
       .map(([r]) => r)
       .filter((r): r is Request => typeof r !== 'string' && r.method === 'PUT');
 
+  it('changes and keeps the reading settings', async () => {
+    stubApi({
+      '/api/books/1': book,
+      '/api/books/1/chapters': { items: chapters, total: 2 },
+      '/api/chapters/10': readText(10, 'ready'),
+      '/api/chapters/10/timings': { chapterId: 10, version: 'abc', exact: true, cues: [] },
+      'GET /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+      'PUT /api/books/1/progress': { chapterId: 10, positionMs: 0 },
+    });
+    renderAt('/books/1/listen');
+    const reader = await screen.findByTestId('reader');
+    fireEvent.click(screen.getByRole('button', { name: 'Reading settings' }));
+    const settings = await screen.findByRole('dialog', { name: 'Reading settings' });
+    fireEvent.click(within(settings).getByRole('radio', { name: 'Justified' }));
+    fireEvent.click(within(settings).getByRole('radio', { name: 'Sepia' }));
+    fireEvent.click(within(settings).getByRole('switch', { name: /saved position/ }));
+    expect(reader.style.textAlign).toBe('justify');
+    expect(document.documentElement.dataset.paper).toBe('sepia');
+    await vi.waitFor(() =>
+      expect(JSON.parse(localStorage.getItem('abg.readerPrefs')!)).toMatchObject({
+        align: 'justify',
+        paper: 'sepia',
+        showPosition: false,
+      }),
+    );
+
+    fireEvent.click(within(settings).getByRole('button', { name: 'Reset to defaults' }));
+    expect(reader.style.textAlign).toBe('start');
+    expect(document.documentElement.dataset.paper).toBe('default');
+    // The page colour is the reader's only.
+    fireEvent.click(screen.getByRole('link', { name: 'Pride and Prejudice' }));
+    await vi.waitFor(() => expect(document.documentElement.dataset.paper).toBeUndefined());
+  });
+
   it('reads along: a click on a passage listens from there', async () => {
     const fetch = stubApi({
       '/api/books/1': book,
