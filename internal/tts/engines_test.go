@@ -80,6 +80,7 @@ func TestEngineConfig(t *testing.T) {
 		c := EngineConfig{Name: "x", Kind: KindChatterbox, URL: "http://x", Variant: v}
 		require.NoError(t, c.Validate(), v)
 		assert.Equal(t, v, c.Variant)
+		require.NoError(t, c.Validate(), "validated twice, with the defaults filled in")
 	}
 
 	for name, c := range map[string]EngineConfig{

@@ -181,7 +181,7 @@ func (c *EngineConfig) Validate() error {
 		}
 	case c.APIKeyEnv != "" || c.Limits != (EngineLimits{}) || c.QuotaTimezone != "":
 		return fmt.Errorf("engine %s: apiKeyEnv, limits and quotaTimezone are for gemini engines", c.Name)
-	case c.Emotions != nil && c.Kind != KindOpenAI:
+	case c.Emotions != nil && *c.Emotions && c.Kind != KindOpenAI:
 		return fmt.Errorf("engine %s: emotions are for gemini and openai engines", c.Name)
 	}
 	if c.Emotions == nil {
