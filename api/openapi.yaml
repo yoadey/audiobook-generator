@@ -2180,7 +2180,9 @@ components:
           format: int64
           description: >-
             The segment at the position; when the chapter is read without
-            audio, positionMs is 0 and the segment marks the position
+            audio, positionMs is 0 and the segment marks the position. A
+            segment that no longer exists (the speaker attribution split its
+            paragraph anew) is left out; one of another chapter is refused
     ChapterTimings:
       type: object
       required: [chapterId, version, exact, cues]

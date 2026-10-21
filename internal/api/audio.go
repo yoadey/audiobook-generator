@@ -186,13 +186,19 @@ func (s *Server) SaveProgress(ctx context.Context, req SaveProgressRequestObject
 	p := &store.ListenProgress{BookID: b.ID, UserID: auth.Subject(ctx), ChapterID: c.ID,
 		PositionMs: max(req.Body.PositionMs, 0)}
 	if id := req.Body.SegmentId; id != nil {
+		// A segment that is gone was replaced when the speaker attribution
+		// split its paragraph anew, after the client loaded the chapter:
+		// the position stands without it.
 		seg, err := s.Store.GetSegment(ctx, *id)
-		if isNotFound(err) || err == nil && seg.ChapterID != c.ID {
-			return SaveProgress400JSONResponse{ErrorJSONResponse(errMsg("segment not found in this chapter"))}, nil
-		} else if err != nil {
+		switch {
+		case isNotFound(err):
+		case err != nil:
 			return nil, err
+		case seg.ChapterID != c.ID:
+			return SaveProgress400JSONResponse{ErrorJSONResponse(errMsg("segment not found in this chapter"))}, nil
+		default:
+			p.SegmentID = &seg.ID
 		}
-		p.SegmentID = &seg.ID
 	}
 	if err := s.Store.SaveProgress(ctx, p); err != nil {
 		return nil, err

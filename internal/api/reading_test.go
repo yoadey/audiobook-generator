@@ -160,8 +160,13 @@ func TestReadingAlong(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, c.json(http.MethodPut, "/api/books/"+id+"/progress",
 			map[string]any{"chapterId": ch2.Id, "positionMs": 0, "segmentId": tm.Cues[3].SegmentId}, nil),
 			"a segment of another chapter")
-		assert.Equal(t, http.StatusBadRequest, c.json(http.MethodPut, "/api/books/"+id+"/progress",
-			map[string]any{"chapterId": ch1.Id, "positionMs": 0, "segmentId": 99999999}, nil))
+		// A segment that is gone (its paragraph was split anew): the
+		// position stands without it.
+		var gone api.Progress
+		require.Equal(t, http.StatusOK, c.json(http.MethodPut, "/api/books/"+id+"/progress",
+			map[string]any{"chapterId": ch1.Id, "positionMs": 5, "segmentId": 99999999}, &gone))
+		assert.Nil(t, gone.SegmentId)
+		assert.EqualValues(t, 5, gone.PositionMs)
 		// Listening on without a segment clears it.
 		var listened api.Progress
 		require.Equal(t, http.StatusOK, c.json(http.MethodPut, "/api/books/"+id+"/progress",

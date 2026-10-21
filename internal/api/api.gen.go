@@ -1617,7 +1617,7 @@ type ProgressUpdate struct {
 	ChapterId  int64 `json:"chapterId"`
 	PositionMs int64 `json:"positionMs"`
 
-	// SegmentId The segment at the position; when the chapter is read without audio, positionMs is 0 and the segment marks the position
+	// SegmentId The segment at the position; when the chapter is read without audio, positionMs is 0 and the segment marks the position. A segment that no longer exists (the speaker attribution split its paragraph anew) is left out; one of another chapter is refused
 	SegmentId *int64 `json:"segmentId,omitempty"`
 }
 

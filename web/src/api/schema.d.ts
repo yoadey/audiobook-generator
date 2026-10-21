@@ -1281,7 +1281,7 @@ export interface components {
       positionMs: number;
       /**
        * Format: int64
-       * @description The segment at the position; when the chapter is read without audio, positionMs is 0 and the segment marks the position
+       * @description The segment at the position; when the chapter is read without audio, positionMs is 0 and the segment marks the position. A segment that no longer exists (the speaker attribution split its paragraph anew) is left out; one of another chapter is refused
        */
       segmentId?: number;
     };
