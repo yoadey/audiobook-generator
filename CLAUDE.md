@@ -42,8 +42,12 @@ make chart-test    # helm lint, helm unittest, kubeconform
 - Work on feature branches and open PRs against `main`; releases via Git tags.
 - Everything in the store layer must work on both SQLite and PostgreSQL: no
   raw SQL outside the small dialect interface, tests run against both.
-- Never let the LLM rewrite book text: segmentation is deterministic code, the
-  LLM only returns compact labels (see `docs/PLAN.md` §3).
+- Never let the LLM rewrite book text: it only returns compact labels and
+  points at text by copying a few of its words (anchors), which code finds
+  in the text and checks; what cannot be found is dropped. The import
+  segments deterministically; the speaker attribution then splits
+  paragraphs where the LLM found speech, thoughts and other voices,
+  losing no character (see `docs/PLAN.md` §3).
 - Every long-running step is a persistent, resumable job. LLM calls go
   through `llm.Pool`; its quota errors defer jobs (`jobs.Deferrer`) instead
   of failing them.

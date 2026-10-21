@@ -419,3 +419,30 @@ func TestMoodsCovered(t *testing.T) {
 		assert.Contains(t, moods, m)
 	}
 }
+
+func TestDirectionsReachAnExpressiveEngine(t *testing.T) {
+	ps, ss := chapter([]string{"e:angry:“Out!”", "n:she hissed."}, []string{"q:“Hello?”"})
+	ss[0].Direction, ss[0].Voicing = "through clenched teeth", store.VoicingSpeech
+	ss[2].Voicing, ss[2].Direction = store.VoicingRemote, "crackling, far away"
+	ps[0].Direction = "hushed, with mounting dread"
+	ch := &store.Chapter{Title: "Ignored"}
+	paras := append([]store.Paragraph{{ID: 99, Kind: store.ParagraphHeading}}, ps...)
+	items := plan(ch, paras, ss, func(*store.Segment) (string, float64) { return "cb:narrator.wav", 1 },
+		lexicon.Compile(nil), engines("v1"))
+	require.Len(t, items, 3)
+	out, hissed, hello := items[0].speech(), items[1].speech(), items[2].speech()
+	assert.Equal(t, "through clenched teeth", out.Direction)
+	assert.Equal(t, store.VoicingSpeech, out.Voicing)
+	assert.Equal(t, "hushed, with mounting dread", hissed.Direction, "narration: the paragraph's direction")
+	assert.Empty(t, hissed.Voicing)
+	assert.Equal(t, "crackling, far away", hello.Direction,
+		"speech in the narrator's voice with a direction of its own is acted")
+	assert.Equal(t, store.VoicingRemote, hello.Voicing)
+
+	// Another direction is another piece of audio.
+	other := items[0]
+	other.style = &style{emotion: "angry", direction: "coldly"}
+	assert.NotEqual(t, items[0].file("d", 0), other.file("d", 0))
+	plain := style{emotion: "angry"}
+	assert.Equal(t, "|angry||false", plain.key(), "keys of pieces cached before directions stay")
+}

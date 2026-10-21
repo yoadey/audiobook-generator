@@ -2,8 +2,9 @@
 
 Kokoro (82M, CPU) is fast and clear but cannot act: emotions are given by
 pace and loudness, moods and pauses by the text (see `PLAN.md` §3.6a,
-§3.7). Other engines, such as Chatterbox or Gemini (Google AI Studio, in
-the cloud), can be configured beside it or instead of it.
+§3.7). Other engines, such as Chatterbox, Qwen3-TTS (directed by the
+speaker attribution's instructions) or Gemini (Google AI Studio, in the
+cloud), can be configured beside it or instead of it.
 
 ## Which engine a book speaks with
 
@@ -108,22 +109,23 @@ and `tts.chatterbox`):
 | Field | Meaning |
 |---|---|
 | `name` | Prefix of its voices: lower-case letters, digits, dashes |
-| `kind` | `chatterbox` (Chatterbox-TTS-Server), `gemini` (the Gemini API, below) or `openai` (any OpenAI-compatible `/v1/audio/speech` returning WAV) |
+| `kind` | `chatterbox` (Chatterbox-TTS-Server), `gemini` (the Gemini API, below), `qwen3` (a Qwen3-TTS server, below) or `openai` (any OpenAI-compatible `/v1/audio/speech` returning WAV) |
 | `url` | Base URL (Gemini: default `https://generativelanguage.googleapis.com/v1beta`) |
 | `variant` | Chatterbox only: `original` (default; acts emotions), `turbo` (faster, ignores them) or `nano` (fastest, ignores them; needs the patched image below) — must match the server's model |
-| `model` | OpenAI-compatible: `model` sent (default `tts-1`); Gemini: the TTS model (default `gemini-3.1-flash-tts-preview`) |
+| `model` | OpenAI-compatible: `model` sent (default `tts-1`); Gemini: the TTS model (default `gemini-3.1-flash-tts-preview`); Qwen3: `model` sent (default `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`) |
+| `language` | Qwen3 only: the language it speaks (default `English`) |
 | `concurrency` | Parallel requests (default 1) |
 | `timeout` | Per request (default `10m`) |
 | `gain` | Loudness factor (default 1; never clips) |
 | `speed` | Whether it takes a voice's speed (default: `openai` yes, `chatterbox` no; `gemini` never) |
 | `voices` | Voices to offer in addition to those the server lists |
-| `maxChars` | Longest text sent in one request; the pieces of a paragraph in one voice are joined up to it (default: `chatterbox` 1000, `gemini` 4000, `openai` 400) |
-| `joinParagraphs` | Read consecutive paragraphs in one voice and style in one request, not only those the chapter preparation found to flow on (default: `gemini` yes, others no) |
-| `defaultVoice` | Narrator when a book switches to this engine (default: Chatterbox `Emily.wav`, Gemini `Kore`, else the first of `voices`) |
+| `maxChars` | Longest text sent in one request; the pieces of a paragraph in one voice are joined up to it (default: `chatterbox` and `qwen3` 1000, `gemini` 4000, `openai` 400) |
+| `joinParagraphs` | Read consecutive paragraphs in one voice and style in one request, not only those the chapter preparation found to flow on (default: `gemini` and `qwen3` yes, others no) |
+| `defaultVoice` | Narrator when a book switches to this engine (default: Chatterbox `Emily.wav`, Gemini `Kore`, Qwen3 `Ryan`, else the first of `voices`) |
 | `apiKeyEnv` | Gemini only: environment variable with the API key (required) |
 | `limits` | Gemini only: `rpm`, `tpm`, `rpd`, `tpd` of the model's quota (0: unknown; tokens are text tokens) |
 | `quotaTimezone` | Gemini only: where the daily quota resets at midnight (default `America/Los_Angeles`) |
-| `emotions` | Gemini only: ask for quotes' emotions and thoughts (default `false`) |
+| `emotions` | Gemini and Qwen3: tell the engine how to speak each piece (the attribution's directions, emotions, thoughts, kinds of voice; default `false` for Gemini, `true` for Qwen3) |
 
 Voices are listed from the server: Chatterbox-TTS-Server's predefined
 voices (`/get_predefined_voices`) and reference clips
@@ -219,11 +221,69 @@ its job's attempts.
 **Emotions.** With `emotions: true` a quote's emotion and thoughts are
 asked for in Google's documented way: an instruction before the text
 (`Say angrily: …`, `Whisper: …`, `Say softly, as an inner thought: …`);
-the book's text follows unchanged. Off by default, then emotions are given
+where the speaker attribution wrote a direction or found another kind of
+voice, that is said instead (`Say low and menacing: …`, `Say as a voice
+heard through a phone, radio or loudspeaker, a little distant: …`), also
+for narration with a direction of its own; the book's text follows
+unchanged. Off by default, then emotions are given
 by loudness like for Kokoro. Gemini takes no speed: it paces itself.
 
 **Privacy.** The book text is sent to Google. On the free tier Google may
 use it to improve its products; use a paid project if that matters.
+
+## Qwen3-TTS: directed voices
+
+[Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice)
+(Apache-2.0) follows instructions in words: emotion and its strength,
+volume, pace, pitch, voice quality. That is what the speaker attribution
+writes for every line (§3.6 of `PLAN.md`): a direction such as "barely
+above a whisper, trembling with fear", and the kind of voice (speech,
+thought, telepathy, off-voice, system message, writing read out, song);
+the narration gets a direction where it should be read differently.
+
+The app does **not** deploy Qwen3-TTS (it needs a GPU; the chart stays
+as it is). Run a server with an OpenAI-compatible speech endpoint that
+takes `instructions` yourself, e.g.
+[vLLM-Omni](https://github.com/vllm-project/vllm-omni) with a CustomVoice
+model, and point an engine at it:
+
+```yaml
+tts:
+  engines:
+    - name: qwen3
+      kind: qwen3
+      url: http://qwen3-tts.tts:8091
+      # model: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice (default)
+      # language: English (default)
+      concurrency: 2
+```
+
+Then switch a book's narrator (*Narrator*) to a `qwen3:` voice; the
+characters are cast from the engine's voices. The app sends
+`POST {url}/v1/audio/speech` with `model`, `input`, `voice`,
+`language`, `response_format: wav` and, where there is anything to say,
+`instructions`:
+
+| Piece | `instructions` |
+|---|---|
+| a line with a direction | `Say it through clenched teeth, seething.` |
+| a line without one | the emotion in words (`Say it angrily, with force and tension.`) |
+| a thought, telepathy, an off-voice, … | the direction plus the kind (`Say it wistful, softly and intimately, as an inner thought.`) |
+| narration | the paragraph's direction, else its mood from the chapter preparation; plain narration has none |
+
+Each change of voice or instruction starts a new request; consecutive
+text in one voice and style is joined up to `maxChars` (1000 by default,
+about a minute of speech), across paragraphs too. Voices are listed from
+`GET /v1/audio/voices`; a server that lists none offers the CustomVoice
+speakers (Aiden, Dylan, Eric, Ryan, Uncle_Fu male; Ono_Anna, Serena,
+Sohee, Vivian female), whose genders casting knows (in either case).
+Cloned voices a server lists are used when their name carries a gender
+tag (`f_anna`), as with Chatterbox. The engine takes no speed by default
+(it paces itself as told); `speed: true` sends the voice's speed.
+`emotions: false` sends no instructions (emotions are then given by
+loudness, like for Kokoro). Changing the URL, model, language, gain or
+these switches outdates nothing by itself: render a chapter again to
+apply them.
 
 ## Voice design: voices from a description
 
@@ -386,7 +446,7 @@ image).
 
 | Model | Notes |
 |---|---|
-| Qwen3-TTS 0.6B/1.7B | emotions by instruction, voice design; GPU |
+| Qwen3-TTS 0.6B/1.7B | emotions by instruction (supported: `kind: qwen3`, above), voice design; GPU |
 | IndexTTS-2.5 | strongest emotion/timbre control; bilibili licence |
 | Dia2 1B/2B | Apache-2.0, dialogue, ≤ 2 min per generation |
 | Orpheus 3B | emotion tags, OpenAI-compatible servers (usable as `kind: openai`); GPU |

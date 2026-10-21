@@ -85,6 +85,18 @@ const ParagraphView = memo(function ParagraphView({
       <Title order={3}>{p.text}</Title>
     ) : (
       <Text style={{ lineHeight: 1.7 }}>
+        {p.direction && (
+          <Text
+            component="span"
+            size="xs"
+            fs="italic"
+            c="dimmed"
+            mr={4}
+            title="How the narrator reads it"
+          >
+            [{p.direction}]
+          </Text>
+        )}
         {p.segments.map((s, i) => (
           <span key={s.id}>
             {i > 0 && ' '}

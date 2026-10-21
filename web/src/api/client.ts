@@ -42,6 +42,7 @@ export type Paragraph = components['schemas']['Paragraph'];
 export type Progress = components['schemas']['Progress'];
 export type Quote = components['schemas']['Quote'];
 export type Segment = components['schemas']['Segment'];
+export type Voicing = components['schemas']['Voicing'];
 export type SystemInfo = components['schemas']['SystemInfo'];
 export type Tier = components['schemas']['Tier'];
 export type TTSEngine = components['schemas']['TTSEngine'];

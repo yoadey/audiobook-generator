@@ -678,6 +678,37 @@ var migrations = []*gormigrate.Migration{
 			return tx.Migrator().DropTable("tts_usages")
 		},
 	},
+	{
+		ID: "202610290001_script",
+		Migrate: func(tx *gorm.DB) error {
+			type Segment struct {
+				Voicing   string `gorm:"not null;default:''"`
+				Direction string `gorm:"not null;default:''"`
+			}
+			type Paragraph struct {
+				Direction string `gorm:"not null;default:''"`
+			}
+			for _, col := range []string{"Voicing", "Direction"} {
+				if err := tx.Migrator().AddColumn(&Segment{}, col); err != nil {
+					return err
+				}
+			}
+			return tx.Migrator().AddColumn(&Paragraph{}, "Direction")
+		},
+		Rollback: func(tx *gorm.DB) error {
+			type Segment struct{ Voicing, Direction string }
+			type Paragraph struct{ Direction string }
+			if err := tx.Migrator().DropColumn(&Paragraph{}, "Direction"); err != nil {
+				return err
+			}
+			for _, col := range []string{"Direction", "Voicing"} {
+				if err := tx.Migrator().DropColumn(&Segment{}, col); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // LatestSchemaVersion is the ID of the newest migration.

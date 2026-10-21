@@ -24,6 +24,11 @@ const (
 	// KindGemini is the Gemini API's speech generation (Google AI Studio),
 	// a cloud service with an API key and a daily quota.
 	KindGemini = "gemini"
+	// KindQwen3 is a Qwen3-TTS server with an OpenAI-compatible
+	// /v1/audio/speech that takes instructions on how to speak (e.g.
+	// vLLM-Omni with a CustomVoice model): it acts the attribution's
+	// directions, emotions, thoughts and moods.
+	KindQwen3 = "qwen3"
 )
 
 // Chatterbox variants the server runs (its model.repo_id).
@@ -46,8 +51,10 @@ type EngineConfig struct {
 	Kind string `json:"kind"`
 	URL  string `json:"url"`
 	// Model is sent as "model" to an OpenAI-compatible engine (default
-	// "tts-1").
+	// "tts-1"; Qwen3: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice).
 	Model string `json:"model,omitempty"`
+	// Language a Qwen3 engine speaks (default English).
+	Language string `json:"language,omitempty"`
 	// Variant of a Chatterbox engine: original (default), turbo or nano.
 	Variant string `json:"variant,omitempty"`
 	// Concurrency bounds parallel requests to this engine (default 1).
@@ -78,8 +85,10 @@ type EngineConfig struct {
 	// QuotaTimezone is where a Gemini engine's daily quota resets at
 	// midnight (default America/Los_Angeles, as Google's does).
 	QuotaTimezone string `json:"quotaTimezone,omitempty"`
-	// Emotions: a Gemini engine is asked to speak the emotion of a quote
-	// and thoughts ("Say angrily: …"; default false: they are given by
+	// Emotions: a Gemini or Qwen3 engine is told how to speak each piece:
+	// the attribution's direction, a quote's emotion, thoughts and the
+	// narration's mood ("Say angrily: …"; default false for Gemini, whose
+	// requests it splits further, true for Qwen3; off, they are given by
 	// loudness, like for Kokoro).
 	Emotions *bool `json:"emotions,omitempty"`
 	// JoinParagraphs: consecutive paragraphs in one voice and style are
@@ -96,7 +105,7 @@ func MaxRequestChars(kind string) int {
 	switch kind {
 	case KindGemini:
 		return 5000
-	case KindOpenAI:
+	case KindOpenAI, KindQwen3:
 		return 4000
 	}
 	return 10000
@@ -167,17 +176,29 @@ func (c *EngineConfig) Validate() error {
 		return fmt.Errorf("engine name %q: lower-case letters, digits and dashes, not %q", c.Name, KokoroEngine)
 	}
 	switch c.Kind {
-	case KindOpenAI, KindChatterbox, KindGemini:
+	case KindOpenAI, KindChatterbox, KindGemini, KindQwen3:
 	default:
-		return fmt.Errorf("engine %s: kind must be %q, %q or %q, got %q",
-			c.Name, KindOpenAI, KindChatterbox, KindGemini, c.Kind)
+		return fmt.Errorf("engine %s: kind must be %q, %q, %q or %q, got %q",
+			c.Name, KindOpenAI, KindChatterbox, KindGemini, KindQwen3, c.Kind)
 	}
-	if c.Kind == KindGemini {
+	switch c.Kind {
+	case KindGemini:
 		if err := c.validateGemini(); err != nil {
 			return err
 		}
-	} else if c.APIKeyEnv != "" || c.Limits != (EngineLimits{}) || c.QuotaTimezone != "" || c.Emotions != nil {
-		return fmt.Errorf("engine %s: apiKeyEnv, limits, quotaTimezone and emotions are for gemini engines", c.Name)
+	case KindQwen3:
+		if err := c.validateQwen3(); err != nil {
+			return err
+		}
+	}
+	if c.Kind != KindGemini && (c.APIKeyEnv != "" || c.Limits != (EngineLimits{}) || c.QuotaTimezone != "") {
+		return fmt.Errorf("engine %s: apiKeyEnv, limits and quotaTimezone are for gemini engines", c.Name)
+	}
+	if c.Kind != KindGemini && c.Kind != KindQwen3 && c.Emotions != nil {
+		return fmt.Errorf("engine %s: emotions are for gemini and qwen3 engines", c.Name)
+	}
+	if c.Kind != KindQwen3 && c.Language != "" {
+		return fmt.Errorf("engine %s: language is for qwen3 engines", c.Name)
 	}
 	if !strings.HasPrefix(c.URL, "http://") && !strings.HasPrefix(c.URL, "https://") {
 		return fmt.Errorf("engine %s: url must be http(s), got %q", c.Name, c.URL)
@@ -216,12 +237,12 @@ func (c *EngineConfig) Validate() error {
 		c.Speed = &speed
 	}
 	if c.JoinParagraphs == nil {
-		join := c.Kind == KindGemini
+		join := c.Kind == KindGemini || c.Kind == KindQwen3
 		c.JoinParagraphs = &join
 	}
 	if c.MaxChars == 0 {
 		switch c.Kind {
-		case KindChatterbox:
+		case KindChatterbox, KindQwen3:
 			c.MaxChars = 1000
 		case KindGemini:
 			c.MaxChars = 4000
@@ -252,7 +273,7 @@ type Engine struct {
 	Kind string
 	// Variant of a Chatterbox engine ("" otherwise).
 	Variant string
-	// Model of a Gemini engine ("" otherwise).
+	// Model of a Gemini or Qwen3 engine ("" otherwise).
 	Model string
 	// Emotions: it speaks emotions itself (no pace and loudness for them).
 	Emotions bool
@@ -451,6 +472,8 @@ func (r *Router) DefaultVoice(engine string) string {
 		v = chatterboxDefaultVoice
 	case e.cfg.Kind == KindGemini:
 		v = geminiDefaultVoice
+	case e.cfg.Kind == KindQwen3:
+		v = qwen3DefaultVoice
 	case len(e.cfg.Voices) > 0:
 		v = e.cfg.Voices[0]
 	default:
@@ -594,7 +617,7 @@ func (r *Router) Engines(ctx context.Context) []Engine {
 		e := r.engines[n]
 		info := Engine{Name: n, Kind: e.cfg.Kind, Variant: e.cfg.Variant, Emotions: e.expressive(), Speed: *e.cfg.Speed,
 			DefaultVoice: r.DefaultVoice(n)}
-		if e.gemini != nil {
+		if e.gemini != nil || e.cfg.Kind == KindQwen3 {
 			info.Model = e.cfg.Model
 		}
 		info.Requests, info.Defaults, info.MaxChars = e.requestOptions(), e.defaultOptions(), MaxRequestChars(e.cfg.Kind)
@@ -620,7 +643,7 @@ func (r *remote) expressive() bool {
 	switch r.cfg.Kind {
 	case KindChatterbox:
 		return r.cfg.Variant == VariantOriginal
-	case KindGemini:
+	case KindGemini, KindQwen3:
 		return *r.cfg.Emotions
 	}
 	return false

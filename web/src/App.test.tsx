@@ -982,6 +982,8 @@ describe('App', () => {
               text: '“Come.”',
               confidence: 0.2,
               speakerManual: false,
+              voicing: 'remote',
+              direction: 'crackling over the radio',
             },
           ],
         },
@@ -990,6 +992,7 @@ describe('App', () => {
           idx: 1,
           kind: 'text',
           text: 'Nothing else.',
+          direction: 'flat and tired',
           segments: [
             {
               id: 5,
@@ -1028,6 +1031,10 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Erin Solstice: “My dear,”' })).toHaveTextContent(
       'Erin Solstice · happy',
     );
+    expect(screen.getByRole('button', { name: 'Narrator (to check): “Come.”' })).toHaveTextContent(
+      'Narrator · off-voice(crackling over the radio)',
+    );
+    expect(screen.getByText('[flat and tired]')).toBeInTheDocument();
     fireEvent.click(within(bar).getByRole('button', { name: 'Show only those to check' }));
     expect(screen.queryByText('Nothing else.')).not.toBeInTheDocument();
     expect(within(bar).getByRole('button', { name: 'Show all' })).toBeInTheDocument();

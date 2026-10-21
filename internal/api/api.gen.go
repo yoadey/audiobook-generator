@@ -634,6 +634,7 @@ const (
 	TTSEngineKindChatterbox TTSEngineKind = "chatterbox"
 	TTSEngineKindGemini     TTSEngineKind = "gemini"
 	TTSEngineKindOpenai     TTSEngineKind = "openai"
+	TTSEngineKindQwen3      TTSEngineKind = "qwen3"
 )
 
 // Valid indicates whether the value is a known member of the TTSEngineKind enum.
@@ -644,6 +645,8 @@ func (e TTSEngineKind) Valid() bool {
 	case TTSEngineKindGemini:
 		return true
 	case TTSEngineKindOpenai:
+		return true
+	case TTSEngineKindQwen3:
 		return true
 	default:
 		return false
@@ -731,6 +734,39 @@ func (e VoiceDesignStatus) Valid() bool {
 	case VoiceDesignStatusQueued:
 		return true
 	case VoiceDesignStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for Voicing.
+const (
+	VoicingRemote    Voicing = "remote"
+	VoicingSong      Voicing = "song"
+	VoicingSpeech    Voicing = "speech"
+	VoicingSystem    Voicing = "system"
+	VoicingTelepathy Voicing = "telepathy"
+	VoicingThought   Voicing = "thought"
+	VoicingWriting   Voicing = "writing"
+)
+
+// Valid indicates whether the value is a known member of the Voicing enum.
+func (e Voicing) Valid() bool {
+	switch e {
+	case VoicingRemote:
+		return true
+	case VoicingSong:
+		return true
+	case VoicingSpeech:
+		return true
+	case VoicingSystem:
+		return true
+	case VoicingTelepathy:
+		return true
+	case VoicingThought:
+		return true
+	case VoicingWriting:
 		return true
 	default:
 		return false
@@ -1544,12 +1580,14 @@ type Narration string
 
 // Paragraph defines model for Paragraph.
 type Paragraph struct {
-	Id       int64         `json:"id"`
-	Idx      int           `json:"idx"`
-	Kind     ParagraphKind `json:"kind"`
-	Mood     *Mood         `json:"mood,omitempty"`
-	Segments []Segment     `json:"segments"`
-	Text     string        `json:"text"`
+	// Direction How the narrator reads it, from the speaker attribution (absent - as usual)
+	Direction *string       `json:"direction,omitempty"`
+	Id        int64         `json:"id"`
+	Idx       int           `json:"idx"`
+	Kind      ParagraphKind `json:"kind"`
+	Mood      *Mood         `json:"mood,omitempty"`
+	Segments  []Segment     `json:"segments"`
+	Text      string        `json:"text"`
 }
 
 // ParagraphKind defines model for ParagraphKind.
@@ -1618,8 +1656,11 @@ type RenderResult struct {
 // Segment defines model for Segment.
 type Segment struct {
 	// Confidence How sure the attribution is (0..1; 1 for a speaker chosen by hand)
-	Confidence float32  `json:"confidence"`
-	Emotion    *Emotion `json:"emotion,omitempty"`
+	Confidence float32 `json:"confidence"`
+
+	// Direction How it is performed in words, from the speaker attribution (e.g. "barely above a whisper, trembling"); told to engines that take instructions
+	Direction *string  `json:"direction,omitempty"`
+	Emotion   *Emotion `json:"emotion,omitempty"`
 
 	// Emphasis Italic runs of the text, [start, end) in characters
 	Emphasis *[][]int `json:"emphasis,omitempty"`
@@ -1642,6 +1683,9 @@ type Segment struct {
 	// SpokenAs Spots read differently than written (from the chapter preparation)
 	SpokenAs *[]SpokenForm `json:"spokenAs,omitempty"`
 	Text     string        `json:"text"`
+
+	// Voicing What kind of voice a quotation or thought is, as the speaker attribution found it: speech said aloud, an inner thought, telepathy, an off-voice (phone, radio, loudspeaker, recording, out of sight), a system or game message, written words read out, or song
+	Voicing *Voicing `json:"voicing,omitempty"`
 }
 
 // SegmentKind thought - a character's thought (italics or single marks); attributed like a quote
@@ -1837,6 +1881,9 @@ type VoicePreview struct {
 	Text    *string  `json:"text,omitempty"`
 	Voice   string   `json:"voice"`
 }
+
+// Voicing What kind of voice a quotation or thought is, as the speaker attribution found it: speech said aloud, an inner thought, telepathy, an off-voice (phone, radio, loudspeaker, recording, out of sight), a system or game message, written words read out, or song
+type Voicing string
 
 // Volume defines model for Volume.
 type Volume struct {

@@ -1076,6 +1076,11 @@ export interface components {
      * @enum {string}
      */
     SegmentKind: 'narration' | 'quote' | 'thought';
+    /**
+     * @description What kind of voice a quotation or thought is, as the speaker attribution found it: speech said aloud, an inner thought, telepathy, an off-voice (phone, radio, loudspeaker, recording, out of sight), a system or game message, written words read out, or song
+     * @enum {string}
+     */
+    Voicing: 'speech' | 'thought' | 'telepathy' | 'remote' | 'system' | 'writing' | 'song';
     /** @enum {string} */
     AttributionStatus: 'none' | 'queued' | 'running' | 'done' | 'failed';
     /** @enum {string} */
@@ -1167,6 +1172,9 @@ export interface components {
       /** @description How sure the attribution is (0..1; 1 for a speaker chosen by hand) */
       confidence: number;
       speakerManual: boolean;
+      voicing?: components['schemas']['Voicing'];
+      /** @description How it is performed in words, from the speaker attribution (e.g. "barely above a whisper, trembling"); told to engines that take instructions */
+      direction?: string;
       /** @description Pauses from the chapter preparation as [character offset, ms] (an offset of the text's length - after the segment) */
       pauses?: number[][];
       /** @description Spots read differently than written (from the chapter preparation) */
@@ -1179,6 +1187,8 @@ export interface components {
       kind: components['schemas']['ParagraphKind'];
       text: string;
       mood?: components['schemas']['Mood'];
+      /** @description How the narrator reads it, from the speaker attribution (absent - as usual) */
+      direction?: string;
       segments: components['schemas']['Segment'][];
     };
     ChapterDetail: components['schemas']['Chapter'] & {
@@ -1406,7 +1416,7 @@ export interface components {
     TTSEngine: {
       name: string;
       /** @enum {string} */
-      kind: 'openai' | 'chatterbox' | 'gemini';
+      kind: 'openai' | 'chatterbox' | 'gemini' | 'qwen3';
       /** @description The model a Chatterbox engine runs (original, turbo or nano) */
       variant?: string;
       /** @description The model a Gemini engine speaks with */

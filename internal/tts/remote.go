@@ -131,14 +131,17 @@ func (r *remote) synthesize(ctx context.Context, s Speech) ([]byte, error) {
 	}
 	var data []byte
 	var err error
-	if r.cfg.Kind == KindChatterbox {
+	switch r.cfg.Kind {
+	case KindChatterbox:
 		var done func()
 		if done, err = r.use(ctx); err != nil {
 			return nil, err
 		}
 		data, err = r.chatterbox(ctx, s, format)
 		done()
-	} else {
+	case KindQwen3:
+		data, err = r.post(ctx, "/v1/audio/speech", r.qwen3Fields(s, format))
+	default:
 		model := r.cfg.Model
 		if model == "" {
 			model = "tts-1"
@@ -253,6 +256,10 @@ func (r *remote) fingerprint() string {
 	if r.cfg.Kind == KindGemini {
 		return fmt.Sprintf("%s|%s|%s|%g|%t|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Model, r.cfg.Gain, *r.cfg.Emotions,
 			geminiMappingVersion)
+	}
+	if r.cfg.Kind == KindQwen3 {
+		return fmt.Sprintf("%s|%s|%s|%s|%g|%t|%t|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Model, r.cfg.Language, r.cfg.Gain,
+			*r.cfg.Emotions, *r.cfg.Speed, qwen3MappingVersion)
 	}
 	return fmt.Sprintf("%s|%s|%s|%s|%g|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Variant, r.cfg.Model, r.cfg.Gain, mappingVersion)
 }
@@ -386,6 +393,11 @@ func (r *remote) fetch(ctx context.Context) ([]string, map[string]bool, error) {
 	}
 	if r.cfg.Kind != KindChatterbox {
 		listed, err := r.list(ctx, "/v1/audio/voices")
+		if r.cfg.Kind == KindQwen3 && (err != nil || len(listed) == 0) {
+			// Not every server lists its speakers: those of the
+			// CustomVoice models (with any configured ones).
+			return slices.Clone(qwen3Voices), references, nil
+		}
 		return listed, references, err
 	}
 	// Predefined voices and reference clips to clone.

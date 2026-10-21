@@ -22,36 +22,51 @@ import (
 )
 
 var (
-	quoteRe   = regexp.MustCompile(`\[q(\d+)\]`)
-	listedRe  = regexp.MustCompile(`(?m)^c(\d+) \| (\w+)`)
-	saidAnnaR = regexp.MustCompile(`\[q(\d+)\][^\[]*said Anna`)
+	paraRe   = regexp.MustCompile(`(?m)^\[p(\d+)\] (.*)$`)
+	listedRe = regexp.MustCompile(`(?m)^c(\d+) \| (\w+)`)
+	// speechRe: a run in curly quotes, perhaps left open at the end of
+	// the paragraph or opened before it.
+	speechRe = regexp.MustCompile(`“?([^“”]+)”`)
 )
 
-// attributionAnswer: quotes with "said Anna" are Anna's, the rest Tom's.
+// attributionAnswer finds the speech in curly quotes of every numbered
+// paragraph: the first of a paragraph with "said Anna" is Anna's, the
+// rest Tom's.
 func attributionAnswer(r llmtest.Request) llmtest.Reply {
 	ms := r.Messages()
 	msg, _ := ms[len(ms)-1]["content"].(string)
-	if !strings.Contains(msg, "Quotations to attribute") {
+	if !strings.Contains(msg, "Paragraphs to annotate") {
 		return castingAnswer(r)
 	}
 	ids := map[string]string{}
 	for _, m := range listedRe.FindAllStringSubmatch(msg, -1) {
 		ids[m[2]] = "c" + m[1]
 	}
-	anna := map[string]bool{}
-	for _, m := range saidAnnaR.FindAllStringSubmatch(msg, -1) {
-		anna[m[1]] = true
-	}
-	var qs []map[string]any
-	for _, m := range quoteRe.FindAllStringSubmatch(msg, -1) {
+	var vs []map[string]any
+	for _, m := range paraRe.FindAllStringSubmatch(msg, -1) {
 		n, _ := strconv.Atoi(m[1])
-		who := ids["Tom"]
-		if anna[m[1]] {
-			who = ids["Anna"]
+		text := m[2]
+		var runs []string
+		if i := strings.Index(text, "“"); i >= 0 && !strings.Contains(text, "”") {
+			runs = append(runs, text[i+len("“"):]) // goes on in the next paragraph
 		}
-		qs = append(qs, map[string]any{"q": n, "speaker": who, "emotion": "neutral", "confidence": 0.5})
+		for _, q := range speechRe.FindAllStringSubmatch(text, -1) {
+			if strings.HasPrefix(q[0], "“") || strings.Index(text, q[0]) == 0 {
+				runs = append(runs, q[1])
+			}
+		}
+		for k, run := range runs {
+			who := ids["Tom"]
+			if k == 0 && strings.Contains(text, "said Anna") {
+				who = ids["Anna"]
+			}
+			vs = append(vs, map[string]any{
+				"p": n, "start": run, "end": run, "kind": "speech", "speaker": who, "emotion": "neutral",
+				"direction": "calm and friendly", "confidence": 0.5,
+			})
+		}
 	}
-	raw, _ := json.Marshal(map[string]any{"quotes": qs})
+	raw, _ := json.Marshal(map[string]any{"voices": vs, "narration": []any{}})
 	return llmtest.Reply{Content: string(raw)}
 }
 
@@ -90,10 +105,11 @@ func TestAttributionFlow(t *testing.T) {
 			return d.AttributionStatus == api.AttributionStatusDone
 		}, 10*time.Second, 20*time.Millisecond)
 		require.NotNil(t, d.Attribution)
-		assert.Equal(t, 3, d.Attribution.Quotes)
-		assert.Equal(t, 3, d.Attribution.Attributed)
-		assert.Equal(t, 3, d.Attribution.Unsure, "confidence 0.5 is flagged")
-		assert.Equal(t, "attribute_chapter@v2", *d.Attribution.Prompt)
+		// The speech that runs over two paragraphs is a passage in each.
+		assert.Equal(t, 4, d.Attribution.Quotes)
+		assert.Equal(t, 4, d.Attribution.Attributed)
+		assert.Equal(t, 4, d.Attribution.Unsure, "confidence 0.5 is flagged")
+		assert.Equal(t, "attribute_chapter@v3", *d.Attribution.Prompt)
 		require.NotNil(t, d.Speakers)
 		names := map[int64]string{}
 		for _, sp := range *d.Speakers {
@@ -109,6 +125,11 @@ func TestAttributionFlow(t *testing.T) {
 		}
 		require.NotNil(t, byRef[1].SpeakerId)
 		assert.Equal(t, "Anna", names[*byRef[1].SpeakerId])
+		assert.Equal(t, "“Good morning,”", byRef[1].Text)
+		require.NotNil(t, byRef[1].Direction)
+		assert.Equal(t, "calm and friendly", *byRef[1].Direction)
+		require.NotNil(t, byRef[1].Voicing)
+		assert.Equal(t, api.VoicingSpeech, *byRef[1].Voicing)
 		assert.Equal(t, "Tom", names[*byRef[3].SpeakerId])
 		tomID := *byRef[3].SpeakerId
 
@@ -131,7 +152,7 @@ func TestAttributionFlow(t *testing.T) {
 				}
 			}
 		}
-		assert.Equal(t, 1, d.Attribution.Unsure, "only quote 3 is still unsure")
+		assert.Equal(t, 2, d.Attribution.Unsure, "only quotes 3 and 4 are still unsure")
 		for _, bad := range []map[string]any{
 			{"speakerId": tomID, "narrator": true}, {"emotion": "bored"}, {"speakerId": 999999},
 		} {
