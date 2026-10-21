@@ -174,13 +174,14 @@ func (c *EngineConfig) Validate() error {
 		return fmt.Errorf("engine %s: kind must be %q, %q or %q, got %q",
 			c.Name, KindOpenAI, KindChatterbox, KindGemini, c.Kind)
 	}
-	if c.Kind == KindGemini {
+	switch {
+	case c.Kind == KindGemini:
 		if err := c.validateGemini(); err != nil {
 			return err
 		}
-	} else if c.APIKeyEnv != "" || c.Limits != (EngineLimits{}) || c.QuotaTimezone != "" {
+	case c.APIKeyEnv != "" || c.Limits != (EngineLimits{}) || c.QuotaTimezone != "":
 		return fmt.Errorf("engine %s: apiKeyEnv, limits and quotaTimezone are for gemini engines", c.Name)
-	} else if c.Emotions != nil && c.Kind != KindOpenAI {
+	case c.Emotions != nil && c.Kind != KindOpenAI:
 		return fmt.Errorf("engine %s: emotions are for gemini and openai engines", c.Name)
 	}
 	if c.Emotions == nil {
