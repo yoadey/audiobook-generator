@@ -1,6 +1,6 @@
 # Project plan: audiobook-generator
 
-Last updated: 2026-10-16 · Status: **M0–M7 implemented** (feature-complete v1.0: multi-voice audiobook, lexicon, podcast RSS, M4B, OIDC, metrics, Litestream, export/import); from M8: reading along (also as podcast transcripts) and custom preview texts
+Last updated: 2026-10-21 · Status: **M0–M7 implemented** (feature-complete v1.0: multi-voice audiobook, lexicon, podcast RSS, M4B, OIDC, metrics, Litestream, export/import); from M8: reading along (also as podcast transcripts) and custom preview texts
 
 Goal: a self-hosted service that turns very large English EPUBs into
 multi-voice audiobooks. All characters of the book are analysed up front,
@@ -34,9 +34,13 @@ Principles derived from these:
    shortly before they are needed ("always keep the next N chapters after the
    listening position ready"). Rendering (~3–5× real time) is faster than
    listening.
-2. **The LLM never rewrites book text.** Text is segmented deterministically
-   in code; the LLM only returns compact labels (`q17 → char_42`). Saves
-   free-tier quota and stops the model from altering the text.
+2. **The LLM never rewrites book text.** It only returns compact labels and
+   points at text by copying a few of its words, which code finds and
+   checks (what it cannot find is dropped). The import segments
+   deterministically; the speaker attribution lets the LLM say where
+   speech, thoughts and other voices are, and code splits the paragraphs
+   there without losing a character. Stops the model from altering the
+   text.
 3. **Everything is resumable.** Every step is a persisted job; restarts,
    429 rate limits and daily quotas only pause work, they never lose it.
 4. **Voices are deterministic.** A character voice is a "recipe" (a weighted
@@ -151,7 +155,11 @@ an optional later feature (M8), not a requirement.
 - Reviewable in the UI: merge/split/rename chapters, exclude front/back
   matter.
 
-### 3.2 Segmentation (deterministic, in code)
+### 3.2 Segmentation (deterministic, in code, refined by the attribution)
+
+On import, paragraphs are split by the rules below. They are a first
+guess: the speaker attribution (§3.6, prompt v3) has the LLM find the
+voices of each paragraph itself and splits it anew.
 
 - Split paragraphs into **narration** and **quoted speech** with a state
   machine over quote characters; the quote style is detected per book from
@@ -341,6 +349,48 @@ As implemented in M6 (`internal/attribution`):
   clipping; whispering much softer); thoughts are a little softer than
   speech. Changing an emotion by hand bumps the voice revision.
 
+As of prompt v3 (`attribute_chapter@v3`), the LLM directs the chapter
+instead of labelling quotes found by code:
+
+- The request lists the characters with gender, age group and speech
+  style, the point-of-view character and the last speakers, and sends the
+  paragraphs numbered (`[pN]`, italics as `*…*`) without any quote markers.
+  Every chapter with text is attributed (also one without quotation
+  marks), in parts as before.
+- The answer lists every **voiced passage**: the paragraph, its first and
+  last words (anchors, copied exactly), its kind — `speech`, `thought`,
+  `telepathy`, `remote` (an off-voice: phone, radio, loudspeaker,
+  recording, a voice out of sight), `system` (game or system messages,
+  announcements), `writing` (letters, signs read out), `song` — the
+  speaker (`cN`, `new:Name`, `unknown`; writing in its author's voice),
+  one of the nine emotions (for engines that cannot act) and a
+  **direction**: 3–15 words on how to perform it ("barely above a whisper,
+  trembling with fear"). Narration that should be read noticeably
+  differently gets a direction per paragraph ("hushed, with mounting
+  dread").
+- Code finds the anchors in the paragraph (quotation marks, dashes,
+  ellipses, spaces and case need not match), grows a passage over the
+  quotation marks around it, drops passages that are not found or
+  overlap, and splits the paragraph: narration around the passages,
+  thoughts and telepathy as thought segments, the rest as quotes; text
+  without a word joins its neighbour, so no character is lost. Speech
+  over several paragraphs is a passage per paragraph.
+- A paragraph split as before keeps its segments (IDs, timings, marks of
+  the preparation); one split differently gets new segments, and a
+  preparation whose marks were on them is reset. A paragraph with a
+  speaker chosen by hand is never split anew. Segments and quotations are
+  numbered anew in reading order. Answers that are unusable or refused
+  leave the import's split, read by the narrator.
+- The preparation (§3.6a) waits for a pending attribution of its chapter,
+  and a render waits for the attribution first, then the preparation.
+- The kind of voice (`voicing`) and the directions are stored with the
+  segments and paragraphs, shown in the chapter editor and given to
+  engines that take instructions (Qwen3, Gemini with emotions; §3.7a);
+  Kokoro and Chatterbox use the emotion as before. "Attribute again"
+  forgets directions and speakers (not those chosen by hand) and splits
+  anew. The answer is about 60 output tokens per passage (up to 16k per
+  request).
+
 ### 3.6a Chapter preparation (per chapter, just in time, optional)
 
 A book can ask for its chapters to be prepared for reading aloud
@@ -432,7 +482,10 @@ voices written `<engine>:<voice>`; Kokoro itself is optional
 voices, one voice each, no blends), and single characters can be given a
 voice of another engine. A router in `internal/tts` sends each piece to its
 voice's engine (bounded concurrency per engine) and converts its WAV to
-24 kHz mono PCM. An engine that speaks emotions itself (Chatterbox, model
+24 kHz mono PCM. Qwen3-TTS (`kind: qwen3`, deployed separately on a GPU,
+e.g. with vLLM-Omni) is told how to speak each piece in words: the
+attribution's direction (else the emotion's wording) and the kind of
+voice, else the narration's direction or mood. An engine that speaks emotions itself (Chatterbox, model
 *original*) is given the quote's emotion, the narration's mood and
 thoughts, mapped to its exaggeration/cfg controls with a fixed seed per
 voice; the render then leaves pace alone (only loudness). Engines have no

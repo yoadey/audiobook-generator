@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yoadey/audiobook-generator/internal/attribution"
 	"github.com/yoadey/audiobook-generator/internal/jobs"
 	"github.com/yoadey/audiobook-generator/internal/llm"
 	"github.com/yoadey/audiobook-generator/internal/store"
@@ -179,6 +180,11 @@ func (p *Preparer) Run(ctx context.Context, chapterID int64, progress func(float
 	if ch.Excluded {
 		_, err := p.Store.TransitionPrep(ctx, chapterID, store.PrepNone, nil, store.PrepQueued, store.PrepRunning)
 		return err // not narrated: nothing to prepare
+	}
+	if b.CharacterVoices && attribution.Active(ch) {
+		// The attribution splits the paragraphs anew, which drops marks
+		// made on the segments before: prepare what it leaves.
+		return jobs.Defer(time.Now().Add(pollEvery), "waiting for the speaker attribution of this chapter")
 	}
 	if ok, err := p.Store.TransitionPrep(ctx, chapterID, store.PrepRunning, nil,
 		store.PrepQueued, store.PrepRunning); err != nil || !ok {

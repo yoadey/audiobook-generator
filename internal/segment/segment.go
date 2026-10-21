@@ -173,6 +173,7 @@ type piece struct {
 	kind      Kind
 	from, to  int
 	continued bool // a quotation going on from the previous paragraph
+	num       int  // the number Script gives a voiced piece
 }
 
 // Paragraph splits one paragraph; emph are its italic runs.

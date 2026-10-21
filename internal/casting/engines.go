@@ -30,10 +30,17 @@ var chatterboxGendersJSON []byte
 //go:embed gemini_voices.json
 var geminiGendersJSON []byte
 
+// The genders of Qwen3-TTS CustomVoice's speakers (servers name them
+// capitalized or in lower case).
+//
+//go:embed qwen3_voices.json
+var qwen3GendersJSON []byte
+
 var engineGenders = func() map[string]store.Gender {
 	m := map[string]store.Gender{}
 	for name, data := range map[string][]byte{
 		"chatterbox_voices.json": chatterboxGendersJSON, "gemini_voices.json": geminiGendersJSON,
+		"qwen3_voices.json": qwen3GendersJSON,
 	} {
 		if err := json.Unmarshal(data, &m); err != nil {
 			panic(fmt.Errorf("casting: %s: %w", name, err))

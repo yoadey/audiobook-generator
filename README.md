@@ -24,10 +24,17 @@ server and storage.
 > with voices of their own (LLM-proposed Kokoro blends that code keeps
 > distinct from the narrator and each other), everyone else with pool
 > voices by gender and age; voices can be edited and previewed with real
-> quotes. Before a chapter is rendered, the LLM attributes its quotations to
-> their speakers (just in time, in parts for long chapters); the chapter
-> editor shows who says what, flags unsure speakers and lets you correct
-> them. A per-book pronunciation lexicon fixes how fantasy names are
+> quotes. Before a chapter is rendered, the LLM reads it as a voice
+> director (just in time, in parts for long chapters): it finds every line
+> that is not plain narration itself — speech however it is set, thoughts,
+> telepathy, off-voices over a phone or loudspeaker, system messages,
+> letters read out, song — names the speaker and gives each line an
+> emotion and a spoken direction ("barely above a whisper, trembling"),
+> and notes where the narrator should read differently. It points at lines
+> by their first and last words only; code finds them in the text and
+> splits the paragraph there, so the book's words never change. The chapter
+> editor shows who says what and how, flags unsure speakers and lets you
+> correct them. A per-book pronunciation lexicon fixes how fantasy names are
 > spoken (plain text or Kokoro phonemes, with previews); every book has a
 > podcast RSS feed for any podcast app and an M4B per volume with chapter
 > markers. Sign-in via OpenID Connect (e.g. Zitadel), Prometheus metrics,
@@ -161,6 +168,12 @@ URLs carry a token instead, so treat them like passwords.
   engine's voices, *System* shows whether each is reachable. Chatterbox
   needs a GPU for book-length work. See
   [docs/tts-engines.md](docs/tts-engines.md), which also evaluates it.
+- **Qwen3-TTS** (optional, `kind: qwen3` in `tts.engines`; not part of
+  the chart, deploy it yourself on a GPU, e.g. with vLLM-Omni): speaks
+  every line with the direction the speaker attribution wrote for it, the
+  kind of voice (thought, telepathy, off-voice, …) and the narration's
+  direction or mood, through the server's `instructions`. See
+  [docs/tts-engines.md](docs/tts-engines.md#qwen3-tts-directed-voices).
 - **Gemini speech** (optional, `tts.gemini.enabled` with an API key from
   Google AI Studio): 30 prebuilt voices in the cloud, no GPU needed. Its
   daily quota is counted and shown with the engine (*Voices*, *System*,

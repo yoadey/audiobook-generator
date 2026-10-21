@@ -564,7 +564,8 @@
                 "type": "string",
                 "enum": [
                   "openai",
-                  "chatterbox"
+                  "chatterbox",
+                  "qwen3"
                 ]
               },
               "url": {
@@ -611,6 +612,12 @@
                 "minimum": 1
               },
               "joinParagraphs": {
+                "type": "boolean"
+              },
+              "language": {
+                "type": "string"
+              },
+              "emotions": {
                 "type": "boolean"
               }
             }

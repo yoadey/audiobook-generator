@@ -84,6 +84,12 @@ type Speech struct {
 	Emotion string
 	Mood    string
 	Thought bool
+	// Direction is how to speak in words, from the speaker attribution
+	// ("barely above a whisper, trembling"; "" none), for engines that take
+	// instructions; Voicing what kind of voice it is (store.Voicing*: a
+	// thought, telepathy, an off-voice, …; "" narration or speech).
+	Direction string
+	Voicing   string
 }
 
 // MaxResponseBytes bounds a single synthesis response (~4 min of PCM).

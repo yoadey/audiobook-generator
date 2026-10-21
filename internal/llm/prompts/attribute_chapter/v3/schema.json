@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "voices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "p": { "type": "integer" },
+          "start": { "type": "string" },
+          "end": { "type": "string" },
+          "kind": { "type": "string" },
+          "speaker": { "type": "string" },
+          "gender": { "type": "string" },
+          "emotion": { "type": "string" },
+          "direction": { "type": "string" },
+          "confidence": { "type": "number" }
+        },
+        "required": ["p", "start", "end", "kind", "speaker", "emotion", "direction", "confidence"]
+      }
+    },
+    "narration": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "p": { "type": "integer" },
+          "direction": { "type": "string" }
+        },
+        "required": ["p", "direction"]
+      }
+    }
+  },
+  "required": ["voices", "narration"]
+}

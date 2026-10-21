@@ -87,8 +87,9 @@ func (s *Store) ApplyAttribution(ctx context.Context, chapterID int64, as []Attr
 	})
 }
 
-// ResetAttribution forgets the automatic speakers of chapters (the user's
-// choices stay) so they are attributed again.
+// ResetAttribution forgets the automatic speakers and directions of
+// chapters (the user's choices stay) so they are attributed again. How the
+// attribution split the paragraphs stays until it splits them anew.
 func (s *Store) ResetAttribution(ctx context.Context, chapterIDs ...int64) error {
 	if len(chapterIDs) == 0 {
 		return nil
@@ -96,7 +97,13 @@ func (s *Store) ResetAttribution(ctx context.Context, chapterIDs ...int64) error
 	return s.Tx(ctx, func(tx *Store) error {
 		db := tx.db
 		if err := db.Model(&Segment{}).Where("chapter_id IN ? AND speaker_manual = ?", chapterIDs, false).
-			Updates(map[string]any{"speaker_character_id": nil, "emotion": "", "confidence": 0}).Error; err != nil {
+			Updates(map[string]any{
+				"speaker_character_id": nil, "emotion": "", "confidence": 0, "direction": "",
+			}).Error; err != nil {
+			return err
+		}
+		if err := db.Model(&Paragraph{}).Where("chapter_id IN ? AND direction <> ''", chapterIDs).
+			Update("direction", "").Error; err != nil {
 			return err
 		}
 		return db.Model(&Chapter{}).Where("id IN ?", chapterIDs).Updates(map[string]any{

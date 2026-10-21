@@ -254,12 +254,21 @@ tts:
   # Speech engines besides Kokoro, e.g. a stronger one for the main
   # characters (docs/tts-engines.md). Their voices are written
   # "<name>:<voice>" and chosen per character. Fields: name, kind
-  # (openai | chatterbox), url, and optionally model, variant, concurrency,
-  # timeout, gain, speed, voices. Gemini is set up below (tts.gemini).
+  # (openai | chatterbox | qwen3), url, and optionally model, variant,
+  # concurrency, timeout, gain, speed, voices, maxChars, joinParagraphs,
+  # and for qwen3 language and emotions. Gemini is set up below
+  # (tts.gemini). Qwen3-TTS is not part of the chart (it needs a GPU):
+  # deploy a server with an OpenAI-compatible /v1/audio/speech that takes
+  # "instructions" (e.g. vLLM-Omni) yourself and point an engine at it.
   engines: []
   # - name: orpheus
   #   kind: openai
   #   url: http://orpheus.tts:5005
+  # - name: qwen3
+  #   kind: qwen3
+  #   url: http://qwen3-tts.tts:8091
+  #   model: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+  #   concurrency: 2
   # The Gemini API's speech generation (Google AI Studio): 30 prebuilt
   # voices in the cloud, no GPU needed, but a daily quota. Every piece of a
   # chapter and every preview is a request; once the quota is used up,

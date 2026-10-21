@@ -36,8 +36,9 @@ const (
 	geminiMaxWait = 70 * time.Second
 	// geminiKeyWait defers jobs while the API key or model is refused.
 	geminiKeyWait = 15 * time.Minute
-	// geminiMappingVersion changes with geminiStyles.
-	geminiMappingVersion = "1"
+	// geminiMappingVersion changes with geminiStyles and the wording of
+	// directions.
+	geminiMappingVersion = "2"
 )
 
 // geminiVoices are the Gemini API's prebuilt voices.
@@ -63,8 +64,16 @@ var geminiStyles = map[string]string{
 
 const geminiThoughtStyle = "Say softly, as an inner thought"
 
-// geminiStyle is the instruction put before a speech's text ("" for none).
+// geminiStyle is the instruction put before a speech's text ("" for
+// none): the attribution's direction ("Say barely above a whisper, …"),
+// else the emotion's, with what kind of voice it is.
 func geminiStyle(s Speech) string {
+	if strings.TrimSpace(s.Direction) != "" || s.Voicing != "" && s.Voicing != "speech" {
+		if in := instruction(Speech{Direction: s.Direction, Emotion: s.Emotion, Voicing: s.Voicing,
+			Thought: s.Thought}); in != "" {
+			return "Say " + in
+		}
+	}
 	if st, ok := geminiStyles[s.Emotion]; ok {
 		return st
 	}

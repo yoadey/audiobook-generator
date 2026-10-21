@@ -203,6 +203,10 @@ type Paragraph struct {
 	// before (the same moment, scene and tone), so an engine may read the
 	// two in one go.
 	Flows bool `gorm:"not null;default:false"`
+	// Direction is how the narrator reads it, from the speaker
+	// attribution ("" as usual): words an engine that takes instructions
+	// is told ("hushed, with mounting dread").
+	Direction string `gorm:"not null;default:''"`
 }
 
 // SegmentKind classifies a segment.
@@ -216,6 +220,23 @@ const (
 	// marks); like a quote it has a QuoteRef and is attributed.
 	SegmentThought SegmentKind = "thought"
 )
+
+// Voicings: what kind of voice a quote or thought is (the speaker
+// attribution tells them apart; SegmentThought for the inner ones).
+const (
+	VoicingSpeech    = "speech"    // said aloud in the scene
+	VoicingThought   = "thought"   // a character's inner voice
+	VoicingTelepathy = "telepathy" // speech mind to mind
+	VoicingRemote    = "remote"    // off-voice: a phone, radio, loudspeaker, recording, a voice out of sight
+	VoicingSystem    = "system"    // a system or game message, an announcement by no one in the scene
+	VoicingWriting   = "writing"   // written words read out: a letter, a sign, a note
+	VoicingSong      = "song"      // sung or chanted
+)
+
+// Voicings lists the voicings in the order the prompt offers them.
+var Voicings = []string{
+	VoicingSpeech, VoicingThought, VoicingTelepathy, VoicingRemote, VoicingSystem, VoicingWriting, VoicingSong,
+}
 
 // Segment is the unit of speech: a TTS-sized piece of narration or of one
 // quotation. Idx orders segments within the chapter.
@@ -239,6 +260,12 @@ type Segment struct {
 	Emotion            string  `gorm:"not null;default:''"`
 	Confidence         float64 `gorm:"not null;default:0"`
 	SpeakerManual      bool    `gorm:"not null;default:false"`
+	// Voicing is what kind of voice the speaker attribution found
+	// (Voicing*; "" for narration and before the attribution) and
+	// Direction how it is said in words ("through clenched teeth, barely
+	// holding back tears"), for engines that take instructions.
+	Voicing   string `gorm:"not null;default:''"`
+	Direction string `gorm:"not null;default:''"`
 	// From the chapter preparation, for the TTS only (the text stays):
 	// Pauses as JSON [[rune offset, ms],…] (an offset of len(text): after
 	// the segment); SpokenAs as JSON [{"a":start,"b":end,"t":"said"},…].

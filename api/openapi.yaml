@@ -1828,6 +1828,14 @@ components:
       type: string
       enum: [narration, quote, thought]
       description: thought - a character's thought (italics or single marks); attributed like a quote
+    Voicing:
+      type: string
+      enum: [speech, thought, telepathy, remote, system, writing, song]
+      description: >-
+        What kind of voice a quotation or thought is, as the speaker
+        attribution found it: speech said aloud, an inner thought,
+        telepathy, an off-voice (phone, radio, loudspeaker, recording, out of
+        sight), a system or game message, written words read out, or song
     AttributionStatus:
       type: string
       enum: [none, queued, running, done, failed]
@@ -1966,6 +1974,14 @@ components:
           description: How sure the attribution is (0..1; 1 for a speaker chosen by hand)
         speakerManual:
           type: boolean
+        voicing:
+          $ref: "#/components/schemas/Voicing"
+        direction:
+          type: string
+          description: >-
+            How it is performed in words, from the speaker attribution
+            (e.g. "barely above a whisper, trembling"); told to engines that
+            take instructions
         pauses:
           type: array
           description: >-
@@ -1997,6 +2013,9 @@ components:
           type: string
         mood:
           $ref: "#/components/schemas/Mood"
+        direction:
+          type: string
+          description: How the narrator reads it, from the speaker attribution (absent - as usual)
         segments:
           type: array
           items:
@@ -2161,7 +2180,9 @@ components:
           format: int64
           description: >-
             The segment at the position; when the chapter is read without
-            audio, positionMs is 0 and the segment marks the position
+            audio, positionMs is 0 and the segment marks the position. A
+            segment that no longer exists (the speaker attribution split its
+            paragraph anew) is left out; one of another chapter is refused
     ChapterTimings:
       type: object
       required: [chapterId, version, exact, cues]
@@ -2395,7 +2416,7 @@ components:
           type: string
         kind:
           type: string
-          enum: [openai, chatterbox, gemini]
+          enum: [openai, chatterbox, gemini, qwen3]
         variant:
           type: string
           description: The model a Chatterbox engine runs (original, turbo or nano)

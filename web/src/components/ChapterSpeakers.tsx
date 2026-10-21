@@ -12,6 +12,7 @@ import {
   type Segment,
   startAttribution,
   updateQuote,
+  type Voicing,
 } from '../api/client';
 import { notifyError } from '../lib/notify';
 import { pieces } from '../lib/reading';
@@ -28,6 +29,17 @@ const emotions: Emotion[] = [
   'shouting',
   'sarcastic',
 ];
+
+/** How a voicing is shown next to the speaker (speech: nothing). */
+const voicingLabel: Record<Voicing, string> = {
+  speech: '',
+  thought: 'thought',
+  telepathy: 'telepathy',
+  remote: 'off-voice',
+  system: 'system',
+  writing: 'written',
+  song: 'song',
+};
 
 const statusLabel: Record<ChapterDetail['attributionStatus'], string> = {
   none: 'not attributed',
@@ -60,7 +72,9 @@ export function AttributionBar({
       ]),
     onError: (e) => notifyError('Could not attribute the speakers', e),
   });
-  if (!a || a.quotes === 0 || chapter.excluded) {
+  // The attribution finds speech itself: also in chapters without
+  // quotation marks.
+  if (!a || chapter.wordCount === 0 || chapter.excluded) {
     return null;
   }
   const active = a.status === 'queued' || a.status === 'running';
@@ -263,9 +277,10 @@ export const QuoteSpan = memo(function QuoteSpan({
       tabIndex={0}
       aria-label={`${name}${check ? ' (to check)' : ''}: ${segment.text}`}
       title={
-        segment.speakerManual
+        (segment.speakerManual
           ? `${name}, chosen by you`
-          : `${name}, confidence ${Math.round(segment.confidence * 100)}%`
+          : `${name}, confidence ${Math.round(segment.confidence * 100)}%`) +
+        (segment.direction ? ` — ${segment.direction}` : '')
       }
       onClick={() => setOpen((o) => !o)}
       onKeyDown={(e) => {
@@ -293,7 +308,15 @@ export const QuoteSpan = memo(function QuoteSpan({
           style={{ whiteSpace: 'nowrap' }}
         >
           {check && <IconUserQuestion size={12} style={{ verticalAlign: -1 }} />} {name}
+          {segment.voicing && voicingLabel[segment.voicing]
+            ? ` · ${voicingLabel[segment.voicing]}`
+            : ''}
           {segment.emotion && segment.emotion !== 'neutral' ? ` · ${segment.emotion}` : ''}
+          {segment.direction && (
+            <Text component="span" size="xs" fw={400} fs="italic" c="dimmed" ml={4}>
+              ({segment.direction})
+            </Text>
+          )}
         </Text>
       )}
       <Emphasized text={segment.text} emphasis={segment.emphasis} />

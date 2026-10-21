@@ -259,6 +259,8 @@ func TestGeminiEmotions(t *testing.T) {
 		{Text: "No!", Emotion: "angry"},
 		{Text: "Perhaps.", Thought: true},
 		{Text: "It was late.", Mood: "tense"},
+		{Text: "Come here.", Emotion: "angry", Direction: "low and menacing"},
+		{Text: "Hello?", Voicing: "remote"},
 	} {
 		s.Voice = "gemini:Kore"
 		_, err := r.Synthesize(ctx, s)
@@ -267,6 +269,9 @@ func TestGeminiEmotions(t *testing.T) {
 	assert.Equal(t, "Say angrily: No!", (*reqs)[0].Text)
 	assert.Equal(t, "Say softly, as an inner thought: Perhaps.", (*reqs)[1].Text)
 	assert.Equal(t, "It was late.", (*reqs)[2].Text, "narration is sent as it is")
+	assert.Equal(t, "Say low and menacing: Come here.", (*reqs)[3].Text, "a direction replaces the emotion")
+	assert.Equal(t, "Say as a voice heard through a phone, radio or loudspeaker, a little distant: Hello?",
+		(*reqs)[4].Text)
 }
 
 func TestGeminiDailyQuota(t *testing.T) {

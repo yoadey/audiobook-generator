@@ -267,17 +267,25 @@ type part struct {
 	runes     int
 }
 
-// style is how to speak, for an engine that acts itself.
+// style is how to speak, for an engine that acts itself: a quote's
+// emotion or the narration's mood, a direction in words (the speaker
+// attribution's), and what kind of voice it is.
 type style struct {
-	emotion, mood string
-	thought       bool
+	emotion, mood      string
+	thought            bool
+	direction, voicing string
 }
 
 func (s *style) key() string {
 	if s == nil {
 		return ""
 	}
-	return fmt.Sprintf("|%s|%s|%t", s.emotion, s.mood, s.thought)
+	k := fmt.Sprintf("|%s|%s|%t", s.emotion, s.mood, s.thought)
+	if s.direction != "" || s.voicing != "" {
+		// Keys of pieces cached before directions existed stay valid.
+		k += fmt.Sprintf("|%s|%s", s.direction, s.voicing)
+	}
+	return k
 }
 
 // same tells whether two styles are spoken alike (a neutral emotion is
@@ -308,6 +316,7 @@ func (it item) speech() tts.Speech {
 	sp := tts.Speech{Text: it.text, Voice: it.voice, Speed: it.speed, Format: "pcm"}
 	if it.style != nil {
 		sp.Emotion, sp.Mood, sp.Thought = it.style.emotion, it.style.mood, it.style.thought
+		sp.Direction, sp.Voicing = it.style.direction, it.style.voicing
 	}
 	return sp
 }
@@ -336,7 +345,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 		}
 	}
 	narrator, narratorSpeed := voiceOf(nil)
-	say := func(s *store.Segment, text, voice string, speed float64, dialogue bool, mood string) {
+	say := func(s *store.Segment, text, voice string, speed float64, dialogue bool, mood, direction string) {
 		id, pr := int64(0), prosodyOf(s)
 		lead := 0
 		var st *style
@@ -349,7 +358,8 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			// (no character voices, an unknown speaker, a character cast
 			// with the narrator's voice) is read like the narration around
 			// it; a thought stays softer.
-			byNarrator := s.QuoteRef == 0 || voice == narrator && (s.Emotion == "" || s.Emotion == "neutral")
+			byNarrator := s.QuoteRef == 0 ||
+				voice == narrator && (s.Emotion == "" || s.Emotion == "neutral") && s.Direction == ""
 			if m, ok := moods[mood]; ok && byNarrator {
 				pr = m // narration in the paragraph's mood
 				if s.Kind == store.SegmentThought {
@@ -361,9 +371,12 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 				// The engine acts itself; only loudness is ours.
 				st, pr.speed = &style{thought: s.Kind == store.SegmentThought}, 1
 				if byNarrator {
-					st.mood = mood
+					st.mood, st.direction = mood, direction
 				} else {
-					st.emotion = s.Emotion
+					st.emotion, st.direction = s.Emotion, s.Direction
+				}
+				if s.QuoteRef > 0 {
+					st.voicing = s.Voicing
 				}
 			}
 		}
@@ -402,7 +415,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 	}
 	if len(paras) == 0 || paras[0].Kind != store.ParagraphHeading {
 		if t := speakable(ch.Title); t != "" {
-			say(nil, t, narrator, narratorSpeed, false, "")
+			say(nil, t, narrator, narratorSpeed, false, "", "")
 			gapLast(gapHeading)
 		}
 	}
@@ -418,7 +431,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 			for i := range byPara[p.ID] {
 				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
-					say(s, t, narrator, narratorSpeed, false, "")
+					say(s, t, narrator, narratorSpeed, false, "", "")
 				}
 			}
 			gapLast(gapHeading)
@@ -435,7 +448,7 @@ func plan(ch *store.Chapter, paras []store.Paragraph, segs []store.Segment, voic
 				s := &byPara[p.ID][i]
 				if t := speakable(s.Text); t != "" {
 					voice, speed := voiceOf(s)
-					say(s, t, voice, speed, dialogue, p.Mood)
+					say(s, t, voice, speed, dialogue, p.Mood, p.Direction)
 				}
 			}
 			if len(items) > start {
@@ -506,7 +519,7 @@ func join(items []item, limitOf func(voice string) int, acrossParas func(voice s
 // book has no character voices).
 func narratorOnly(segs []store.Segment) {
 	for i := range segs {
-		segs[i].SpeakerCharacterID, segs[i].Emotion = nil, ""
+		segs[i].SpeakerCharacterID, segs[i].Emotion, segs[i].Direction, segs[i].Voicing = nil, "", "", ""
 	}
 }
 
@@ -566,15 +579,17 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 	if err != nil {
 		return jobs.Permanent(err)
 	}
-	if wait, err := r.waitForPreparation(ctx, book, ch); err != nil || wait {
-		if err == nil {
-			err = prepare.WaitError()
-		}
-		return err
-	}
+	// The attribution first: it may split paragraphs anew, which the
+	// preparation then marks.
 	if wait, err := r.waitForVoices(ctx, book, ch); err != nil || wait {
 		if err == nil {
 			err = attribution.WaitError()
+		}
+		return err
+	}
+	if wait, err := r.waitForPreparation(ctx, book, ch); err != nil || wait {
+		if err == nil {
+			err = prepare.WaitError()
 		}
 		return err
 	}
@@ -795,10 +810,17 @@ func (r *Renderer) waitForVoices(ctx context.Context, b *store.Book, ch *store.C
 
 // waitForPreparation reports whether a render should wait for the
 // preparation of its chapter (queued if missing), unless that job cannot
-// run soon.
+// run soon (also while it waits for the chapter's attribution).
 func (r *Renderer) waitForPreparation(ctx context.Context, b *store.Book, ch *store.Chapter) (bool, error) {
 	if r.Preparation == nil || !prepare.Needed(b, ch) {
 		return false, nil
+	}
+	if r.Attribution != nil && b.CharacterVoices {
+		// A preparation waits for a pending attribution, which cannot
+		// run soon (else the render would have waited for it).
+		if j, err := r.Store.PendingChapterJob(ctx, attribution.JobType, ch.ID); err != nil || j != nil {
+			return false, err
+		}
 	}
 	if err := r.Preparation.Start(ctx, b, ch, false, AttributionPriority); err != nil {
 		return false, err

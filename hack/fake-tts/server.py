@@ -28,8 +28,8 @@ LLM (OpenAI-compatible): GET /v1/models and POST /v1/chat/completions, which
 answers the app's provider test prompt correctly, the character analysis
 with everyone who "said" something, merge checks with "different", voice
 casting with the first offered voice for everyone (code then makes the
-voices distinct), speaker attribution by the "said Name" of the quote's
-paragraph, chapter preparation with a pause after "said Anna.", a
+voices distinct), speaker attribution of every run in curly quotes by the
+"said Name" of its paragraph, chapter preparation with a pause after "said Anna.", a
 pronunciation for Anna and narration flowing on from the paragraph before, and anything else with "{}". When FAKE_LLM_KEY is set, requests
 must carry it as bearer token.
 """
@@ -108,16 +108,24 @@ def cast(text: str) -> str:
 
 
 def attribute(text: str) -> str:
-    """Speaker attribution: the "said Name" of the quotation's paragraph."""
+    """Speaker attribution: every run in curly quotes of a numbered paragraph
+    (also one left open at its end), spoken by the "said Name" of the
+    paragraph."""
     ids = {name: "c" + n for n, name in re.findall(r"^c(\d+) \| ([^|]+?) \|", text, flags=re.M)}
-    quotes = []
-    for para in text.split("\n\n"):
+    voices = []
+    for n, para in re.findall(r"^\[p(\d+)\] (.*)$", text, flags=re.M):
         said = re.search(r"said ([A-Z][a-z]+)", para)
-        for n in re.findall(r"\[q(\d+)\]", para):
-            speaker = ids.get(said[1], "unknown") if said else "unknown"
-            quotes.append({"q": int(n), "speaker": speaker, "emotion": "neutral",
+        speaker = ids.get(said[1], "unknown") if said else "unknown"
+        runs = re.findall(r"“([^“”]+)”", para)
+        if para.count("“") > para.count("”"):
+            runs.append(para[para.rindex("“") + 1:])
+        elif para.count("”") > para.count("“"):
+            runs.insert(0, para[:para.index("”")])
+        for run in runs:
+            voices.append({"p": int(n), "start": run, "end": run, "kind": "speech", "speaker": speaker,
+                           "emotion": "neutral", "direction": "calm and friendly",
                            "confidence": 0.9 if speaker != "unknown" else 0.2})
-    return json.dumps({"quotes": quotes})
+    return json.dumps({"voices": voices, "narration": []})
 
 
 def prepare(text: str) -> str:
@@ -147,7 +155,7 @@ def chat_answer(req: dict) -> str:
             return json.dumps({"decisions": []})
         if text.startswith("Base voices"):
             return cast(text)
-        if "Quotations to attribute" in text:
+        if "Paragraphs to annotate" in text:
             return attribute(text)
         if "Paragraphs to prepare" in text:
             return prepare(text)

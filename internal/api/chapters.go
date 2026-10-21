@@ -173,6 +173,12 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		if e := Emotion(sg.Emotion); e.Valid() {
 			seg.Emotion = &e
 		}
+		if v := Voicing(sg.Voicing); v.Valid() {
+			seg.Voicing = &v
+		}
+		if sg.Direction != "" {
+			seg.Direction = &sg.Direction
+		}
 		if spans := store.DecodeSpans(sg.Emphasis, utf8.RuneCountInString(sg.Text)); len(spans) > 0 {
 			emph := make([][]int, len(spans))
 			for i, sp := range spans {
@@ -258,6 +264,9 @@ func (s *Server) chapterDetail(ctx context.Context, b *store.Book, c *store.Chap
 		para := Paragraph{Id: p.ID, Idx: p.Idx, Kind: ParagraphKind(p.Kind), Text: p.Text, Segments: ss}
 		if m := Mood(p.Mood); m.Valid() {
 			para.Mood = &m
+		}
+		if p.Direction != "" {
+			para.Direction = &p.Direction
 		}
 		out.Paragraphs = append(out.Paragraphs, para)
 	}
