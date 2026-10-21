@@ -147,6 +147,9 @@ func (r *remote) synthesize(ctx context.Context, s Speech) ([]byte, error) {
 		if r.speed(s) {
 			fields["speed"] = s.Speed
 		}
+		if st := geminiStyle(s); st != "" && *r.cfg.Emotions {
+			fields["instructions"] = st + "."
+		}
 		data, err = r.post(ctx, "/v1/audio/speech", fields)
 	}
 	if err != nil {
@@ -253,6 +256,9 @@ func (r *remote) fingerprint() string {
 	if r.cfg.Kind == KindGemini {
 		return fmt.Sprintf("%s|%s|%s|%g|%t|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Model, r.cfg.Gain, *r.cfg.Emotions,
 			geminiMappingVersion)
+	}
+	if r.cfg.Kind == KindOpenAI && *r.cfg.Emotions {
+		return fmt.Sprintf("%s|%s|%s|%g|emotions|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Model, r.cfg.Gain, geminiMappingVersion)
 	}
 	return fmt.Sprintf("%s|%s|%s|%s|%g|%s", r.cfg.Kind, r.cfg.URL, r.cfg.Variant, r.cfg.Model, r.cfg.Gain, mappingVersion)
 }

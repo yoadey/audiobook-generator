@@ -123,7 +123,7 @@ and `tts.chatterbox`):
 | `apiKeyEnv` | Gemini only: environment variable with the API key (required) |
 | `limits` | Gemini only: `rpm`, `tpm`, `rpd`, `tpd` of the model's quota (0: unknown; tokens are text tokens) |
 | `quotaTimezone` | Gemini only: where the daily quota resets at midnight (default `America/Los_Angeles`) |
-| `emotions` | Gemini only: ask for quotes' emotions and thoughts (default `false`) |
+| `emotions` | Gemini and OpenAI-compatible: ask for quotes' emotions and thoughts (Gemini: an instruction before the text; OpenAI-compatible: as `instructions`, like `gpt-4o-mini-tts` and Qwen3-TTS take them; default `false`) |
 
 Voices are listed from the server: Chatterbox-TTS-Server's predefined
 voices (`/get_predefined_voices`) and reference clips
@@ -386,7 +386,7 @@ image).
 
 | Model | Notes |
 |---|---|
-| Qwen3-TTS 0.6B/1.7B | emotions by instruction, voice design; GPU |
+| Qwen3-TTS 0.6B/1.7B | emotions by instruction (1.7B only), voice design; on CPU see [qwen-tts-server](https://github.com/yoadey/qwen-tts-server) with `emotions: true` |
 | IndexTTS-2.5 | strongest emotion/timbre control; bilibili licence |
 | Dia2 1B/2B | Apache-2.0, dialogue, ≤ 2 min per generation |
 | Orpheus 3B | emotion tags, OpenAI-compatible servers (usable as `kind: openai`); GPU |
@@ -394,4 +394,6 @@ image).
 | Pocket TTS 100M | CPU, cloning, no emotion control |
 
 Any of them behind an OpenAI-compatible server returning WAV can be added
-as `kind: openai` (pace and loudness for emotions, as with Kokoro).
+as `kind: openai` (pace and loudness for emotions, as with Kokoro, or
+`emotions: true` when the server acts an instruction like `Say angrily.`
+given as `instructions`).

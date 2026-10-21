@@ -78,9 +78,11 @@ type EngineConfig struct {
 	// QuotaTimezone is where a Gemini engine's daily quota resets at
 	// midnight (default America/Los_Angeles, as Google's does).
 	QuotaTimezone string `json:"quotaTimezone,omitempty"`
-	// Emotions: a Gemini engine is asked to speak the emotion of a quote
-	// and thoughts ("Say angrily: …"; default false: they are given by
-	// loudness, like for Kokoro).
+	// Emotions: a Gemini or OpenAI-compatible engine is asked to speak the
+	// emotion of a quote and thoughts (Gemini: "Say angrily: …" before the
+	// text; OpenAI-compatible: "instructions", as gpt-4o-mini-tts and
+	// Qwen3-TTS take them; default false: they are given by loudness, like
+	// for Kokoro).
 	Emotions *bool `json:"emotions,omitempty"`
 	// JoinParagraphs: consecutive paragraphs in one voice and style are
 	// read in one request, up to MaxChars (default true for gemini, whose
@@ -176,8 +178,14 @@ func (c *EngineConfig) Validate() error {
 		if err := c.validateGemini(); err != nil {
 			return err
 		}
-	} else if c.APIKeyEnv != "" || c.Limits != (EngineLimits{}) || c.QuotaTimezone != "" || c.Emotions != nil {
-		return fmt.Errorf("engine %s: apiKeyEnv, limits, quotaTimezone and emotions are for gemini engines", c.Name)
+	} else if c.APIKeyEnv != "" || c.Limits != (EngineLimits{}) || c.QuotaTimezone != "" {
+		return fmt.Errorf("engine %s: apiKeyEnv, limits and quotaTimezone are for gemini engines", c.Name)
+	} else if c.Emotions != nil && c.Kind != KindOpenAI {
+		return fmt.Errorf("engine %s: emotions are for gemini and openai engines", c.Name)
+	}
+	if c.Emotions == nil {
+		off := false
+		c.Emotions = &off
 	}
 	if !strings.HasPrefix(c.URL, "http://") && !strings.HasPrefix(c.URL, "https://") {
 		return fmt.Errorf("engine %s: url must be http(s), got %q", c.Name, c.URL)
@@ -620,7 +628,7 @@ func (r *remote) expressive() bool {
 	switch r.cfg.Kind {
 	case KindChatterbox:
 		return r.cfg.Variant == VariantOriginal
-	case KindGemini:
+	case KindGemini, KindOpenAI:
 		return *r.cfg.Emotions
 	}
 	return false

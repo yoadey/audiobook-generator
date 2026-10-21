@@ -255,7 +255,10 @@ tts:
   # characters (docs/tts-engines.md). Their voices are written
   # "<name>:<voice>" and chosen per character. Fields: name, kind
   # (openai | chatterbox), url, and optionally model, variant, concurrency,
-  # timeout, gain, speed, voices. Gemini is set up below (tts.gemini).
+  # timeout, gain, speed, voices, maxChars, joinParagraphs, and for openai
+  # emotions (send a quote's emotion as "instructions", e.g. to the
+  # Qwen3-TTS server github.com/yoadey/qwen-tts-server). Gemini is set up below
+  # (tts.gemini).
   engines: []
   # - name: orpheus
   #   kind: openai

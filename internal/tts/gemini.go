@@ -101,10 +101,6 @@ func (c *EngineConfig) validateGemini() error {
 	if _, err := time.LoadLocation(c.QuotaTimezone); err != nil {
 		return fmt.Errorf("engine %s: quotaTimezone: %w", c.Name, err)
 	}
-	if c.Emotions == nil {
-		off := false
-		c.Emotions = &off
-	}
 	if c.MaxChars > MaxRequestChars(KindGemini) {
 		return fmt.Errorf("engine %s: maxChars must be at most %d (longer answers exceed the audio limit)",
 			c.Name, MaxRequestChars(KindGemini))

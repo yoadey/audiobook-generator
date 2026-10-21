@@ -83,13 +83,14 @@ func TestEngineConfig(t *testing.T) {
 	}
 
 	for name, c := range map[string]EngineConfig{
-		"name":    {Name: "Big", Kind: KindOpenAI, URL: "http://x"},
-		"kind":    {Name: "x", Kind: "piper", URL: "http://x"},
-		"url":     {Name: "x", Kind: KindOpenAI, URL: "x:80"},
-		"variant": {Name: "x", Kind: KindChatterbox, URL: "http://x", Variant: "flash"},
-		"voice":   {Name: "x", Kind: KindOpenAI, URL: "http://x", Voices: []string{"a b"}},
-		"kokoro":  {Name: "kokoro", Kind: KindOpenAI, URL: "http://x"},
-		"chars":   {Name: "x", Kind: KindOpenAI, URL: "http://x", MaxChars: -1},
+		"name":     {Name: "Big", Kind: KindOpenAI, URL: "http://x"},
+		"kind":     {Name: "x", Kind: "piper", URL: "http://x"},
+		"url":      {Name: "x", Kind: KindOpenAI, URL: "x:80"},
+		"variant":  {Name: "x", Kind: KindChatterbox, URL: "http://x", Variant: "flash"},
+		"voice":    {Name: "x", Kind: KindOpenAI, URL: "http://x", Voices: []string{"a b"}},
+		"kokoro":   {Name: "kokoro", Kind: KindOpenAI, URL: "http://x"},
+		"chars":    {Name: "x", Kind: KindOpenAI, URL: "http://x", MaxChars: -1},
+		"emotions": {Name: "x", Kind: KindChatterbox, URL: "http://x", Emotions: new(true)},
 	} {
 		assert.Error(t, c.Validate(), name)
 	}
@@ -238,6 +239,46 @@ func TestRouterTurboAndOpenAI(t *testing.T) {
 		{Name: "a", Kind: KindOpenAI, URL: "http://a"}, {Name: "a", Kind: KindOpenAI, URL: "http://b"},
 	})
 	assert.Error(t, err, "twice")
+}
+
+func TestOpenAIEmotions(t *testing.T) {
+	var got []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/audio/voices" {
+			_, _ = w.Write([]byte(`{"voices":["f_serena","m_ryan"]}`))
+			return
+		}
+		var fields map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(raw, &fields))
+		got = append(got, fields)
+		_, _ = w.Write(wav(SampleRate, 1, []int16{5}))
+	}))
+	defer srv.Close()
+	r, err := NewRouter(New("http://kokoro", time.Second), []EngineConfig{
+		{Name: "qwen", Kind: KindOpenAI, URL: srv.URL, Speed: new(false), Emotions: new(true)},
+		{Name: "plain", Kind: KindOpenAI, URL: srv.URL},
+	})
+	require.NoError(t, err)
+	ctx := context.Background()
+	assert.True(t, r.Expressive("qwen:m_ryan"))
+	assert.False(t, r.Expressive("plain:m_ryan"), "emotions are off by default")
+
+	for _, s := range []Speech{
+		{Text: "No!", Voice: "qwen:m_ryan", Emotion: "angry"},
+		{Text: "Hm.", Voice: "qwen:m_ryan", Thought: true},
+		{Text: "Hi.", Voice: "qwen:f_serena"},
+		{Text: "No!", Voice: "plain:m_ryan", Emotion: "angry"},
+	} {
+		_, err := r.Synthesize(ctx, s)
+		require.NoError(t, err)
+	}
+	require.Len(t, got, 4)
+	assert.Equal(t, "Say angrily.", got[0]["instructions"])
+	assert.Equal(t, "No!", got[0]["input"], "the text is sent unchanged")
+	assert.Equal(t, "Say softly, as an inner thought.", got[1]["instructions"])
+	assert.NotContains(t, got[2], "instructions", "neutral speech gets none")
+	assert.NotContains(t, got[3], "instructions")
 }
 
 func TestChatterboxUnlistedAndMoved(t *testing.T) {

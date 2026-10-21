@@ -612,6 +612,9 @@
               },
               "joinParagraphs": {
                 "type": "boolean"
+              },
+              "emotions": {
+                "type": "boolean"
               }
             }
           }
