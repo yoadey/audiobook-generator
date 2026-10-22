@@ -365,9 +365,12 @@ instead of labelling quotes found by code:
   speaker (`cN`, `new:Name`, `unknown`; writing in its author's voice),
   one of the nine emotions (for engines that cannot act) and a
   **direction**: 3–15 words on how to perform it ("barely above a whisper,
-  trembling with fear"). Narration that should be read noticeably
-  differently gets a direction per paragraph ("hushed, with mounting
-  dread").
+  trembling with fear"). Since v4 every paragraph with narration gets a
+  direction too ("calm and measured", "hushed, with mounting dread"), so
+  the narrator reads with the feeling of the moment; the prompt keeps it
+  the same narrator (delivery only, no other voice) and similar within a
+  scene. Chapters attributed with v3 keep their result until attributed
+  again.
 - Code finds the anchors in the paragraph (quotation marks, dashes,
   ellipses, spaces and case need not match), grows a passage over the
   quotation marks around it, drops passages that are not found or
@@ -436,9 +439,10 @@ is off. "Prepare again" discards a chapter's moods, pauses, spoken forms
 and flows (the lexicon keeps its entries).
 
 A book can also do without **character voices** (`characterVoices`, on by
-default): the narrator then reads every quotation like narration (no
-speaker, no emotion of its own), renders wait for no speaker attribution,
-and an engine reads a dialogue paragraph in one go. Turning it on or off
+default): the narrator then reads every quotation, still as the speaker
+attribution says it is spoken (its emotion, direction and kind of voice;
+renders wait for the attribution as with character voices), and an engine
+reads a dialogue paragraph in one go. Turning it on or off
 outdates the book's audio; while it is off, speakers and character voices
 changing (analysis, casting, voice edits) outdate nothing.
 

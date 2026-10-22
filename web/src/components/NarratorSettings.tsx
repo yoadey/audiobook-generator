@@ -257,7 +257,7 @@ export function NarratorSettings({ book }: { book: Book }) {
         />
         <Switch
           label="Character voices"
-          description="Quotations are spoken by their speakers' voices. Off: the narrator reads everything, like a single-voice audiobook, and chapters are rendered without waiting for the speaker attribution."
+          description="Quotations are spoken by their speakers' voices. Off: the narrator reads everything, like a single-voice audiobook, still with each line's emotion and direction from the speaker attribution."
           checked={characterVoices}
           onChange={(e) => setCharacterVoices(e.currentTarget.checked)}
           maw={720}

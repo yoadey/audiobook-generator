@@ -273,11 +273,14 @@ func TestJoinPassages(t *testing.T) {
 	assert.Len(t, items, 9)
 	assert.Equal(t, "Hello? she called.", items[6].text)
 
-	// Narrator only: speakers and emotions are dropped.
+	// Narrator only: the speaker is dropped, how the line is spoken stays.
 	ss[len(ss)-2].SpeakerCharacterID = new(int64)
+	ss[len(ss)-2].Direction, ss[len(ss)-2].Voicing = "spitting with fury", store.VoicingSpeech
 	narratorOnly(ss)
 	assert.Nil(t, ss[len(ss)-2].SpeakerCharacterID)
-	assert.Empty(t, ss[len(ss)-2].Emotion)
+	assert.Equal(t, "angry", ss[len(ss)-2].Emotion)
+	assert.Equal(t, "spitting with fury", ss[len(ss)-2].Direction)
+	assert.Equal(t, store.VoicingSpeech, ss[len(ss)-2].Voicing)
 }
 
 func TestJoinParagraphs(t *testing.T) {
@@ -438,6 +441,16 @@ func TestDirectionsReachAnExpressiveEngine(t *testing.T) {
 	assert.Equal(t, "crackling, far away", hello.Direction,
 		"speech in the narrator's voice with a direction of its own is acted")
 	assert.Equal(t, store.VoicingRemote, hello.Voicing)
+
+	// Without character voices the narrator still acts every line.
+	ss[0].SpeakerCharacterID = new(int64)
+	narratorOnly(ss)
+	items = plan(ch, paras, ss, func(*store.Segment) (string, float64) { return "cb:narrator.wav", 1 },
+		lexicon.Compile(nil), engines("v1"))
+	require.Len(t, items, 3)
+	assert.Equal(t, "through clenched teeth", items[0].speech().Direction)
+	assert.Equal(t, "angry", items[0].speech().Emotion)
+	assert.Equal(t, store.VoicingRemote, items[2].speech().Voicing)
 
 	// Another direction is another piece of audio.
 	other := items[0]

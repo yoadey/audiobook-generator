@@ -515,11 +515,12 @@ func join(items []item, limitOf func(voice string) int, acrossParas func(voice s
 	return out
 }
 
-// narratorOnly lets the narrator read every quotation like narration (the
-// book has no character voices).
+// narratorOnly lets the narrator read every quotation (the book has no
+// character voices), still as the attribution says it is spoken: its
+// emotion, direction and kind of voice stay.
 func narratorOnly(segs []store.Segment) {
 	for i := range segs {
-		segs[i].SpeakerCharacterID, segs[i].Emotion, segs[i].Direction, segs[i].Voicing = nil, "", "", ""
+		segs[i].SpeakerCharacterID = nil
 	}
 }
 
@@ -779,10 +780,12 @@ func (r *Renderer) Render(ctx context.Context, chapterID int64, progress func(fl
 const waitFor = 2 * time.Minute
 
 // waitForVoices reports whether a render should wait: for the speaker
-// attribution the chapter needs (queued if missing), and for a pending
-// casting when the chapter has speakers — unless that job cannot run soon.
+// attribution the chapter needs (queued if missing; without character
+// voices too, since it also tells how each line is spoken), and with
+// character voices for a pending casting when the chapter has speakers —
+// unless that job cannot run soon.
 func (r *Renderer) waitForVoices(ctx context.Context, b *store.Book, ch *store.Chapter) (bool, error) {
-	if r.Attribution == nil || !b.CharacterVoices {
+	if r.Attribution == nil {
 		return false, nil
 	}
 	soon := func(j *store.Job) bool {
@@ -800,6 +803,9 @@ func (r *Renderer) waitForVoices(ctx context.Context, b *store.Book, ch *store.C
 			return err == nil, err
 		}
 	}
+	if !b.CharacterVoices {
+		return false, nil
+	}
 	speaks, err := r.Store.HasSpeakers(ctx, ch.ID)
 	if err != nil || !speaks {
 		return false, err
@@ -815,7 +821,7 @@ func (r *Renderer) waitForPreparation(ctx context.Context, b *store.Book, ch *st
 	if r.Preparation == nil || !prepare.Needed(b, ch) {
 		return false, nil
 	}
-	if r.Attribution != nil && b.CharacterVoices {
+	if r.Attribution != nil {
 		// A preparation waits for a pending attribution, which cannot
 		// run soon (else the render would have waited for it).
 		if j, err := r.Store.PendingChapterJob(ctx, attribution.JobType, ch.ID); err != nil || j != nil {

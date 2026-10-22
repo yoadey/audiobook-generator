@@ -877,7 +877,7 @@ type Book struct {
 	CastingStatus    CastingStatus  `json:"castingStatus"`
 	ChapterCount     int            `json:"chapterCount"`
 
-	// CharacterVoices Quotations are spoken by their speakers' voices; without, the narrator reads everything (and renders wait for no speaker attribution)
+	// CharacterVoices Quotations are spoken by their speakers' voices; without, the narrator reads everything (still as the speaker attribution says each line is spoken)
 	CharacterVoices bool      `json:"characterVoices"`
 	CreatedAt       time.Time `json:"createdAt"`
 

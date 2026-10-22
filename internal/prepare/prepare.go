@@ -181,7 +181,7 @@ func (p *Preparer) Run(ctx context.Context, chapterID int64, progress func(float
 		_, err := p.Store.TransitionPrep(ctx, chapterID, store.PrepNone, nil, store.PrepQueued, store.PrepRunning)
 		return err // not narrated: nothing to prepare
 	}
-	if b.CharacterVoices && attribution.Active(ch) {
+	if attribution.Active(ch) {
 		// The attribution splits the paragraphs anew, which drops marks
 		// made on the segments before: prepare what it leaves.
 		return jobs.Defer(time.Now().Add(pollEvery), "waiting for the speaker attribution of this chapter")
