@@ -1,0 +1,17 @@
+Characters (id | name | aliases | gender | age | how they speak):
+{{range .Characters}}{{.}}
+{{end}}{{if .POV}}
+Point of view: {{.POV}}
+{{end}}{{if .Previous}}
+Speakers of the last lines before this text: {{.Previous}}
+{{end}}
+Chapter: {{.Title}}
+{{if .Context}}
+--- context (already annotated) ---
+
+{{.Context}}
+--- end of context ---
+{{end}}
+Paragraphs to annotate ({{.Count}}):
+
+{{.Text}}

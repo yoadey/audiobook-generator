@@ -109,7 +109,7 @@ func TestAttributionFlow(t *testing.T) {
 		assert.Equal(t, 4, d.Attribution.Quotes)
 		assert.Equal(t, 4, d.Attribution.Attributed)
 		assert.Equal(t, 4, d.Attribution.Unsure, "confidence 0.5 is flagged")
-		assert.Equal(t, "attribute_chapter@v3", *d.Attribution.Prompt)
+		assert.Equal(t, "attribute_chapter@v4", *d.Attribution.Prompt)
 		require.NotNil(t, d.Speakers)
 		names := map[int64]string{}
 		for _, sp := range *d.Speakers {
