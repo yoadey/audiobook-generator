@@ -987,7 +987,7 @@ export interface components {
       previewText: string;
       /** @description Chapters are prepared by the LLM before they are rendered (narration mood, pauses, spoken forms, pronunciation suggestions, paragraphs that flow on from the one before) */
       prepareChapters: boolean;
-      /** @description Quotations are spoken by their speakers' voices; without, the narrator reads everything (and renders wait for no speaker attribution) */
+      /** @description Quotations are spoken by their speakers' voices; without, the narrator reads everything (still as the speaker attribution says each line is spoken) */
       characterVoices: boolean;
       analysisStatus: components['schemas']['AnalysisStatus'];
       /** @description Share of analysed batches (0..1) once the analysis is planned */

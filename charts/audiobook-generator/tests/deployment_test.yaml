@@ -43,6 +43,11 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
+            name: ABG_TTS_CHAPTERS
+            value: "1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
             name: ABG_TTS_UNLOAD_IDLE
             value: 10m
       - equal:

@@ -140,6 +140,7 @@ func run() error {
 		Log:          log,
 	}
 	runner.Handle(render.JobType, renderer.Handler())
+	runner.SetConcurrency(render.Queue, cfg.TTS.Chapters)
 	analyzer := &analysis.Analyzer{
 		Store: st, LLM: llmPool, Jobs: runner, BatchTokens: cfg.LLM.AnalysisBatchTokens, Log: log,
 	}

@@ -148,6 +148,10 @@ type TTS struct {
 	// Concurrency is the number of parallel synthesis requests (roughly
 	// Kokoro replicas × 1-2).
 	Concurrency int `env:"CONCURRENCY" envDefault:"2"`
+	// Chapters is the number of chapters rendered at once. With an engine
+	// that generates waiting requests together (batches), a second
+	// chapter keeps it busy while the first one's last pieces finish.
+	Chapters int `env:"CHAPTERS" envDefault:"1"`
 	// DefaultVoice narrates books that have no voice set; its engine is
 	// the default one. Without Kokoro, a Kokoro voice here stands for the
 	// first engine's default voice.
@@ -223,6 +227,9 @@ func (c Config) Validate() error {
 	}
 	if c.TTS.UnloadIdle < 0 {
 		errs = append(errs, fmt.Errorf("ABG_TTS_UNLOAD_IDLE must not be negative, got %s", c.TTS.UnloadIdle))
+	}
+	if c.TTS.Chapters < 1 {
+		errs = append(errs, fmt.Errorf("ABG_TTS_CHAPTERS must be at least 1, got %d", c.TTS.Chapters))
 	}
 	if c.TTS.Concurrency < 1 {
 		errs = append(errs, fmt.Errorf("ABG_TTS_CONCURRENCY must be at least 1, got %d", c.TTS.Concurrency))

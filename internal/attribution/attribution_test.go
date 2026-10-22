@@ -204,7 +204,7 @@ func TestAttributeChapter(t *testing.T) {
 		got, err := s.GetChapter(ctx, ch.ID)
 		require.NoError(t, err)
 		assert.Equal(t, store.AttributionDone, got.AttributionStatus)
-		assert.Equal(t, "attribute_chapter@v3", got.AttributionPrompt)
+		assert.Equal(t, "attribute_chapter@v4", got.AttributionPrompt)
 		assert.Equal(t, 4, got.QuoteCount, "the multi-paragraph quote is a passage per paragraph")
 		assert.Positive(t, got.VoiceRev)
 		paras, segs, err := s.ChapterText(ctx, ch.ID)

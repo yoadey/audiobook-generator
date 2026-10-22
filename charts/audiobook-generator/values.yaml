@@ -203,6 +203,10 @@ tts:
   # Parallel synthesis requests while rendering a chapter; about
   # 1-2 per Kokoro replica.
   concurrency: 2
+  # Chapters rendered at once. With an engine that generates waiting
+  # requests together (e.g. Qwen3-TTS behind qwen-tts-server), 2 keeps it
+  # busy while a chapter's last pieces finish.
+  chapters: 1
   # Narrator of books without an own voice (see the voice list in the UI);
   # its engine is the default one ("chatterbox:Emily.wav" for Chatterbox).
   # Without Kokoro, a Kokoro voice here stands for the first engine's
