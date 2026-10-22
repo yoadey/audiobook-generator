@@ -49,7 +49,10 @@ cloud), can be configured beside it or instead of it.
   clear message.
 - Rendering sends each piece to its voice's engine, at most `concurrency`
   at a time per engine; Kokoro keeps its own `ABG_TTS_CONCURRENCY`, so a
-  slow engine does not hold Kokoro up. An engine that speaks emotions (`emotions: true`
+  slow engine does not hold Kokoro up. One chapter renders at a time
+  (`tts.chapters`, `ABG_TTS_CHAPTERS`); with an engine that generates
+  waiting requests together, 2 keeps it busy while a chapter's last pieces
+  finish. An engine that speaks emotions (`emotions: true`
   in `GET /api/tts/engines`) gets the quote's emotion, the narration's
   mood and whether it is a thought, and the render does not change its
   pace for them (it still makes whispers softer and shouts louder). An

@@ -120,6 +120,8 @@ spec:
               value: {{ .Values.tts.timeout | quote }}
             - name: ABG_TTS_CONCURRENCY
               value: {{ .Values.tts.concurrency | int | quote }}
+            - name: ABG_TTS_CHAPTERS
+              value: {{ .Values.tts.chapters | int | quote }}
             - name: ABG_TTS_DEFAULT_VOICE
               value: {{ .Values.tts.defaultVoice | quote }}
             - name: ABG_TTS_UNLOAD_IDLE
